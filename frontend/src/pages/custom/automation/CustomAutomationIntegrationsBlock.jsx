@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import customService from '../../../services/customService';
+import CustomAutomationWebhookConstructor from './CustomAutomationWebhookConstructor';
+import '../../../styles/customIntegrations.css';
 
 const copyValue = async (value) => {
   if (!value) {
@@ -30,7 +32,7 @@ const CopyField = ({ id, label, value, hint }) => {
       <input id={id} type="text" value={value || ''} readOnly />
       {hint ? <span className="form-hint">{hint}</span> : null}
       <div className="settings-actions">
-        <button type="button" className="btn btn-outline" onClick={handleCopy} disabled={!value}>
+        <button type="button" className="acc-btn acc-btn--ghost" onClick={handleCopy} disabled={!value}>
           {copied ? 'Скопировано' : 'Копировать'}
         </button>
       </div>
@@ -47,7 +49,7 @@ const CustomAutomationIntegrationsBlock = ({
   hideDmp = false,
 }) => {
   const isDmpBot = settings?.solution_kind === 'dmp_bot';
-  const showLeadBot = isDmpBot || settings?.solution_kind !== 'seo_saas';
+  const [openTemplate, setOpenTemplate] = useState('');
   const [botPassword, setBotPassword] = useState('');
   const [connection, setConnection] = useState(null);
   const [amoForm, setAmoForm] = useState({
@@ -99,10 +101,10 @@ const CustomAutomationIntegrationsBlock = ({
   }, [automationId, onError]);
 
   useEffect(() => {
-    if (settings?.is_amocrm_enabled && !isDmpBot) {
+    if (!isDmpBot) {
       loadConnection();
     }
-  }, [settings?.is_amocrm_enabled, isDmpBot, loadConnection]);
+  }, [isDmpBot, loadConnection]);
 
   const handleAmoChange = (e) => {
     const { name, value } = e.target;
@@ -120,6 +122,7 @@ const CustomAutomationIntegrationsBlock = ({
       });
       onMessage('Данные AmoCRM сохранены');
       await loadConnection();
+      await onReloadSettings();
     } catch (err) {
       onError(err.message || 'Не удалось сохранить AmoCRM');
     } finally {
@@ -154,6 +157,7 @@ const CustomAutomationIntegrationsBlock = ({
       await customService.deleteAmocrmConnection(automationId);
       onMessage('AmoCRM отключено');
       await loadConnection();
+      await onReloadSettings();
     } catch (err) {
       onError(err.message || 'Не удалось отключить AmoCRM');
     }
@@ -261,19 +265,36 @@ const CustomAutomationIntegrationsBlock = ({
     }
   };
 
-  const showAmocrm = Boolean(settings?.is_amocrm_enabled) && !isDmpBot;
   const showDmp = !hideDmp && (Boolean(settings?.is_dmp_one_enabled) || isDmpBot);
-  const showBot = showLeadBot;
   const showSheets = isDmpBot;
-  if (!showAmocrm && !showDmp && !showBot && !showSheets) {
-    return null;
-  }
+  const toggleTemplate = (name) => setOpenTemplate((prev) => (prev === name ? '' : name));
 
   return (
     <>
-      {showBot ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">Telegram-бот</h3>
+      <div className="int-templates">
+        <button type="button" className={`int-card ${openTemplate === 'telegram' ? 'is-on' : ''}`} onClick={() => toggleTemplate('telegram')}>
+          <strong>Telegram-бот</strong>
+          <span>Готовый шаблон: клиент пишет боту, получает лиды и статусы.</span>
+          <em className={settings?.telegram_bot_token_set ? '' : 'is-off'}>
+            {settings?.telegram_bot_token_set
+              ? `@${settings.telegram_bot_username || 'бот'} · подписано: ${settings.telegram_bot_subscribers || 0}`
+              : 'Не подключён'}
+          </em>
+        </button>
+        {isDmpBot ? null : (
+          <button type="button" className={`int-card ${openTemplate === 'amocrm' ? 'is-on' : ''}`} onClick={() => toggleTemplate('amocrm')}>
+            <strong>AmoCRM</strong>
+            <span>Готовый шаблон: OAuth, воронка и передача сделок.</span>
+            <em className={connection?.connected ? '' : 'is-off'}>
+              {connection?.connected ? 'Подключено' : 'Не подключено'}
+            </em>
+          </button>
+        )}
+      </div>
+
+      {openTemplate === 'telegram' ? (
+        <div className="int-form">
+          <h2>Telegram-бот</h2>
           <p className="form-hint">
             {settings?.telegram_bot_token_set
               ? `@${settings.telegram_bot_username || 'бот'} · подписано: ${settings.telegram_bot_subscribers || 0}`
@@ -313,11 +334,11 @@ const CustomAutomationIntegrationsBlock = ({
               />
             ) : null}
             <div className="settings-actions">
-              <button type="submit" className="btn btn-black" disabled={isSavingBot || (!botToken && !botPassword && !settings?.telegram_bot_token_set)}>
+              <button type="submit" className="acc-btn acc-btn--primary" disabled={isSavingBot || (!botToken && !botPassword && !settings?.telegram_bot_token_set)}>
                 {isSavingBot ? 'Сохранение...' : 'Сохранить'}
               </button>
               {settings?.telegram_bot_token_set ? (
-                <button type="button" className="btn-danger" onClick={handleDisconnectBot} disabled={isSavingBot}>
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={handleDisconnectBot} disabled={isSavingBot}>
                   Отключить
                 </button>
               ) : null}
@@ -326,12 +347,10 @@ const CustomAutomationIntegrationsBlock = ({
         </div>
       ) : null}
 
-      {showAmocrm ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">AmoCRM</h3>
-          <p className="form-hint">
-            {connection?.connected ? 'Подключено' : 'Не подключено'}
-          </p>
+      {openTemplate === 'amocrm' && !isDmpBot ? (
+        <div className="int-form">
+          <h2>AmoCRM</h2>
+          <p className="form-hint">{connection?.connected ? 'Подключено' : 'Не подключено'}</p>
           <form onSubmit={handleSaveCredentials}>
             <div className="form-group">
               <label htmlFor="amo-subdomain">Поддомен</label>
@@ -371,14 +390,14 @@ const CustomAutomationIntegrationsBlock = ({
               value={connection?.redirect_uri || settings?.amocrm_redirect_uri || ''}
             />
             <div className="settings-actions">
-              <button type="submit" className="btn btn-outline" disabled={isSavingCreds}>
+              <button type="submit" className="acc-btn acc-btn--ghost" disabled={isSavingCreds}>
                 {isSavingCreds ? 'Сохранение...' : 'Сохранить'}
               </button>
-              <button type="button" className="btn btn-black" onClick={handleConnect} disabled={isConnecting}>
+              <button type="button" className="acc-btn acc-btn--primary" onClick={handleConnect} disabled={isConnecting}>
                 {isConnecting ? '...' : 'Подключить'}
               </button>
               {connection?.connected ? (
-                <button type="button" className="btn-danger" onClick={handleDisconnect}>
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={handleDisconnect}>
                   Отключить
                 </button>
               ) : null}
@@ -416,10 +435,10 @@ const CustomAutomationIntegrationsBlock = ({
               />
             </div>
             <div className="settings-actions">
-              <button type="submit" className="btn btn-outline" disabled={isSavingPipeline}>
+              <button type="submit" className="acc-btn acc-btn--ghost" disabled={isSavingPipeline}>
                 {isSavingPipeline ? 'Сохранение...' : 'Сохранить воронку'}
               </button>
-              <button type="button" className="btn btn-outline" onClick={handleSync} disabled={isSyncing || !connection?.connected}>
+              <button type="button" className="acc-btn acc-btn--ghost" onClick={handleSync} disabled={isSyncing || !connection?.connected}>
                 {isSyncing ? '...' : 'Синхронизировать статусы'}
               </button>
             </div>
@@ -428,8 +447,8 @@ const CustomAutomationIntegrationsBlock = ({
       ) : null}
 
       {showDmp ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">DMP.one</h3>
+        <div className="int-form">
+          <h2>DMP.one</h2>
           <CopyField
             id="dmp-webhook-url"
             label="Вебхук"
@@ -442,7 +461,7 @@ const CustomAutomationIntegrationsBlock = ({
             value={settings?.dmp_webhook_secret || ''}
           />
           <div className="settings-actions">
-            <button type="button" className="btn btn-outline" onClick={handleRotateSecret} disabled={isRotating}>
+            <button type="button" className="acc-btn acc-btn--ghost" onClick={handleRotateSecret} disabled={isRotating}>
               {isRotating ? '...' : 'Новый секрет'}
             </button>
           </div>
@@ -450,8 +469,8 @@ const CustomAutomationIntegrationsBlock = ({
       ) : null}
 
       {showSheets ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">Google Таблица</h3>
+        <div className="int-form">
+          <h2>Google Таблица</h2>
           <p className="form-hint">
             Один лид — одна строка. Лист по умолчанию «Лиды».
             {settings?.google_sheets_service_account_email
@@ -490,13 +509,19 @@ const CustomAutomationIntegrationsBlock = ({
               />
             </div>
             <div className="settings-actions">
-              <button type="submit" className="btn btn-black" disabled={isSavingSheets}>
+              <button type="submit" className="acc-btn acc-btn--primary" disabled={isSavingSheets}>
                 {isSavingSheets ? 'Сохранение...' : 'Сохранить'}
               </button>
             </div>
           </form>
         </div>
       ) : null}
+
+      <CustomAutomationWebhookConstructor
+        automationId={automationId}
+        onError={onError}
+        onMessage={onMessage}
+      />
     </>
   );
 };

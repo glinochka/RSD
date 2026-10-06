@@ -28,7 +28,7 @@ class CustomAutomationDashboardAccountStats(BaseModel):
     revoked: int = 0
     spamblocked: int = 0
     frozen: int = 0
-    by_class: dict[str, int]
+    by_class: dict[str, int] = {}
 
 
 class CustomAutomationDashboardLeadStats(BaseModel):
@@ -245,6 +245,9 @@ class CustomAutomationSettingsResponse(BaseModel):
     proxy_count: int = 0
     accounts_with_proxy: int = 0
     proxy_distribution: list[ProxyDistributionItem] = Field(default_factory=list)
+    work_hour_start: int = 8
+    work_hour_end: int = 20
+    work_weekdays: list[int] = Field(default_factory=list)
 
 
 class CustomAutomationSettingsValidationResponse(BaseModel):
@@ -273,6 +276,9 @@ class CustomAutomationSettingsUpdate(BaseModel):
     account_warmup_messages: list[str] | None = None
     account_warmup_enabled: bool | None = None
     proxy_list_text: str | None = None
+    work_hour_start: int | None = None
+    work_hour_end: int | None = None
+    work_weekdays: list[int] | None = None
 
 
 class CustomAutomationCredentialCreate(BaseModel):
@@ -313,7 +319,6 @@ class AccountBulkClassifyResponse(BaseModel):
 
 
 class AccountClassUpdate(BaseModel):
-    roles: Optional[list[str]] = None
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     bio: Optional[str] = Field(default=None, max_length=140)
 
@@ -384,7 +389,6 @@ class AccountResponse(BaseModel):
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
     avatar_file_path: Optional[str] = None
-    roles: list[str] = Field(default_factory=list)
     warmup_status: str = "idle"
     warmup_started_at: Optional[datetime] = None
     warmup_dialog_count: int = 0
@@ -394,7 +398,6 @@ class AccountResponse(BaseModel):
     is_spamblocked: bool = False
     is_frozen: bool = False
     is_channel_banned: bool = False
-    auto_classified: bool = False
     risk_score: Optional[float] = None
     trust_score: Optional[float] = None
     session_file_path: Optional[str] = None
@@ -408,7 +411,6 @@ class AccountResponse(BaseModel):
     frozen_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
-    assigned_class: str = "one_day"
 
 
 class AccountQrStartResponse(BaseModel):
@@ -568,6 +570,41 @@ class TelegramBotSettingsUpdate(BaseModel):
     bot_token: Optional[str] = None
     password: Optional[str] = None
     disconnect: bool = False
+
+
+class IntegrationRouteMapping(BaseModel):
+    source: str = Field(..., min_length=1, max_length=120)
+    target: str = Field(..., min_length=1, max_length=120)
+
+
+class IntegrationRouteUpsert(BaseModel):
+    id: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=80)
+    enabled: bool = True
+    direction: str = "outbound"
+    event: str = "lead.transferred"
+    url: Optional[str] = None
+    secret_header: str = "X-Webhook-Secret"
+    secret: Optional[str] = None
+    mappings: list[IntegrationRouteMapping] = Field(default_factory=list)
+
+
+class IntegrationRouteResponse(BaseModel):
+    id: str
+    name: str
+    enabled: bool
+    direction: str
+    event: str
+    method: str = "POST"
+    url: Optional[str] = None
+    secret_header: str
+    secret: Optional[str] = None
+    mappings: list[IntegrationRouteMapping] = Field(default_factory=list)
+    inbound_url: Optional[str] = None
+
+
+class IntegrationRouteListResponse(BaseModel):
+    items: list[IntegrationRouteResponse] = Field(default_factory=list)
 
 
 class GoogleSheetsSettingsUpdate(BaseModel):
@@ -868,6 +905,7 @@ class ChatBlackboxRequest(BaseModel):
 class NeurocommentingSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
     post_filter: str = "new"
     keywords: list[str] = Field(default_factory=list)
     probability: int = 100
@@ -919,6 +957,7 @@ class NeurocommentingPromptCreate(BaseModel):
 class NeurochattingSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
     reply_mode: str = "interval"
     keywords: list[str] = Field(default_factory=list)
     reply_condition: str = ""
@@ -975,6 +1014,7 @@ class NeurochattingPromptCreate(BaseModel):
 class MasslookingSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
     targets: list[str] = Field(default_factory=list)
     view_feed: bool = True
     stories_limit: int = 0
@@ -1015,6 +1055,7 @@ class MasslookingPresetRequest(BaseModel):
 class MassprimingSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     targets: list[str] = Field(default_factory=list)
+    user_folder_ids: list[int] = Field(default_factory=list)
     add_contact: bool = True
     ttl_mode: str = "toggle"
     ttl_period: int = 86400
@@ -1105,6 +1146,7 @@ class ParserTargetsRequest(BaseModel):
 class ChatBroadcastsSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
     only_joined: bool = True
     messages: list[dict[str, Any]] = Field(default_factory=list)
     first_mode: str = "template"
@@ -1158,9 +1200,57 @@ class ChatBroadcastsPresetRequest(BaseModel):
     name: str = ""
 
 
+class DmBroadcastsSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    recipients: list[str] = Field(default_factory=list)
+    user_folder_ids: list[int] = Field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    first_mode: str = "template"
+    skip_errors: bool = True
+    skip_sent: bool = False
+    limit_rate: bool = True
+    respect_night_hours: bool = True
+    work_mode: str = "count"
+    max_messages: int = 100
+    delay_peer_min: int = 30
+    delay_peer_max: int = 90
+    delay_msg_min: int = 3
+    delay_msg_max: int = 8
+    errors_until_stop: int = 10
+    end_at: str = ""
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+
+
+class DmBroadcastsModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+    added_ids: list[str] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
+class DmBroadcastsRecipientsRequest(BaseModel):
+    recipients: str = ""
+    links: str = ""
+
+
+class DmBroadcastsPresetRequest(BaseModel):
+    name: str = ""
+
+
 class NeuroshillingSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
     channel_ids: list[int] = Field(default_factory=list)
     chat_shilling: bool = True
     post_shilling: bool = True
@@ -1216,6 +1306,7 @@ class NeuroshillingGenerateRequest(BaseModel):
 class WarmupSettings(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
     mode: str = "auto"
     intensity: str = "auto"
     do_warmup_dms: bool = True

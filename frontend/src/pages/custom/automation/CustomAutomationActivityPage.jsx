@@ -11,6 +11,7 @@ import {
 } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const TYPE_STATUS = {
   neurocommenting: 'crm-status--confirmed',

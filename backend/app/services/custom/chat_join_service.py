@@ -18,6 +18,7 @@ from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipant
 from telethon.tl.functions.messages import CheckChatInviteRequest, DeleteChatUserRequest, ImportChatInviteRequest
 
 from .chat_membership_service import (
+    ACTOR_PURPOSE,
     JOIN_DELAY_MAX_SECONDS,
     JOIN_DELAY_MIN_SECONDS,
     MAX_JOINS_PER_TICK,
@@ -778,6 +779,7 @@ async def join_next_membership(
     await session.commit()
 
     join_result = await _try_join_chat(session, chat_target, account)
+    is_actor = (membership.purpose or "") == ACTOR_PURPOSE
     await _apply_membership_result(
         session,
         membership,
@@ -785,7 +787,7 @@ async def join_next_membership(
         account,
         join_result,
         automation_id=automation_id,
-        apply_cooldown=apply_cooldown,
+        apply_cooldown=apply_cooldown and not is_actor,
     )
     await session.commit()
     return {
@@ -1084,8 +1086,11 @@ async def join_pending_chats(
     """Join pending account×chat pairs. Scheduler: one pair per account per tick."""
     del sleeper
     from .pending_action_service import process_due_pending_actions
+    from .chat_addlist_service import ensure_task_joins_for_automation, join_pending_addlists
 
     await ensure_memberships_for_automation(session, automation_id)
+    await ensure_task_joins_for_automation(session, automation_id)
+    await join_pending_addlists(session, automation_id)
     await recover_stale_joining_memberships(session, automation_id)
     await process_due_pending_actions(session, automation_id)
     if rate_limit and not farm_overlap_active_hours():

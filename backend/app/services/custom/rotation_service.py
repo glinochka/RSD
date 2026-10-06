@@ -1,7 +1,7 @@
 """Account selection (rotation) and daily limits for /custom automations.
 
-Account classes are no longer used for feature gating — roles are.  Every
-action checks the PoolAccount.roles set directly.
+Task modules pass selected account_ids. Rotation only skips banned, frozen,
+warming, and daily-capped accounts.
 """
 from __future__ import annotations
 
@@ -180,7 +180,7 @@ async def list_alive_session_accounts(
     *,
     exclude_banned: bool = True,
 ) -> list[SocialAccount]:
-    """All connected pool accounts, any role. Used for inspect and preparation joins."""
+    """All connected pool accounts. Used for inspect and preparation joins."""
     pool = await _default_pool(session, automation_id)
     if not pool:
         return []
@@ -226,7 +226,7 @@ async def select_account_for_action(
     consume_quota: bool = False,
     ignore_rest: bool = False,
 ) -> SocialAccount | None:
-    """Pick an account from the default pool respecting roles, rotation strategy and daily limits.
+    """Pick an account from the default pool respecting warmup, rotation strategy and daily limits.
 
     Args:
         session: active async SQLAlchemy session.
@@ -317,10 +317,10 @@ async def select_account_for_action(
                 else:
                     return assigned
             logger.info(
-                "Assigned account %s for thread %s is not eligible (roles=%s, sent=%s)",
+                "Assigned account %s for thread %s is not eligible (warmup=%s, sent=%s)",
                 assigned.id,
                 thread_id,
-                getattr(assigned_pool, "roles", None),
+                getattr(assigned_pool, "warmup_status", None),
                 assigned.daily_messages_sent,
             )
 

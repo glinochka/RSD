@@ -69,6 +69,7 @@ import CustomAutomationNeurocommentingPage from './pages/custom/automation/Custo
 import CustomAutomationNeurochattingPage from './pages/custom/automation/CustomAutomationNeurochattingPage';
 import CustomAutomationMasslookingPage from './pages/custom/automation/CustomAutomationMasslookingPage';
 import CustomAutomationChatBroadcastsPage from './pages/custom/automation/CustomAutomationChatBroadcastsPage';
+import CustomAutomationDmBroadcastsPage from './pages/custom/automation/CustomAutomationDmBroadcastsPage';
 import CustomAutomationNeuroshillingPage from './pages/custom/automation/CustomAutomationNeuroshillingPage';
 import CustomAutomationWarmupPage from './pages/custom/automation/CustomAutomationWarmupPage';
 import CustomAutomationMassprimingPage from './pages/custom/automation/CustomAutomationMassprimingPage';
@@ -250,13 +251,16 @@ const App = () => {
                   <Route path="ubt/neurochatting" element={<CustomAutomationNeurochattingPage />} />
                   <Route path="ubt/masslooking" element={<CustomAutomationMasslookingPage />} />
                   <Route path="ubt/chat-broadcasts" element={<CustomAutomationChatBroadcastsPage />} />
+                  <Route path="ubt/dm-broadcasts" element={<CustomAutomationDmBroadcastsPage />} />
                   <Route path="ubt/neuroshilling" element={<CustomAutomationNeuroshillingPage />} />
                   <Route path="ubt/warmup" element={<CustomAutomationWarmupPage />} />
                   <Route path="ubt/masspriming" element={<CustomAutomationMassprimingPage />} />
                   <Route path="ubt/parser" element={<CustomAutomationParserPage />} />
+                  <Route path="ubt/chats" element={<CustomAutomationChatsPage />} />
+                  <Route path="ubt/chats/discovery" element={<CustomAutomationChatsPage defaultTab="discovery" />} />
                   <Route path="settings" element={<CustomAutomationSettingsPage />} />
-                  <Route path="chats" element={<CustomAutomationChatsPage />} />
-                  <Route path="chats/discovery" element={<CustomAutomationChatsPage defaultTab="discovery" />} />
+                  <Route path="chats" element={<Navigate to="../ubt/chats" replace />} />
+                  <Route path="chats/discovery" element={<Navigate to="../ubt/chats/discovery" replace />} />
                   <Route path="leads" element={<CustomAutomationLeadsPage />} />
                   <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
                   <Route path="dmp" element={<CustomAutomationDmpPage />} />

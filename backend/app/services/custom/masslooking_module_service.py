@@ -9,14 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
     AutomationActionLog,
-    ChatFolder,
     ChatTarget,
     CustomAutomation,
     PoolAccount,
     SocialAccount,
 )
 from .job_service import list_jobs
+from .chat_folder_service import folder_payloads
 from .masslooking_service import normalize_story_targets
+from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
 
@@ -24,6 +25,7 @@ DEFAULT_LOOK_SETTINGS: dict[str, Any] = {
     "enabled": False,
     "account_ids": [],
     "chat_ids": [],
+    "folder_ids": [],
     "targets": [],
     "view_feed": True,
     "stories_limit": 0,
@@ -74,6 +76,7 @@ def normalize_look_settings(raw: Any) -> dict[str, Any]:
     data["enabled"] = bool(incoming.get("enabled")) if incoming.get("enabled") is not None else data["enabled"]
     data["account_ids"] = _as_int_list(incoming.get("account_ids"))
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
+    data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     data["targets"] = normalize_story_targets(incoming.get("targets"))
     data["view_feed"] = bool(incoming.get("view_feed", True))
@@ -109,19 +112,12 @@ def normalize_look_settings(raw: Any) -> dict[str, Any]:
 
 def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
     in_work = bool(account.is_active and (current_daily_messages_sent(account) or 0) > 0)
-    eligible = bool(
-        account.session_file_path
-        and account.is_active
-        and not account.is_banned
-        and not account.is_frozen
-        and not account.is_spamblocked
-    )
+    eligible = account_is_task_ready(pool, account, "looking", exclude_spamblocked=True)
     return {
         "id": account.id,
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
         "warmup_status": pool.warmup_status or "idle",
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
@@ -195,8 +191,8 @@ def _issues(settings: dict[str, Any]) -> list[str]:
         issues.append("Модуль масслукинга выключен")
     if not settings.get("account_ids"):
         issues.append("Выберите хотя бы один аккаунт")
-    if not settings.get("targets") and not settings.get("chat_ids") and not settings.get("view_feed"):
-        issues.append("Добавьте хотя бы один канал или @username")
+    if not settings.get("targets") and not settings.get("chat_ids") and not settings.get("folder_ids") and not settings.get("view_feed"):
+        issues.append("Добавьте хотя бы один канал, папку или @username")
     return issues
 
 
@@ -222,20 +218,15 @@ async def get_masslooking_module(session: AsyncSession, automation_id: int) -> d
             ).order_by(ChatTarget.created_at.desc()).limit(400)
         )
     ).scalars().all()
-    folders = (
-        await session.execute(
-            select(ChatFolder).where(ChatFolder.custom_automation_id == automation_id).order_by(ChatFolder.created_at.desc())
-        )
-    ).scalars().all()
+    folders = await folder_payloads(session, automation_id)
     jobs = await list_jobs(session, automation_id, bucket="all", category="module", limit=80)
     look_jobs = [item for item in jobs["items"] if item.get("job_type") == "masslooking"][:12]
     return {
         "enabled": bool(settings.get("enabled")),
-        "warmup_enabled": bool(automation.account_warmup_enabled),
         "settings": settings,
         "accounts": [_account_row(account, pool) for account, pool in pairs],
         "chats": [_chat_row(chat) for chat in chats],
-        "folders": [{"id": folder.id, "name": folder.name} for folder in folders],
+        "folders": folders,
         "jobs": look_jobs,
         "summary": await _log_summary(session, automation_id),
         "issues": _issues(settings),
@@ -253,8 +244,6 @@ async def save_masslooking_module(
     settings = normalize_look_settings(payload)
     if payload.get("enabled") is not None:
         settings["enabled"] = bool(payload.get("enabled"))
-    if payload.get("warmup_enabled") is not None:
-        automation.account_warmup_enabled = bool(payload.get("warmup_enabled"))
     blob = dict(automation.module_settings or {})
     blob["masslooking"] = settings
     automation.module_settings = blob

@@ -7,21 +7,14 @@ import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
 import CustomAccountProxyFields from './CustomAccountProxyFields';
-import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS, exclusiveShillingRoles } from './activityLabels';
+import { WARMUP_STATUS_LABELS } from './activityLabels';
 import { ubtModulePath } from './customNav';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
+import '../../../styles/customSolutionNav.css';
 
-const ROLE_FILTERS = [{ value: '', label: 'Все функции' }, ...ACCOUNT_ROLE_OPTIONS];
 const PAGE_SIZES = [25, 50, 100];
 const ACCEPT = '.zip,.csv,.session';
-
-const CLASS_LABELS = {
-  one_day: 'Однодневный',
-  mid: 'Средний',
-  trusted: 'Доверенный',
-  shilling: 'Шиллинг',
-};
 
 const STATUS_FILTERS = [
   { value: '', label: 'Все статусы' },
@@ -145,7 +138,7 @@ const CustomAutomationAccountsPage = () => {
   const [savingNameId, setSavingNameId] = useState(null);
   const [nameDrafts, setNameDrafts] = useState({});
   const [bioDrafts, setBioDrafts] = useState({});
-  const [filters, setFilters] = useState({ status: '', role: '', search: '', limit: 25, offset: 0 });
+  const [filters, setFilters] = useState({ status: '', search: '', limit: 25, offset: 0 });
   const [searchInput, setSearchInput] = useState('');
   const [poolProxies, setPoolProxies] = useState([]);
   const [uploadProxyId, setUploadProxyId] = useState('');
@@ -167,7 +160,6 @@ const CustomAutomationAccountsPage = () => {
       setIsLoading(true);
       const data = await customService.getAutomationAccounts(id, {
         status: filters.status || undefined,
-        role: filters.role || undefined,
         search: filters.search || undefined,
         limit: filters.limit,
         offset: filters.offset,
@@ -180,7 +172,7 @@ const CustomAutomationAccountsPage = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [id, filters.status, filters.role, filters.search, filters.limit, filters.offset]);
+  }, [id, filters.status, filters.search, filters.limit, filters.offset]);
 
   useEffect(() => {
     loadAccounts();
@@ -361,19 +353,7 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
-  const handleRolesChange = async (accountId, roles) => {
-    const account = accounts.find((item) => item.id === accountId);
-    const nextRoles = exclusiveShillingRoles(roles, account?.roles || []);
-    try {
-      await customService.updateAccount(id, accountId, { roles: nextRoles });
-      await loadAccounts();
-    } catch (err) {
-      setError(err.message || 'Не удалось сохранить функции');
-    }
-  };
-
   const handleStartWarmup = async () => {
-    setIsStartingWarmup(true);
     setWarmupMessage(null);
     setError(null);
     try {
@@ -515,12 +495,6 @@ const CustomAutomationAccountsPage = () => {
       if (sortKey === 'name') {
         return accountTitle(account).toLowerCase();
       }
-      if (sortKey === 'role') {
-        return (account.roles || []).join(',');
-      }
-      if (sortKey === 'class') {
-        return account.assigned_class || '';
-      }
       if (sortKey === 'status') {
         return statusMeta(account).label;
       }
@@ -583,7 +557,7 @@ const CustomAutomationAccountsPage = () => {
   };
 
   const allChecked = accounts.length > 0 && accounts.every((item) => selectedIds.has(item.id));
-  const hasFilters = Boolean(filters.status || filters.role || filters.search);
+  const hasFilters = Boolean(filters.status || filters.search);
   const showEmpty = !isLoading && total === 0 && !hasFilters;
   const from = total === 0 ? 0 : filters.offset + 1;
   const to = Math.min(filters.offset + accounts.length, total);
@@ -759,15 +733,6 @@ const CustomAutomationAccountsPage = () => {
                     onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value, offset: 0 }))}
                   />
                 </div>
-                <div>
-                  <label htmlFor="acc-filter-role">Функция</label>
-                  <CustomSelect
-                    id="acc-filter-role"
-                    value={filters.role}
-                    options={ROLE_FILTERS}
-                    onChange={(event) => setFilters((prev) => ({ ...prev, role: event.target.value, offset: 0 }))}
-                  />
-                </div>
                 <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
                 {isAdmin && !warmupEnabled ? (
                   <button type="button" className="acc-btn acc-btn--ghost" onClick={handleStartWarmup} disabled={isStartingWarmup}>
@@ -832,8 +797,6 @@ const CustomAutomationAccountsPage = () => {
                   </th>
                   <th>Аватар</th>
                   <th><button type="button" onClick={() => toggleSort('name')}>Имя</button></th>
-                  <th><button type="button" onClick={() => toggleSort('role')}>Роль</button></th>
-                  <th><button type="button" onClick={() => toggleSort('class')}>Класс</button></th>
                   <th><button type="button" onClick={() => toggleSort('status')}>Статус</button></th>
                   <th><button type="button" onClick={() => toggleSort('spamblock')}>Спамблок</button></th>
                   <th><button type="button" onClick={() => toggleSort('constraint')}>Статус C</button></th>
@@ -845,11 +808,11 @@ const CustomAutomationAccountsPage = () => {
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={11}>Загрузка...</td>
+                    <td colSpan={9}>Загрузка...</td>
                   </tr>
                 ) : sortedAccounts.length === 0 ? (
                   <tr>
-                    <td colSpan={11}>Ничего не найдено по текущим фильтрам.</td>
+                    <td colSpan={9}>Ничего не найдено по текущим фильтрам.</td>
                   </tr>
                 ) : (
                   sortedAccounts.map((account) => {
@@ -884,14 +847,6 @@ const CustomAutomationAccountsPage = () => {
                             </small>
                           </div>
                         </td>
-                        <td>
-                          {(account.roles || []).length
-                            ? (account.roles || []).map((role) => (
-                                <span key={role} className="acc-chip">{ACCOUNT_ROLE_LABELS[role] || role}</span>
-                              ))
-                            : <span className="acc-chip acc-chip--mute">—</span>}
-                        </td>
-                        <td>{CLASS_LABELS[account.assigned_class] || '—'}</td>
                         <td><span className={`acc-chip acc-chip--${status.chip}`}>{status.label}</span></td>
                         <td>
                           <span className={`acc-chip acc-chip--${account.is_spamblocked ? 'bad' : 'ok'}`}>
@@ -923,14 +878,11 @@ const CustomAutomationAccountsPage = () => {
             <button type="button" className="acc-icon-btn" onClick={() => goPage(pageCount)} disabled={page >= pageCount}>»</button>
           </div>
           <span>Показано {from}–{to} из {total} аккаунтов</span>
-          <select
-            value={filters.limit}
+          <CustomSelect
+            value={String(filters.limit)}
+            options={PAGE_SIZES.map((size) => ({ value: String(size), label: String(size) }))}
             onChange={(event) => setFilters((prev) => ({ ...prev, limit: Number(event.target.value), offset: 0 }))}
-          >
-            {PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 
@@ -1045,7 +997,6 @@ const CustomAutomationAccountsPage = () => {
                 <span className={`acc-chip acc-chip--${statusMeta(drawerAccount).chip}`}>{statusMeta(drawerAccount).label}</span>
                 {drawerAccount.is_spamblocked ? <span className="acc-chip acc-chip--bad">Спамблок</span> : null}
                 {drawerAccount.is_channel_banned ? <span className="acc-chip acc-chip--bad">Бан в каналах</span> : null}
-                <span className="acc-chip">{CLASS_LABELS[drawerAccount.assigned_class] || 'Класс не задан'}</span>
               </div>
               <div className="form-group">
                 <label htmlFor="acc-name">Имя</label>
@@ -1076,27 +1027,6 @@ const CustomAutomationAccountsPage = () => {
                 <CustomFileButton variant="ubt" accept="image/*" onFile={(file) => handleAccountAvatar(drawerAccount, file)}>
                   Аватар
                 </CustomFileButton>
-              </div>
-              <div>
-                <label>Функции</label>
-                <div className="acc-role-list">
-                  {ACCOUNT_ROLE_OPTIONS.map((option) => (
-                    <label key={option.value}>
-                      <input
-                        type="checkbox"
-                        checked={(drawerAccount.roles || []).includes(option.value)}
-                        onChange={(event) => {
-                          const current = drawerAccount.roles || [];
-                          const next = event.target.checked
-                            ? [...current, option.value]
-                            : current.filter((role) => role !== option.value);
-                          handleRolesChange(drawerAccount.id, next);
-                        }}
-                      />
-                      {option.label}
-                    </label>
-                  ))}
-                </div>
               </div>
               <p className="form-hint">
                 Прокси: {drawerAccount.proxy_label || 'авто из пула'}. Отлёжка: {formatRelative(drawerAccount.last_used_at)}.

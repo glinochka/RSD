@@ -1,14 +1,14 @@
 """Settings validation and feature-flag helpers for /custom automations.
 
-Gating is role-based now.  Account classes are no longer used.
+Gating is task-based: each module runs on the accounts selected in that task.
+Here we only check that live accounts exist when a global flag is on.
 """
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...alembic.models import AccountRole, CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
-from .account_roles import ACCOUNT_ROLES, effective_roles, has_shilling_role, shilling_pair_ready
+from ...alembic.models import CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
 from .lead_keywords import normalize_lead_keywords
 
 
@@ -24,14 +24,6 @@ async def _live_pool_accounts(session: AsyncSession, automation_id: int) -> list
         )
     )
     return list(result.all())
-
-
-async def count_accounts_by_role(session: AsyncSession, automation_id: int) -> dict[str, int]:
-    counts = {role: 0 for role in ACCOUNT_ROLES}
-    for pool_account, social in await _live_pool_accounts(session, automation_id):
-        for role in effective_roles(pool_account, social):
-            counts[role] = counts.get(role, 0) + 1
-    return counts
 
 
 async def count_active_accounts(session: AsyncSession, automation_id: int) -> int:
@@ -55,29 +47,23 @@ async def validate_settings(
     can_enable: dict[str, bool] = {}
 
     live_accounts = await _live_pool_accounts(session, automation.id)
-    role_sets = [effective_roles(pool_account, social) for pool_account, social in live_accounts]
-    role_counts = {role: 0 for role in ACCOUNT_ROLES}
-    for roles in role_sets:
-        for role in roles:
-            role_counts[role] = role_counts.get(role, 0) + 1
     total_active = len(live_accounts)
-    shilling = sum(1 for roles in role_sets if has_shilling_role(roles))
-    intercept = role_counts.get(AccountRole.LEAD_INTERCEPT.value, 0)
-    neuro = role_counts.get(AccountRole.NEUROCOMMENTING.value, 0)
-    dmp = role_counts.get(AccountRole.DMP.value, 0)
+    has_live = total_active >= 1
+    has_pair = total_active >= 2
+    counts = {"live": total_active}
 
     from .solution_templates import is_dmp_notify_pipeline, qualification_enabled
 
-    can_enable["chat_monitoring"] = intercept >= 1
-    can_enable["neurocommenting"] = neuro >= 1
-    can_enable["discussion"] = (neuro + intercept + dmp + shilling) >= 1
-    can_enable["dmp_one"] = dmp >= 1
+    can_enable["chat_monitoring"] = has_live
+    can_enable["neurocommenting"] = has_live
+    can_enable["discussion"] = has_live
+    can_enable["dmp_one"] = has_live
     can_enable["amocrm"] = True
-    can_enable["shilling"] = shilling_pair_ready(role_sets)
+    can_enable["shilling"] = has_pair
 
     if is_dmp_notify_pipeline(automation):
         qualify = qualification_enabled(automation)
-        can_enable["dmp_one"] = True if not qualify else dmp >= 1
+        can_enable["dmp_one"] = True if not qualify else has_live
         if not (automation.telegram_bot_token_enc or "").strip():
             warnings.append("Укажите API-ключ Telegram-бота.")
         if not (automation.google_sheets_spreadsheet_id or "").strip():
@@ -92,44 +78,29 @@ async def validate_settings(
         ) or 0
         if credential_count == 0:
             warnings.append("Создайте логин и пароль клиента — бот спрашивает их перед уведомлениями.")
-        if qualify and dmp < 1:
-            warnings.append("Квалификация включена, но нет активного DMP-аккаунта.")
+        if qualify and not has_live:
+            warnings.append("Квалификация включена, но нет живых аккаунтов для исходящих ЛС.")
         return {
             "warnings": warnings,
             "can_enable": can_enable,
-            "counts": role_counts,
+            "counts": counts,
         }
 
     if automation.is_chat_monitoring_enabled and not can_enable["chat_monitoring"]:
-        warnings.append(
-            "Перехват заявок включён, но нет аккаунтов с функцией «перехват заявок». "
-            "Назначьте функцию в разделе Аккаунты или отключите модуль."
-        )
+        warnings.append("Перехват заявок включён, но нет живых аккаунтов.")
     if automation.is_chat_monitoring_enabled:
         if not normalize_lead_keywords(getattr(automation, "lead_keywords", None)):
             warnings.append(
                 "Перехват заявок включён, но нет ключевых слов — сообщения не уйдут в LLM и в ЛС."
             )
     if automation.is_neurocommenting_enabled and not can_enable["neurocommenting"]:
-        warnings.append(
-            "Нейрокомментинг включён, но нет аккаунтов с этой функцией. "
-            "Назначьте функцию в разделе Аккаунты или отключите модуль."
-        )
+        warnings.append("Нейрокомментинг включён, но нет живых аккаунтов.")
     if automation.is_digital_footprint_enabled and not can_enable["discussion"]:
-        warnings.append(
-            "Искусственная активность в чатах включена, но нет аккаунтов с назначенной функцией. "
-            "Назначьте функции в разделе Аккаунты или отключите модуль."
-        )
+        warnings.append("Искусственная активность в чатах включена, но нет живых аккаунтов.")
     if automation.is_dmp_one_enabled and not can_enable["dmp_one"]:
-        warnings.append(
-            "DMP.one включён, но нет аккаунта с функцией DMP для исходящих ЛС. "
-            "Назначите функцию DMP или отключите модуль."
-        )
+        warnings.append("DMP.one включён, но нет живых аккаунтов для исходящих ЛС.")
     if automation.is_shilling_enabled and not can_enable["shilling"]:
-        warnings.append(
-            "Шиллинг включён, но нет пары: назначьте «Шиллинг 1 (вопрос)» и «Шиллинг 2 (ответ)» "
-            "двум разным аккаунтам или отключите модуль."
-        )
+        warnings.append("Шиллинг включён, но нужно минимум два живых аккаунта.")
     if automation.max_daily_messages_per_account <= 0:
         warnings.append("Дневной лимит сообщений на аккаунт равен 0 — сообщения не будут отправляться.")
     if total_active == 0:
@@ -156,7 +127,7 @@ async def validate_settings(
     return {
         "warnings": warnings,
         "can_enable": can_enable,
-        "counts": role_counts,
+        "counts": counts,
     }
 
 

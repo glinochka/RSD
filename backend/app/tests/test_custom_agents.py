@@ -655,12 +655,21 @@ class TestSettings:
     ):
         response = await client.patch(
             f"/api/custom/automations/{custom_automation.id}/settings",
-            json={"is_chat_monitoring_enabled": True, "lead_manager_contact": "@manager"},
+            json={
+                "is_chat_monitoring_enabled": True,
+                "lead_manager_contact": "@manager",
+                "work_hour_start": 9,
+                "work_hour_end": 19,
+                "work_weekdays": [0, 1, 2, 3, 4, 5],
+            },
             headers={"Authorization": f"Bearer {client_token}"},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["is_chat_monitoring_enabled"] is True
+        assert data["work_hour_start"] == 9
+        assert data["work_hour_end"] == 19
+        assert data["work_weekdays"] == [0, 1, 2, 3, 4, 5]
         assert "warnings" in data
         assert any("перехват" in warning.lower() for warning in data["warnings"])
 
@@ -1732,7 +1741,8 @@ class TestSchedulerContracts:
         assert "join" in factories
         assert "session_hygiene" in factories
         assert "lead_warmup" in factories
-        assert "account_warmup" in factories
+        assert "account_sessions" in factories
+        assert "account_warmup" not in factories
         assert "test_watch" in factories
         for name, fn in factories.items():
             params = [
@@ -1769,7 +1779,9 @@ class TestSchedulerContracts:
         assert "session_hygiene" in jobs
         assert "monitor" in jobs
         assert "lead_warmup" in jobs
-        assert "account_warmup" in jobs
+        assert "account_warmup" not in jobs
+        assert "idle_browse" not in jobs
+        assert "peer_dialog" not in jobs
         assert "test_watch" not in jobs
 
 
@@ -1908,20 +1920,21 @@ class TestShilling:
             )
         await session.commit()
 
-    async def test_commenting_does_not_pick_shilling_class(
+    async def test_commenting_picks_live_account(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from app.services.custom.rotation_service import select_account_for_action
 
-        await self._add_account(
+        account = await self._add_account(
             test_session,
             custom_automation,
             account_class=AccountClass.SHILLING.value,
-            username="shill_only",
+            username="live_pick",
             phone="+79990000001",
         )
         selected = await select_account_for_action(test_session, custom_automation.id, "commenting")
-        assert selected is None
+        assert selected is not None
+        assert selected.id == account.id
 
     async def test_select_two_distinct_shilling_accounts(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -2219,12 +2232,12 @@ class TestShilling:
                 sleep=fake_sleep,
             )
         assert result["status"] == "ok"
-        assert result["setup_account_id"] == asker.id
-        assert result["reply_account_id"] == answerer.id
-        assert send.await_args_list[0].args[3].id == asker.id
-        assert send.await_args_list[0].args[4] == "Это вопрос?"
-        assert send.await_args_list[1].args[3].id == answerer.id
-        assert send.await_args_list[1].args[4] == "Это ответ."
+        assert result["setup_account_id"] != result["reply_account_id"]
+        assert {result["setup_account_id"], result["reply_account_id"]} == {asker.id, answerer.id}
+        used = {call.args[3].id for call in send.await_args_list}
+        assert used == {asker.id, answerer.id}
+        texts = [call.args[4] for call in send.await_args_list]
+        assert texts == ["Это вопрос?", "Это ответ."]
 
     async def test_post_shilling_reply_targets_discussion_thread(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -2826,10 +2839,11 @@ class TestShilling:
 
     async def test_scheduler_starts_shilling_job(self):
         from types import SimpleNamespace
+        from app.services.custom.account_session_orchestrator import _enabled_streams
         from app.services.custom.scheduler_manager import CustomAutomationScheduler
 
         factories = CustomAutomationScheduler._job_factories()
-        assert "shilling" in factories
+        assert "account_sessions" in factories
         on = SimpleNamespace(
             is_chat_monitoring_enabled=False,
             is_neurocommenting_enabled=False,
@@ -2837,10 +2851,12 @@ class TestShilling:
             is_dmp_one_enabled=False,
             is_amocrm_enabled=False,
             is_shilling_enabled=True,
+            account_warmup_enabled=False,
+            module_settings={},
         )
-        jobs = CustomAutomationScheduler._enabled_jobs(on)
-        assert "shilling" in jobs
-        assert "neurocommenting" in jobs
+        names = {name for name, _fn in _enabled_streams(on)}
+        assert "shilling" in names
+        assert "neurocommenting" not in names
 
     async def test_default_prompts_include_shilling(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -3536,6 +3552,19 @@ class TestDmpBotPipeline:
         assert row.lead_warmup_enabled is True
         assert row.is_chat_monitoring_enabled is False
         assert row.is_amocrm_enabled is False
+
+        amo = await client.patch(
+            f"/api/custom/automations/{automation_id}/settings",
+            headers=headers,
+            json={"is_amocrm_enabled": True},
+        )
+        assert amo.status_code == 200, amo.text
+        assert amo.json()["is_amocrm_enabled"] is True
+        test_session.expire_all()
+        row = await test_session.get(CustomAutomation, automation_id)
+        assert row.is_amocrm_enabled is True
+        assert row.is_chat_monitoring_enabled is False
+        assert row.is_neurocommenting_enabled is False
 
     async def test_dmp_webhook_creates_lead_without_telegram_resolve(
         self,
@@ -4793,7 +4822,7 @@ class TestAccountRolesWarmupAndLab:
         await session.refresh(account)
         return account
 
-    async def test_explicit_roles_override_class(
+    async def test_live_account_is_eligible_for_task_actions(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from app.services.custom.rotation_service import select_account_for_action
@@ -4802,21 +4831,21 @@ class TestAccountRolesWarmupAndLab:
             test_session,
             custom_automation,
             account_class=AccountClass.ONE_DAY.value,
-            username="role_shill",
+            username="task_acc",
             phone="+79991000001",
             roles=["shilling"],
         )
         shill = await select_account_for_action(test_session, custom_automation.id, "shilling")
         comment = await select_account_for_action(test_session, custom_automation.id, "commenting")
-        assert shill is not None and shill.username == "role_shill"
-        assert comment is None
+        assert shill is not None and shill.username == "task_acc"
+        assert comment is not None and comment.username == "task_acc"
 
-    async def test_empty_roles_are_silent(
+    async def test_empty_roles_still_run_tasks(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from app.services.custom.rotation_service import select_account_for_action
 
-        await self._add_account(
+        account = await self._add_account(
             test_session,
             custom_automation,
             account_class=AccountClass.ONE_DAY.value,
@@ -4824,14 +4853,14 @@ class TestAccountRolesWarmupAndLab:
             phone="+79991000002",
             roles=[],
         )
-        assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
-        assert await select_account_for_action(test_session, custom_automation.id, "neurocommenting") is None
-        assert await select_account_for_action(test_session, custom_automation.id, "shilling") is None
-        assert await select_account_for_action(test_session, custom_automation.id, "dm") is None
+        assert await select_account_for_action(test_session, custom_automation.id, "commenting") is not None
+        assert await select_account_for_action(test_session, custom_automation.id, "shilling") is not None
+        assert await select_account_for_action(test_session, custom_automation.id, "dm") is not None
         joined = await select_account_for_action(
             test_session, custom_automation.id, "prepare_join", consume_quota=False
         )
         assert joined is not None
+        assert joined.id == account.id
 
     async def test_warmup_blocks_production_but_allows_join(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -4853,7 +4882,7 @@ class TestAccountRolesWarmupAndLab:
         )
         assert joined is not None
 
-    async def test_patch_account_roles(
+    async def test_account_api_has_no_roles_or_class(
         self,
         client: AsyncClient,
         test_session: AsyncSession,
@@ -4867,13 +4896,21 @@ class TestAccountRolesWarmupAndLab:
             username="role_patch",
             phone="+79991000004",
         )
-        response = await client.patch(
+        headers = {"Authorization": f"Bearer {client_token}"}
+        refused = await client.patch(
             f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}",
-            headers={"Authorization": f"Bearer {client_token}"},
+            headers=headers,
             json={"roles": ["neurocommenting", "dmp", "shilling"]},
         )
-        assert response.status_code == 200, response.text
-        assert response.json()["roles"] == ["neurocommenting", "dmp", "shilling_question", "shilling_answer"]
+        assert refused.status_code == 400, refused.text
+        listed = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts",
+            headers=headers,
+        )
+        assert listed.status_code == 200, listed.text
+        item = next(row for row in listed.json()["items"] if row["id"] == account.id)
+        assert "roles" not in item
+        assert "assigned_class" not in item
 
     async def test_fixed_shilling_phrases_from_prompt(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -5039,7 +5076,6 @@ class TestAccountRolesWarmupAndLab:
             phone_number="+79991000006",
             username="before_flag",
             display_name="before_flag",
-            account_class=AccountClass.ONE_DAY.value,
             encrypted_session="x",
             session_file_path="sessions/before_flag.session",
         )
@@ -5059,7 +5095,6 @@ class TestAccountRolesWarmupAndLab:
             phone_number="+79991000007",
             username="after_flag",
             display_name="after_flag",
-            account_class=AccountClass.ONE_DAY.value,
             encrypted_session="x",
             session_file_path="sessions/after_flag.session",
         )
@@ -5679,7 +5714,7 @@ class TestAccountRolesWarmupAndLab:
             )
         )
         assert "test_watch" in jobs
-        assert "account_warmup" in jobs
+        assert "account_warmup" not in jobs
 
     async def test_prompt_patch_saves_shilling_pair(
         self,
@@ -5865,7 +5900,6 @@ class TestAccountProxies:
             phone_number="+79993000009",
             username="new_proxy_acc",
             display_name="new_proxy_acc",
-            account_class=AccountClass.ONE_DAY.value,
             encrypted_session="mock_encrypted_session",
             session_file_path="sessions/new_proxy_acc.session",
         )
@@ -6848,6 +6882,18 @@ class TestPeerDialogAndWarmupPacing:
         for left, right in pairs:
             assert left.id != right.id
 
+    async def test_pair_accounts_covering_includes_leftover(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.account_peer_dialog_service import pair_accounts_covering
+
+        accounts = [SimpleNamespace(id=i) for i in range(5)]
+        pairs = pair_accounts_covering(accounts, rng=__import__("random").Random(1))
+        used = {account.id for pair in pairs for account in pair}
+        assert used == {0, 1, 2, 3, 4}
+        for left, right in pairs:
+            assert left.id != right.id
+
 
 class TestUbtJobsAndStats:
     async def test_jobs_and_stats_endpoints(
@@ -6953,6 +6999,13 @@ class TestUbtJobsAndStats:
             headers=headers,
         )
         assert stats.status_code == 200
+        payload = stats.json()
+        for history_type in ("warmup", "masspriming", "parser"):
+            extra = await client.get(
+                f"/api/custom/automations/{custom_automation.id}/stats?history_type={history_type}&min_attempts=1",
+                headers=headers,
+            )
+            assert extra.status_code == 200, extra.text
         payload = stats.json()
         assert payload["dashboard"]["accounts"] == 1
         assert payload["dashboard"]["chats"] == 1
@@ -7303,6 +7356,7 @@ class TestChatBroadcastsModule:
         filled = fill_broadcast_vars("Hi {group_title} from {my_first_name} @{group_username}", chat=chat, account=account)
         assert filled == "Hi Demo Group from Ivan @demo_group"
 
+        from app.services.custom.account_session_orchestrator import _enabled_streams
         from app.services.custom.scheduler_manager import CustomAutomationScheduler
 
         jobs = CustomAutomationScheduler._enabled_jobs(
@@ -7316,7 +7370,21 @@ class TestChatBroadcastsModule:
                 module_settings={"chat_broadcasts": {"enabled": True}},
             )
         )
-        assert "chat_broadcast" in jobs
+        assert "account_sessions" in jobs
+        assert "chat_broadcast" not in jobs
+        names = {
+            name
+            for name, _fn in _enabled_streams(
+                SimpleNamespace(
+                    is_neurocommenting_enabled=False,
+                    is_digital_footprint_enabled=False,
+                    is_shilling_enabled=False,
+                    account_warmup_enabled=False,
+                    module_settings={"chat_broadcasts": {"enabled": True}},
+                )
+            )
+        }
+        assert "chat_broadcast" in names
         assert CustomAutomationScheduler._has_modules_on(
             SimpleNamespace(
                 is_chat_monitoring_enabled=False,
@@ -7728,6 +7796,84 @@ class TestWarmupModule:
         assert preset.status_code == 200
         assert any(item["name"] == "Утро" for item in preset.json()["settings"]["presets"])
 
+    def test_scheduler_respects_warmup_toggles(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.account_session_orchestrator import _enabled_streams
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        base = {
+            "is_chat_monitoring_enabled": False,
+            "is_neurocommenting_enabled": False,
+            "is_digital_footprint_enabled": False,
+            "is_dmp_one_enabled": False,
+            "is_amocrm_enabled": False,
+            "is_shilling_enabled": False,
+            "test_channel_username": "",
+            "telegram_bot_token_enc": "",
+        }
+
+        def stream_names(automation):
+            return {name for name, _fn in _enabled_streams(automation)}
+
+        off = SimpleNamespace(account_warmup_enabled=False, module_settings={"warmup": {"mode": "auto"}}, **base)
+        jobs = CustomAutomationScheduler._enabled_jobs(off)
+        assert "account_warmup" not in jobs
+        assert stream_names(off).isdisjoint({"account_warmup", "idle_browse", "peer_dialog"})
+        assert CustomAutomationScheduler._has_modules_on(off) is False
+
+        auto = SimpleNamespace(account_warmup_enabled=True, module_settings={"warmup": {"mode": "auto"}}, **base)
+        assert {"account_warmup", "idle_browse", "peer_dialog"} <= stream_names(auto)
+        assert CustomAutomationScheduler._has_modules_on(auto) is True
+
+        no_peer = SimpleNamespace(
+            account_warmup_enabled=True,
+            module_settings={"warmup": {"mode": "auto", "do_peer_dialogs": False, "do_warmup_dms": True}},
+            **base,
+        )
+        names = stream_names(no_peer)
+        assert "peer_dialog" not in names
+        assert "idle_browse" in names
+        assert "account_warmup" in names
+
+        no_dms = SimpleNamespace(
+            account_warmup_enabled=True,
+            module_settings={"warmup": {"mode": "auto", "do_warmup_dms": False}},
+            **base,
+        )
+        names = stream_names(no_dms)
+        assert "account_warmup" not in names
+        assert "idle_browse" in names
+
+        manual = SimpleNamespace(
+            account_warmup_enabled=True,
+            module_settings={"warmup": {"mode": "manual"}},
+            **base,
+        )
+        assert stream_names(manual).isdisjoint({"account_warmup", "idle_browse", "peer_dialog"})
+        assert CustomAutomationScheduler._has_modules_on(manual) is False
+
+    def test_picker_filters_hide_in_work_and_proxy(self):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from app.services.custom.module_account_filters import no_accounts_picked, skip_account_for_module
+
+        today = datetime.now(timezone.utc).replace(tzinfo=None)
+        idle = SimpleNamespace(is_active=True, telegram_proxy=None, daily_messages_sent=0, daily_messages_reset_at=today)
+        busy = SimpleNamespace(is_active=True, telegram_proxy=None, daily_messages_sent=4, daily_messages_reset_at=today)
+        proxied = SimpleNamespace(is_active=True, telegram_proxy="socks5://x", daily_messages_sent=0, daily_messages_reset_at=today)
+
+        assert skip_account_for_module({"hide_in_work": True}, idle) is False
+        assert skip_account_for_module({"hide_in_work": True}, busy) is True
+        assert skip_account_for_module({"require_proxy": True}, idle) is True
+        assert skip_account_for_module({"require_proxy": True}, proxied) is False
+        pool = SimpleNamespace(proxy_id=12)
+        assert skip_account_for_module({"require_proxy": True}, idle, pool) is False
+        assert no_accounts_picked({}) is True
+        assert no_accounts_picked({"account_ids": []}) is True
+        assert no_accounts_picked({"account_ids": [3]}) is False
+
 
 class TestMassprimingModule:
     async def test_toggle_ttl_never_sends_text(self):
@@ -7825,7 +7971,23 @@ class TestMassprimingModule:
                 module_settings={"masspriming": {"enabled": True}},
             )
         )
-        assert "masspriming" in jobs
+        assert "account_sessions" in jobs
+        assert "masspriming" not in jobs
+        from app.services.custom.account_session_orchestrator import _enabled_streams
+
+        names = {
+            name
+            for name, _fn in _enabled_streams(
+                SimpleNamespace(
+                    is_neurocommenting_enabled=False,
+                    is_digital_footprint_enabled=False,
+                    is_shilling_enabled=False,
+                    account_warmup_enabled=False,
+                    module_settings={"masspriming": {"enabled": True}},
+                )
+            )
+        }
+        assert "masspriming" in names
 
         pool = await get_or_create_default_pool(test_session, custom_automation.id)
         account = SocialAccount(
@@ -8032,6 +8194,21 @@ class TestParserModule:
         assert payload["settings"]["account_ids"] == [account.id]
         assert payload["issues"] == []
 
+        empty_run = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser/run",
+            headers=headers,
+            json={},
+        )
+        assert empty_run.status_code == 200, empty_run.text
+        kept = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser",
+            headers=headers,
+        )
+        assert kept.status_code == 200
+        assert kept.json()["enabled"] is True
+        assert kept.json()["settings"]["account_ids"] == [account.id]
+        assert kept.json()["settings"]["member_limit"] == 500
+
         started = await client.post(
             f"/api/custom/automations/{custom_automation.id}/modules/parser/run",
             headers=headers,
@@ -8040,4 +8217,122 @@ class TestParserModule:
         assert started.status_code == 200
         assert started.json()["status"] == "started"
         assert started.json()["job_id"].startswith("job:")
+
+
+class TestDmBroadcastsAndAddlist:
+    def test_even_redistribute_keeps_old_and_fills_new_worker(self):
+        from app.services.custom.chat_addlist_service import even_redistribute, parse_addlist_slug
+
+        assert parse_addlist_slug("https://t.me/addlist/AbCdef12345") == "AbCdef12345"
+        chats = list(range(1, 11))
+        first = even_redistribute([1, 2], chats)
+        assert sorted(first[1] + first[2]) == chats
+        assert abs(len(first[1]) - len(first[2])) <= 1
+        grown = even_redistribute([1, 2, 3], chats, first)
+        assert sorted(grown[1] + grown[2] + grown[3]) == chats
+        extra = even_redistribute([1, 2, 3], chats + [11, 12], grown)
+        assert 11 in extra[1] + extra[2] + extra[3]
+        assert 12 in extra[1] + extra[2] + extra[3]
+        capped = even_redistribute([1], list(range(250)))
+        assert len(capped[1]) == 200
+
+    def test_work_mode_idle_windows(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from app.services.custom.work_mode import daily_idle_windows, normalize_work_mode
+
+        mode = normalize_work_mode({"hour_start": 8, "hour_end": 20, "weekdays": [0, 1, 2, 3, 4]})
+        now = datetime(2026, 10, 6, 12, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+        windows = daily_idle_windows(7, now=now, mode=mode)
+        assert len(windows) == 6
+        long_ones = [hi - lo for lo, hi in windows if hi - lo >= 0.5]
+        assert long_ones
+
+    async def test_dm_broadcast_module_screen(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import AccountClass, PoolAccount, SocialAccount
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/dm-broadcasts",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert "Выберите хотя бы один аккаунт" in body["issues"]
+        assert "Добавьте хотя бы одного получателя" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/dm-broadcasts/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000888",
+            username="dm_acc",
+            display_name="DM Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/dm_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await test_session.commit()
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/dm-broadcasts",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "recipients": ["@demo_user"],
+                "messages": [{"text": "привет {username}"}],
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["recipients"] == ["@demo_user"]
+        assert payload["issues"] == []
+
+        added = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/dm-broadcasts/recipients",
+            headers=headers,
+            json={"recipients": "@second_user\nhttps://t.me/third_user"},
+        )
+        assert added.status_code == 200
+        assert "@second_user" in added.json()["settings"]["recipients"]
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/dm-broadcasts/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
 

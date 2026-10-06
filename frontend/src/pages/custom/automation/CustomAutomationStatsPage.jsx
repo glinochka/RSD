@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customStats.css';
+import '../../../styles/customNeuro.css';
 
 const PERIODS = [
   { id: 'all', label: 'За всё время' },
@@ -27,9 +30,10 @@ const HISTORY_TABS = [
   { id: 'dmp', label: 'История DMP' },
   { id: 'masslooking', label: 'История просмотров' },
   { id: 'chat_broadcast', label: 'История чат-рассылок' },
+  { id: 'dm_broadcast', label: 'История ЛС-рассылок' },
   { id: 'warmup', label: 'История прогрева' },
   { id: 'masspriming', label: 'История масспрайминга' },
-  { id: 'parser', label: 'История парсера' },
+  { id: 'parser', label: 'История парсера юзеров' },
 ];
 
 const MODULE_LABELS = {
@@ -40,22 +44,24 @@ const MODULE_LABELS = {
   dmp: 'DMP',
   masslooking: 'Просмотры',
   chat_broadcast: 'Чат-рассылки',
+  dm_broadcast: 'ЛС-рассылки',
   warmup: 'Прогрев',
   masspriming: 'Прайминг',
-  parser: 'Парсер',
+  parser: 'Парсер юзеров',
 };
 
 const MODULE_COLORS = {
-  neurocommenting: '#1e88e5',
-  shilling: '#7c3aed',
-  discussion: '#0ea5e9',
-  intercept: '#f59e0b',
-  dmp: '#10b981',
+  neurocommenting: '#2f2f2f',
+  shilling: '#525252',
+  discussion: '#737373',
+  intercept: '#ea580c',
+  dmp: '#059669',
   masslooking: '#64748b',
-  chat_broadcast: '#1e88e5',
+  chat_broadcast: '#404040',
+  dm_broadcast: '#1f2937',
   warmup: '#0f766e',
-  masspriming: '#475569',
-  parser: '#0369a1',
+  masspriming: '#334155',
+  parser: '#6b7280',
 };
 
 const DIST_LABELS = {
@@ -75,7 +81,7 @@ const DIST_COLORS = {
   banned: '#ef4444',
   revoked: '#94a3b8',
   channel_banned: '#64748b',
-  quarantine: '#8b5cf6',
+  quarantine: '#64748b',
 };
 
 const Ico = ({ children }) => (
@@ -345,14 +351,14 @@ const CustomAutomationStatsPage = () => {
         <>
           <div className="st-kpis st-kpis--3">
             <div className="st-kpi">
-              <div className="st-kpi-icon" style={{ background: '#e8f4fd', color: '#1e88e5' }}>
+              <div className="st-kpi-icon" style={{ background: '#f3f3f3', color: '#2f2f2f' }}>
                 <Ico><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></Ico>
               </div>
               <strong>{dashboard.accounts || 0}</strong>
               <span>Аккаунты</span>
             </div>
             <div className="st-kpi">
-              <div className="st-kpi-icon" style={{ background: '#eef6ff', color: '#0284c7' }}>
+              <div className="st-kpi-icon" style={{ background: '#f3f3f3', color: '#2f2f2f' }}>
                 <Ico><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></Ico>
               </div>
               <strong>{dashboard.chats || 0}</strong>
@@ -409,7 +415,7 @@ const CustomAutomationStatsPage = () => {
                               className="st-col-fill"
                               style={{
                                 height: `${Math.max(4, Math.round((Number(value) / (seriesMax || 1)) * 120))}px`,
-                                background: MODULE_COLORS[key] || '#1e88e5',
+                                background: MODULE_COLORS[key] || '#2f2f2f',
                               }}
                               title={`${MODULE_LABELS[key] || key}: ${value}`}
                             />
@@ -449,14 +455,14 @@ const CustomAutomationStatsPage = () => {
         <>
           <div className="st-kpis st-kpis--8">
             {[
-              { label: 'Всего аккаунтов', value: accounts.total, color: '#e8f4fd', ink: '#1e88e5' },
+              { label: 'Всего аккаунтов', value: accounts.total, color: '#f3f3f3', ink: '#2f2f2f' },
               { label: 'Валидный', value: accounts.active, color: '#ecfdf3', ink: '#16a34a' },
-              { label: 'Заморожен', value: accounts.frozen, color: '#e0f2fe', ink: '#0284c7' },
+              { label: 'Заморожен', value: accounts.frozen, color: '#f1f5f9', ink: '#475569' },
               { label: 'Не авторизован', value: accounts.empty, color: '#f1f5f9', ink: '#64748b' },
               { label: 'Спамблок', value: accounts.spamblocked, color: '#fff7ed', ink: '#ea580c' },
               { label: 'Забанен', value: accounts.banned, color: '#fef2f2', ink: '#dc2626' },
               { label: 'Разавторизован', value: accounts.revoked, color: '#fef2f2', ink: '#b91c1c' },
-              { label: 'С прокси', value: accounts.with_proxy, color: '#eff6ff', ink: '#2563eb' },
+              { label: 'С прокси', value: accounts.with_proxy, color: '#f3f3f3', ink: '#2f2f2f' },
             ].map((item) => (
               <div key={item.label} className="st-kpi st-kpi--center">
                 <div className="st-kpi-icon" style={{ background: item.color, color: item.ink }}>
@@ -639,9 +645,7 @@ const CustomAutomationStatsPage = () => {
               </label>
               <div className="st-stepper">
                 Минимум попыток
-                <button type="button" onClick={() => setMinAttempts((value) => Math.max(1, value - 1))}>−</button>
-                <strong>{minAttempts}</strong>
-                <button type="button" onClick={() => setMinAttempts((value) => Math.min(100, value + 1))}>+</button>
+                <Stepper value={minAttempts} min={1} max={100} onChange={setMinAttempts} />
               </div>
             </div>
             <div className="st-lists">
@@ -681,16 +685,24 @@ const CustomAutomationStatsPage = () => {
                 onChange={(event) => setSearchInput(event.target.value)}
                 placeholder="Поиск комментария, канала..."
               />
-              <select value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="">Статус</option>
-                <option value="success">Успех</option>
-                <option value="error">Ошибка</option>
-              </select>
-              <select value={visibility} onChange={(event) => setVisibility(event.target.value)}>
-                <option value="">Видимость</option>
-                <option value="open">Комментарии открыты</option>
-                <option value="closed">Комментарии закрыты</option>
-              </select>
+              <CustomSelect
+                value={status}
+                options={[
+                  { value: '', label: 'Статус' },
+                  { value: 'success', label: 'Успех' },
+                  { value: 'error', label: 'Ошибка' },
+                ]}
+                onChange={(event) => setStatus(event.target.value)}
+              />
+              <CustomSelect
+                value={visibility}
+                options={[
+                  { value: '', label: 'Видимость' },
+                  { value: 'open', label: 'Комментарии открыты' },
+                  { value: 'closed', label: 'Комментарии закрыты' },
+                ]}
+                onChange={(event) => setVisibility(event.target.value)}
+              />
               <button
                 type="button"
                 className="acc-btn acc-btn--ghost"

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import account_matches_action
 from .account_pacing import farm_overlap_active_hours
+from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .chat_inspect_service import probe_comments_readonly
 from .chat_membership_service import (
     account_is_joined,
@@ -413,6 +414,8 @@ async def process_chat_target(
     if cfg.get("max_per_chat") not in (None, ""):
         config["max_per_day"] = cfg.get("max_per_chat")
     allowed_accounts = set(_as_int_list(cfg.get("account_ids")))
+    if not lab_mode and not allowed_accounts:
+        return await _skip_chat(session, chat_target, "no_account")
     keywords = normalize_lead_keywords(cfg.get("keywords"))
     post_filter = str(cfg.get("post_filter") or "new").strip().lower()
     try:
@@ -430,7 +433,6 @@ async def process_chat_target(
         prompt_id = None
     delay_min, delay_max = _delay_bounds(cfg)
     respect_night = bool(cfg.get("respect_night_hours", True))
-    require_proxy = bool(cfg.get("require_proxy"))
     chat_limit = chat_comment_daily_limit(config, lab_mode=lab_mode)
     # Hard cap: max 3 target actions per chat per day to avoid annoying admins.
     target_actions_today = 0 if lab_mode else await count_target_actions_today(session, automation_id, chat_target.id)
@@ -448,7 +450,13 @@ async def process_chat_target(
         if allowed_accounts and account.id not in allowed_accounts:
             tried.add(account.id)
             continue
-        if require_proxy and not getattr(account, "telegram_proxy", None):
+        pool = await session.scalar(
+            select(PoolAccount).where(
+                PoolAccount.social_account_id == account.id,
+                PoolAccount.custom_automation_id == automation_id,
+            )
+        )
+        if skip_account_for_module(cfg, account, pool):
             tried.add(account.id)
             continue
         if not account.session_file_path:
@@ -645,16 +653,24 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
     chat_count = 0
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
-        if not automation or not (
-            automation.is_neurocommenting_enabled or automation.is_shilling_enabled
-        ):
-            logger.info("Post engagement disabled or automation not found for %s", automation_id)
+        if not automation:
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
 
         cfg = run_config if isinstance(run_config, dict) else None
         if cfg is None:
             cfg = ((automation.module_settings or {}).get("neurocommenting") or {})
-        chat_ids = set(_as_int_list(cfg.get("chat_ids")))
+        if not (
+            automation.is_neurocommenting_enabled
+            or automation.is_shilling_enabled
+            or bool(cfg.get("enabled"))
+        ):
+            logger.info("Post engagement disabled or automation not found for %s", automation_id)
+            return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "comments_sent": 0}
+        from .task_targets import resolve_task_chat_ids
+
+        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
         if chat_ids:
             chats = list(
                 (

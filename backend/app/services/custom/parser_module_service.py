@@ -19,10 +19,12 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .chat_folder_service import list_folders
+from .user_folder_service import list_user_folders
 from .chat_import_service import import_chats_from_file
-from .chat_join_service import create_chat_from_link
+from .chat_addlist_service import import_chat_links, split_link_tokens
 from .job_service import list_jobs
 from .parser_service import normalize_parser_targets, normalize_since_hours
+from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
 
@@ -127,19 +129,12 @@ def normalize_parser_settings(raw: Any) -> dict[str, Any]:
 
 def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
     in_work = bool(account.is_active and (current_daily_messages_sent(account) or 0) > 0)
-    eligible = bool(
-        account.session_file_path
-        and account.is_active
-        and not account.is_banned
-        and not account.is_frozen
-        and not account.is_spamblocked
-    )
+    eligible = account_is_task_ready(pool, account, "parser", exclude_spamblocked=True)
     return {
         "id": account.id,
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
         "warmup_status": pool.warmup_status or "idle",
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
@@ -270,6 +265,7 @@ async def get_parser_module(session: AsyncSession, automation_id: int) -> dict[s
         "accounts": [_account_row(account, pool) for account, pool in pairs],
         "chats": [_chat_row(chat) for chat in chats],
         "folders": [{"id": folder.id, "name": folder.name, "count": count} for folder, count in folder_rows],
+        "user_folders": await list_user_folders(session, automation_id),
         "jobs": parser_jobs,
         "results": results["items"],
         "results_total": results["total"],
@@ -388,22 +384,8 @@ async def import_parser_file(
 
 
 async def add_parser_targets(session: AsyncSession, automation_id: int, raw_links: str) -> dict[str, Any]:
-    added: list[int] = []
-    errors: list[str] = []
-    chunks: list[str] = []
-    for line in (raw_links or "").replace(",", " ").splitlines():
-        chunks.extend(part.strip() for part in line.split() if part.strip())
-    for link in chunks:
-        try:
-            chat = await create_chat_from_link(session, automation_id, link, mode=None)
-            added.append(chat.id)
-        except ValueError as exc:
-            if "уже добавлен" in str(exc):
-                errors.append(f"{link}: уже в списке")
-            else:
-                errors.append(f"{link}: {exc}")
-        except Exception as exc:
-            errors.append(f"{link}: {exc}")
+    chunks = split_link_tokens(raw_links)
+    added, errors = await import_chat_links(session, automation_id, raw_links, mode=None)
     automation = await session.get(CustomAutomation, automation_id)
     settings = normalize_parser_settings((automation.module_settings or {}).get("parser") if automation else {})
     settings["chat_ids"] = list(dict.fromkeys([*settings["chat_ids"], *added]))

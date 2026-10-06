@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import { useLiveRef } from './ubtPersist';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
 
@@ -33,27 +34,34 @@ const CustomAutomationDmpSettingsPage = () => {
     loadSettings();
   }, [loadSettings]);
 
-  const handleSave = async (e) => {
-    e.preventDefault();
+  const formRef = useLiveRef(form);
+
+  const persistFlag = (partial) => {
+    const next = { ...formRef.current, ...partial };
+    formRef.current = next;
+    setForm(next);
     setIsSaving(true);
     setSuccess(null);
     setError(null);
-    try {
-      const payload = {
-        is_lead_qualification_enabled: Boolean(form.is_lead_qualification_enabled),
-      };
-      if (settings?.solution_kind === 'dmp_bot') {
-        payload.is_amocrm_enabled = Boolean(form.is_amocrm_enabled);
-      }
-      const data = await customService.updateAutomationSettings(id, payload);
-      setSettings(data);
-      setForm(data);
-      setSuccess('Настройки DMP сохранены');
-    } catch (err) {
-      setError(err.message || 'Не удалось сохранить');
-    } finally {
-      setIsSaving(false);
+    const payload = {
+      is_lead_qualification_enabled: Boolean(next.is_lead_qualification_enabled),
+    };
+    if (settings?.solution_kind === 'dmp_bot') {
+      payload.is_amocrm_enabled = Boolean(next.is_amocrm_enabled);
     }
+    customService.updateAutomationSettings(id, payload)
+      .then((data) => {
+        setSettings(data);
+        setForm(data);
+        setSuccess('Настройки DMP сохранены');
+      })
+      .catch((err) => setError(err.message || 'Не удалось сохранить'))
+      .finally(() => setIsSaving(false));
+  };
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    persistFlag({});
   };
 
   if (isLoading) {
@@ -81,14 +89,14 @@ const CustomAutomationDmpSettingsPage = () => {
             title="Квалификация номеров"
             description="ИИ находит чат по номеру и квалифицирует лид, прежде чем отдавать его дальше."
             checked={Boolean(form.is_lead_qualification_enabled)}
-            onChange={(checked) => setForm((prev) => ({ ...prev, is_lead_qualification_enabled: checked }))}
+            onChange={(checked) => persistFlag({ is_lead_qualification_enabled: checked })}
           />
           {settings?.solution_kind === 'dmp_bot' ? (
             <FeatureToggle
               title="Отправлять в AmoCRM"
               description="Квалифицированные номера уходят в воронку CRM."
               checked={Boolean(form.is_amocrm_enabled)}
-              onChange={(checked) => setForm((prev) => ({ ...prev, is_amocrm_enabled: checked }))}
+              onChange={(checked) => persistFlag({ is_amocrm_enabled: checked })}
             />
           ) : null}
         </div>

@@ -12,6 +12,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_humanization_should_idle, farm_overlap_active_hours, schedule_account_humanization_rest
+from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .humanization_session import inspect_peer_profile
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -219,6 +221,7 @@ async def prime_peer(
 ) -> dict[str, Any]:
     """Open DM and toggle auto-delete. Never sends a text message."""
     pause = sleeper or asyncio.sleep
+    await inspect_peer_profile(telethon, entity)
     contact = "skipped"
     if add_contact_flag:
         contact = await add_contact(telethon, entity)
@@ -276,11 +279,11 @@ async def _process_account(
         return 0
     if not (_media_root() / account.session_file_path).exists():
         return 0
-    if bool(cfg.get("require_proxy")) and not (getattr(account, "telegram_proxy", None) or (pool and pool.proxy_id)):
+    if skip_account_for_module(cfg, account, pool):
         return 0
     if bool(cfg.get("skip_quarantine", True)) and pool and (pool.warmup_status or "idle") in {"rest", "warming"}:
         return 0
-    if bool(cfg.get("respect_night_hours", True)) and account_humanization_should_idle(account):
+    if account_humanization_should_idle(account):
         return 0
     try:
         max_per_account = int(cfg.get("max_per_account") or 0)
@@ -386,9 +389,15 @@ async def run_masspriming_pass(automation_id: int, run_config: dict[str, Any] | 
         cfg = run_config if isinstance(run_config, dict) else ((automation.module_settings or {}).get("masspriming") or {})
         if not bool(cfg.get("enabled")):
             return {"status": "skipped", "reason": "disabled", "primed": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "primed": 0}
         if bool(cfg.get("respect_night_hours", True)) and not farm_overlap_active_hours():
             return {"status": "skipped", "reason": "night", "primed": 0}
         targets = normalize_prime_targets(cfg.get("targets"))
+        from .task_targets import resolve_user_folder_peers
+
+        extra = await resolve_user_folder_peers(session, automation_id, cfg, usernames_only=True)
+        targets = normalize_prime_targets([*targets, *extra])
         if not targets:
             return {"status": "skipped", "reason": "no_targets", "primed": 0}
         allowed = set(_as_int_list(cfg.get("account_ids")))

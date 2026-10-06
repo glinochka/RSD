@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
     AutomationActionLog,
-    ChatFolder,
     ChatTarget,
     CustomAutomation,
     PoolAccount,
@@ -21,7 +20,8 @@ from .account_warmup_service import (
     normalize_warmup_messages,
     normalize_warmup_usernames,
 )
-from .chat_join_service import create_chat_from_link
+from .chat_addlist_service import import_chat_links
+from .chat_folder_service import folder_payloads
 from .job_service import list_jobs
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
@@ -29,6 +29,7 @@ from .rotation_service import current_daily_messages_sent
 DEFAULT_WARMUP_SETTINGS: dict[str, Any] = {
     "account_ids": [],
     "chat_ids": [],
+    "folder_ids": [],
     "mode": "auto",
     "intensity": "auto",
     "do_warmup_dms": True,
@@ -89,6 +90,7 @@ def normalize_warmup_settings(raw: Any) -> dict[str, Any]:
     incoming = raw if isinstance(raw, dict) else {}
     data["account_ids"] = _as_int_list(incoming.get("account_ids"))
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
+    data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     mode = str(incoming.get("mode") or "auto").strip().lower()
     data["mode"] = mode if mode in {"auto", "manual"} else "auto"
@@ -133,6 +135,14 @@ def account_allowed(cfg: dict[str, Any], account_id: int) -> bool:
     return not allowed or account_id in allowed
 
 
+def warmup_scheduler_active(automation: CustomAutomation | None) -> bool:
+    """Auto idle/peer/DM streams — off and manual stay on the run button only."""
+    if not automation or not bool(getattr(automation, "account_warmup_enabled", False)):
+        return False
+    cfg = runtime_warmup_cfg(automation)
+    return str(cfg.get("mode") or "auto").strip().lower() != "manual"
+
+
 def session_action_allowlist(cfg: dict[str, Any] | None) -> set[str] | None:
     data = cfg or {}
     if not data:
@@ -165,7 +175,6 @@ def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
         "is_active": bool(account.is_active),
@@ -253,11 +262,7 @@ async def get_warmup_module(session: AsyncSession, automation_id: int, *, is_adm
             select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id, ChatTarget.black_boxed_at.is_(None)).order_by(ChatTarget.created_at.desc()).limit(400)
         )
     ).scalars().all()
-    folders = (
-        await session.execute(
-            select(ChatFolder).where(ChatFolder.custom_automation_id == automation_id).order_by(ChatFolder.created_at.desc())
-        )
-    ).scalars().all()
+    folders = await folder_payloads(session, automation_id)
     accounts = [_account_row(account, pool) for account, pool in pairs]
     usernames = normalize_warmup_usernames(automation.account_warmup_usernames)
     messages = normalize_warmup_messages(automation.account_warmup_messages)
@@ -275,7 +280,7 @@ async def get_warmup_module(session: AsyncSession, automation_id: int, *, is_adm
         "settings": settings,
         "accounts": accounts,
         "chats": [_chat_row(chat) for chat in chats],
-        "folders": [{"id": folder.id, "name": folder.name} for folder in folders],
+        "folders": folders,
         "jobs": wu_jobs,
         "summary": await _log_summary(session, automation_id),
         "username_count": len(usernames),
@@ -332,19 +337,7 @@ async def enroll_warmup_accounts(session: AsyncSession, automation_id: int, acco
 
 
 async def add_warmup_targets(session: AsyncSession, automation_id: int, raw_links: str) -> dict[str, Any]:
-    added: list[int] = []
-    errors: list[str] = []
-    chunks: list[str] = []
-    for line in (raw_links or "").replace(",", " ").splitlines():
-        chunks.extend(part.strip() for part in line.split() if part.strip())
-    for link in chunks:
-        try:
-            chat = await create_chat_from_link(session, automation_id, link, mode=None)
-            added.append(chat.id)
-        except ValueError as exc:
-            errors.append(f"{link}: {exc}")
-        except Exception as exc:
-            errors.append(f"{link}: {exc}")
+    added, errors = await import_chat_links(session, automation_id, raw_links, mode=None)
     automation = await session.get(CustomAutomation, automation_id)
     settings = runtime_warmup_cfg(automation)
     settings["chat_ids"] = list(dict.fromkeys([*settings["chat_ids"], *added]))
@@ -382,9 +375,10 @@ async def run_warmup_module_pass(automation_id: int) -> dict[str, Any]:
 
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
+        if not automation or not automation.account_warmup_enabled:
+            return {"status": "skipped", "reason": "warmup_off"}
         cfg = runtime_warmup_cfg(automation)
-        if automation and cfg.get("account_ids"):
-            await enroll_warmup_accounts(session, automation_id, cfg.get("account_ids"))
+        await enroll_warmup_accounts(session, automation_id, cfg.get("account_ids") or None)
     result: dict[str, Any] = {}
     if cfg.get("do_warmup_dms", True):
         result["dms"] = await run_account_warmup_pass(automation_id)

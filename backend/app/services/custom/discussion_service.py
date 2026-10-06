@@ -32,12 +32,13 @@ from .conversation_guard import sanitize_public_text
 from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
 from .prompt_service import render_prompt
 from .account_pacing import account_should_idle, farm_overlap_active_hours
+from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .rotation_service import record_successful_send
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from .telegram_invite import chat_entity_key
-from ...alembic.models import AutomationActionLog, ChatTarget, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, ChatTarget, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -427,7 +428,6 @@ async def process_chat_target(
     delay_min, delay_max = _delay_bounds(cfg)
     allowed_accounts = set(_as_int_list(cfg.get("account_ids")))
     blocked_accounts = set(_as_int_list(cfg.get("blacklisted_account_ids")))
-    require_proxy = bool(cfg.get("require_proxy"))
 
     tried: set[int] = set()
     messages = []
@@ -443,7 +443,13 @@ async def process_chat_target(
             continue
         if reader.id in blocked_accounts:
             continue
-        if require_proxy and not getattr(reader, "telegram_proxy", None):
+        pool = await session.scalar(
+            select(PoolAccount).where(
+                PoolAccount.social_account_id == reader.id,
+                PoolAccount.custom_automation_id == automation_id,
+            )
+        )
+        if skip_account_for_module(cfg, reader, pool):
             continue
         session_path = _media_root() / reader.session_file_path
         if not session_path.exists():
@@ -563,12 +569,18 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
     chat_count = 0
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
-        if not automation or not automation.is_digital_footprint_enabled:
+        if not automation:
+            return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "replies_sent": 0}
+        cfg = run_config if isinstance(run_config, dict) else ((automation.module_settings or {}).get("neurochatting") or {})
+        if not automation.is_digital_footprint_enabled and not bool(cfg.get("enabled")):
             logger.info("Digital footprint / discussion disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "replies_sent": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "replies_sent": 0}
         max_daily = automation.max_daily_messages_per_account
-        cfg = run_config if isinstance(run_config, dict) else ((automation.module_settings or {}).get("neurochatting") or {})
-        chat_ids = set(_as_int_list(cfg.get("chat_ids")))
+        from .task_targets import resolve_task_chat_ids
+
+        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
         if chat_ids:
             chats = [
                 chat

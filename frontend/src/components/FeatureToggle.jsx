@@ -12,6 +12,7 @@ const FeatureToggle = ({
   title,
   description,
   compact = false,
+  label,
 }) => (
   <div className={`feature-toggle ${compact ? 'feature-toggle--compact' : ''} ${checked ? 'feature-toggle--on' : ''}`}>
     <button
@@ -20,6 +21,7 @@ const FeatureToggle = ({
       onClick={() => onChange(!checked)}
       disabled={disabled}
       aria-pressed={checked}
+      aria-label={label || title || undefined}
     >
       <span className="feature-toggle__content">
         <span className="feature-toggle__title">{title}</span>

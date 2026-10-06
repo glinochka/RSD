@@ -63,6 +63,12 @@ const EyeIcon = () => (
 const MegaphoneIcon = () => (
   <Ico d="M3 11v2a9 9 0 0 0 9 9h1M21 5v14l-8-4H8a4 4 0 0 1 0-8h5z" />
 );
+const EnvelopeIcon = () => (
+  <Ico>
+    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+    <polyline points="22,6 12,13 2,6" />
+  </Ico>
+);
 const RocketIcon = () => (
   <Ico d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
 );
@@ -184,10 +190,12 @@ const UBT_ICONS = {
   neurochatting: ChatIcon,
   masslooking: EyeIcon,
   'chat-broadcasts': MegaphoneIcon,
+  'dm-broadcasts': EnvelopeIcon,
   neuroshilling: RocketIcon,
   masspriming: ContactIcon,
   warmup: FlameIcon,
   parser: SearchIcon,
+  chats: FolderIcon,
 };
 
 const NavLink = ({ to, label, icon: Icon, active, nested, onClick }) => (
@@ -322,15 +330,6 @@ const CustomSolutionLayout = () => {
               active={isActive(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(id))}
               onClick={closeMobile}
             />
-            {isDmpBot ? null : (
-              <NavLink
-                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}
-                label="Чаты"
-                icon={FolderIcon}
-                active={isActive(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id))}
-                onClick={closeMobile}
-              />
-            )}
 
             {isDmpBot ? null : (
               <>

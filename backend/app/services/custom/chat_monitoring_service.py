@@ -392,6 +392,10 @@ async def _send_dm_and_create_lead(
     await session.commit()
 
     automation = await session.get(CustomAutomation, automation_id)
+    if automation:
+        from .integration_webhook_service import dispatch_event
+
+        await dispatch_event(session, automation, "lead.created", lead)
     if automation and not automation.lead_warmup_enabled:
         from .lead_warmup_service import auto_transfer_lead
         await auto_transfer_lead(session, automation_id, lead)

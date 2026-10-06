@@ -27,6 +27,7 @@ ACTION_LABELS = {
     "comment_contact": "Контакт из комментариев",
     "inbound_dm": "Входящее ЛС",
     "chat_broadcast": "Чат-рассылки",
+    "dm_broadcast": "ЛС-рассылки",
     "post_engagement": "Пост в канале",
     "chat_import": "Импорт чатов",
     "profile_update": "Обновление профиля",

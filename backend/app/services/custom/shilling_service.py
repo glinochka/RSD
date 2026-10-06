@@ -22,6 +22,7 @@ from .chat_membership_service import (
     list_watchable_chats,
 )
 from .account_pacing import account_active_window, in_account_active_hours
+from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .conversation_guard import sanitize_public_text
 from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
@@ -284,12 +285,12 @@ async def _pick_speaker_pair(
             .where(PoolAccount.custom_automation_id == automation.id)
         )
     ).all()
-    for account, _pool in pool_rows:
+    for account, pool in pool_rows:
         if allowed and account.id not in allowed:
             excluded.add(account.id)
         if account.id in blocked:
             excluded.add(account.id)
-        if bool(cfg.get("require_proxy")) and not getattr(account, "telegram_proxy", None):
+        if skip_account_for_module(cfg, account, pool):
             excluded.add(account.id)
         if bool(cfg.get("skip_fresh")) and account_humanization_stage(account) == STAGE_CAUTIOUS:
             excluded.add(account.id)
@@ -1069,13 +1070,19 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
     dialogues_sent = 0
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
-        if not automation or not automation.is_shilling_enabled:
-            logger.info("Shilling disabled or automation not found for %s", automation_id)
+        if not automation:
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "dialogues_sent": 0}
         cfg = _module_cfg(automation)
+        if not (automation.is_shilling_enabled or bool(cfg.get("enabled"))):
+            logger.info("Shilling disabled or automation not found for %s", automation_id)
+            return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "dialogues_sent": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "dialogues_sent": 0}
         if cfg.get("chat_shilling") is False:
             return {"status": "skipped", "reason": "chat_shilling_off", "chats_processed": 0, "dialogues_sent": 0}
-        allowed_chats = set(_as_int_list(cfg.get("chat_ids")))
+        from .task_targets import resolve_task_chat_ids
+
+        allowed_chats = set(await resolve_task_chat_ids(session, automation_id, cfg))
 
         chats = [
             chat

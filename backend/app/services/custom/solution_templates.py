@@ -120,7 +120,6 @@ def lock_dmp_bot_modules(automation: CustomAutomation) -> None:
     automation.is_neurocommenting_enabled = False
     automation.is_digital_footprint_enabled = False
     automation.is_shilling_enabled = False
-    automation.is_amocrm_enabled = False
     automation.lead_warmup_enabled = bool(automation.is_lead_qualification_enabled)
 
 

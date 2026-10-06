@@ -479,6 +479,34 @@ async def view_recent_profile(client: Any, *, lab_mode: bool = False) -> bool:
         return False
 
 
+async def inspect_peer_profile(client: Any, entity: Any, *, lab_mode: bool = False) -> bool:
+    """Open the user profile before stories, priming, or a first DM."""
+    telethon = _telethon(client)
+    try:
+        from telethon.tl.functions.users import GetFullUserRequest
+
+        resolved = entity
+        if getattr(resolved, "bot", False) or getattr(resolved, "broadcast", False) or getattr(resolved, "megagroup", False):
+            return False
+        if not hasattr(resolved, "access_hash"):
+            try:
+                resolved = await telethon.get_entity(entity)
+            except Exception:
+                resolved = entity
+        if getattr(resolved, "bot", False) or getattr(resolved, "broadcast", False) or getattr(resolved, "megagroup", False):
+            return False
+        await _pause(lab_mode, 0.4, 1.6)
+        await telethon(GetFullUserRequest(resolved))
+        try:
+            await telethon.get_profile_photos(resolved, limit=1)
+        except Exception:
+            pass
+        await _pause(lab_mode, 0.2, 0.9)
+        return True
+    except Exception:
+        return False
+
+
 async def search_in_recent_chat(client: Any, *, lab_mode: bool = False) -> bool:
     telethon = _telethon(client)
     try:

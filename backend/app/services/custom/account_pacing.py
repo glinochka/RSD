@@ -96,6 +96,7 @@ _TARGET_ACTIONS = frozenset(
         "lead_delivery",
         "dmp_outreach",
         "chat_broadcast",
+        "dm_broadcast",
     }
 )
 
@@ -207,13 +208,15 @@ def account_active_window(
     *,
     account_id: int | None = None,
 ) -> tuple[float, float]:
-    """Stable per-account Moscow window so the farm does not wake together."""
+    """Stable per-account Moscow window inside the global work hours."""
+    from .work_mode import current_work_mode, work_span_hours
+
+    start, end = work_span_hours(current_work_mode())
     aid = account_id if account_id is not None else getattr(account, "id", None)
     if not aid:
-        return float(ACTIVE_START_HOUR), float(ACTIVE_END_HOUR)
-    start = 7.5 + _stable_frac(int(aid), 17) * 1.75   # 07:30–09:15
-    end = 18.75 + _stable_frac(int(aid), 41) * 2.0    # 18:45–20:45
-    return start, end
+        return start, min(end, 24.0)
+    stagger = (int(hashlib.sha256(f"wake:{int(aid)}".encode()).hexdigest()[:6], 16) % 900) / 3600.0
+    return start + stagger, min(end, 24.0)
 
 
 def in_account_active_hours(
@@ -222,19 +225,20 @@ def in_account_active_hours(
     *,
     account_id: int | None = None,
 ) -> bool:
-    """Public writes run in a jittered window around 08:00–20:00 Moscow."""
-    if now is None and os.environ.get("PYTEST_CURRENT_TEST"):
-        return True
-    start, end = account_active_window(account, account_id=account_id)
-    return start <= _moscow_hour_float(moscow_now(now)) < end
+    """Public writes run inside the global Moscow work window."""
+    from .work_mode import in_configured_work_hours
+
+    aid = account_id if account_id is not None else getattr(account, "id", None)
+    return in_configured_work_hours(now, account_id=aid)
 
 
 def farm_overlap_active_hours(now: datetime | None = None) -> bool:
-    """True when at least some accounts may be awake (outer 07:00–21:30 MSK)."""
+    """True when at least some accounts may be awake."""
     if now is None and os.environ.get("PYTEST_CURRENT_TEST"):
         return True
-    hour = _moscow_hour_float(moscow_now(now))
-    return FARM_EARLIEST_START <= hour < FARM_LATEST_END
+    from .work_mode import farm_work_overlap
+
+    return farm_work_overlap(now)
 
 
 def account_in_target_rest_day(
@@ -430,13 +434,29 @@ def account_should_idle(
     ignore_hours: bool = False,
 ) -> bool:
     """True when the account must not send a TARGET action."""
+    from .work_mode import in_configured_work_hours, in_daily_idle_gap
+
     if account_in_target_rest_day(account, now=now):
+        # Weekends still rest unless the global work_mode includes that weekday.
+        from .work_mode import current_work_mode
+
+        if moscow_now(now).weekday() not in current_work_mode()["weekdays"]:
+            return True
+    if in_daily_idle_gap(getattr(account, "id", None), now=now):
         return True
     if account_is_resting(account, now=now):
-        return True
+        wait = 0.0
+        nxt = getattr(account, "next_action_at", None)
+        if nxt is not None:
+            wait = (nxt - (now or _utc_now())).total_seconds()
+        # Long 40–70 min flashes no longer park work; keep short retries (fail/flood).
+        if wait <= 15 * 60:
+            return True
     if ignore_hours:
         return False
-    return not in_account_active_hours(now, account)
+    if not in_configured_work_hours(now, account_id=getattr(account, "id", None)):
+        return True
+    return False
 
 
 def account_membership_should_idle(
@@ -444,8 +464,10 @@ def account_membership_should_idle(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Join/leave hygiene: respect night hours, not weekend or write rest."""
-    return not in_account_active_hours(now, account)
+    """Join/leave hygiene: respect the global work window, not weekend or write rest."""
+    from .work_mode import in_configured_work_hours
+
+    return not in_configured_work_hours(now, account_id=getattr(account, "id", None))
 
 
 def schedule_account_target_rest(account: SocialAccount, *, seconds: float | None = None) -> None:
@@ -491,11 +513,22 @@ def account_humanization_should_idle(
     ignore_hours: bool = False,
 ) -> bool:
     """True when the account should not send a HUMANIZATION action."""
-    if account_humanization_is_resting(account, now=now):
+    from .work_mode import in_configured_work_hours, in_daily_idle_gap
+
+    if in_daily_idle_gap(getattr(account, "id", None), now=now):
         return True
+    if account_humanization_is_resting(account, now=now):
+        wait = 0.0
+        nxt = getattr(account, "next_humanization_at", None)
+        if nxt is not None:
+            wait = (nxt - (now or _utc_now())).total_seconds()
+        if wait <= 8 * 60:
+            return True
     if ignore_hours:
         return False
-    return not in_account_active_hours(now, account)
+    if not in_configured_work_hours(now, account_id=getattr(account, "id", None)):
+        return True
+    return False
 
 
 def schedule_account_humanization_rest(account: SocialAccount, *, seconds: float | None = None) -> None:

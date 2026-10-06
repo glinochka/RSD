@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_roles import effective_roles, shilling_pair_ready
+from .account_roles import account_is_live
 from .chat_inspect_service import ensure_comment_access
 from .chat_join_service import (
     create_chat_from_link,
@@ -31,7 +31,6 @@ from .shilling_service import perform_post_shilling, process_shilling_chat
 from .telegram_account_client import normalize_telegram_phone
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 from ...alembic.models import (
-    AccountRole as AccountRoleEnum,
     ChatJoinStatus,
     ChatMessage,
     ChatMode,
@@ -447,38 +446,17 @@ async def join_lab_targets(
     )
 
 
-async def _has_role(session: AsyncSession, automation_id: int, role: str, *, min_count: int = 1) -> bool:
+async def _live_account_count(session: AsyncSession, automation_id: int) -> int:
     result = await session.execute(
         select(SocialAccount, PoolAccount)
         .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
-        .where(
-            PoolAccount.custom_automation_id == automation_id,
-            SocialAccount.is_active.is_(True),
-            SocialAccount.is_banned.is_(False),
-            SocialAccount.is_frozen.is_(False),
-        )
+        .where(PoolAccount.custom_automation_id == automation_id)
     )
-    count = 0
-    for social, pool in result.all():
-        if role in effective_roles(pool, social):
-            count += 1
-            if count >= min_count:
-                return True
-    return False
+    return sum(1 for social, _pool in result.all() if account_is_live(social))
 
 
-async def _has_shilling_pair(session: AsyncSession, automation_id: int) -> bool:
-    result = await session.execute(
-        select(SocialAccount, PoolAccount)
-        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
-        .where(
-            PoolAccount.custom_automation_id == automation_id,
-            SocialAccount.is_active.is_(True),
-            SocialAccount.is_banned.is_(False),
-            SocialAccount.is_frozen.is_(False),
-        )
-    )
-    return shilling_pair_ready([effective_roles(pool, social) for social, pool in result.all()])
+async def _has_live_accounts(session: AsyncSession, automation_id: int, *, min_count: int = 1) -> bool:
+    return await _live_account_count(session, automation_id) >= min_count
 
 
 async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomation) -> dict[str, Any]:
@@ -486,8 +464,8 @@ async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomat
     chat = pick_lab_group(automation, chats)
     if chat is None:
         return lab_result(ok=False, detail="Нет целевого чата. Укажите чат и нажмите «Вступить».")
-    if not await _has_shilling_pair(session, automation.id):
-        return lab_result(ok=False, detail="Нужно два аккаунта: «Шиллинг 1 (вопрос)» и «Шиллинг 2 (ответ)».")
+    if not await _has_live_accounts(session, automation.id, min_count=2):
+        return lab_result(ok=False, detail="Для шиллинга нужно минимум два живых аккаунта.")
     sent = 0
     results = []
     ready, joined, total = await _lab_target_ready(session, automation.id, chat)
@@ -667,13 +645,8 @@ async def simulate_dmp(
             contact_type = "phone"
             contact_value = target_account.phone_number
 
-    has_dmp_role = False
-    for social, pool in rows:
-        if AccountRoleEnum.DMP.value in effective_roles(pool, social):
-            has_dmp_role = True
-            break
-    if not has_dmp_role:
-        return lab_result(ok=False, detail="Нет живого аккаунта с функцией «DMP».")
+    if not any(account_is_live(social) for social, _pool in rows):
+        return lab_result(ok=False, detail="Нет живого аккаунта для исходящего DMP.")
 
     # Retire prior leads for this contact so the demo can re-send outreach.
     existing = await find_existing_lead(
@@ -826,10 +799,10 @@ async def start_channel_activity(
         )
 
     if activity == CHANNEL_ACTIVITY_NEURO:
-        if not await _has_role(session, automation.id, AccountRoleEnum.NEUROCOMMENTING.value):
-            return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».")
-    elif not await _has_shilling_pair(session, automation.id):
-        return lab_result(ok=False, detail="Для шиллинга в комментариях нужны «Шиллинг 1 (вопрос)» и «Шиллинг 2 (ответ)».")
+        if not await _has_live_accounts(session, automation.id):
+            return lab_result(ok=False, detail="Нет живых аккаунтов для нейрокомментинга.")
+    elif not await _has_live_accounts(session, automation.id, min_count=2):
+        return lab_result(ok=False, detail="Для шиллинга в комментариях нужно минимум два живых аккаунта.")
 
     list_posts_fn = list_posts or (
         lambda s, _automation, chat, limit=20: _list_channel_posts(s, automation.id, chat, limit=limit)
@@ -998,7 +971,7 @@ async def _react_to_post(
         session, automation.id, "commenting", consume_quota=False, ignore_rest=True
     )
     if account is None:
-        return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».", post_id=post_id)
+        return lab_result(ok=False, detail="Нет живых аккаунтов для нейрокомментинга.", post_id=post_id)
     probe = await ensure_comment_access(session, channel, account)
     if probe.comments_open is False:
         return lab_result(ok=False, detail="Комментарии в канале закрыты.", post_id=post_id)

@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from .schemas import (
     AccountBulkClassifyRequest,
@@ -74,6 +74,10 @@ from .schemas import (
     ChatBroadcastsModuleResponse,
     ChatBroadcastsGroupsRequest,
     ChatBroadcastsPresetRequest,
+    DmBroadcastsSettings,
+    DmBroadcastsModuleResponse,
+    DmBroadcastsRecipientsRequest,
+    DmBroadcastsPresetRequest,
     NeuroshillingSettings,
     NeuroshillingModuleResponse,
     NeuroshillingTargetsRequest,
@@ -123,6 +127,9 @@ from .schemas import (
     DmpOneImportResponse,
     DmpOneWebhookResponse,
     GoogleSheetsSettingsUpdate,
+    IntegrationRouteListResponse,
+    IntegrationRouteResponse,
+    IntegrationRouteUpsert,
     TelegramBotSettingsUpdate,
 )
 from .dependencies import get_current_custom_admin, get_current_custom_automation, optional_is_custom_admin
@@ -189,7 +196,7 @@ from ..services.custom.amocrm_service import (
     update_pipeline_config,
 )
 from ..services.custom.lead_warmup_service import auto_transfer_lead
-from ..services.custom.analytics_service import blackbox_stats_chat, get_automation_dashboard, get_ubt_stats
+from ..services.custom.analytics_service import HISTORY_TYPES, blackbox_stats_chat, get_automation_dashboard, get_ubt_stats
 from ..services.custom.activity_feed_service import FEED_ACTIVITY_TYPES, list_activity_feed
 from ..services.custom.error_feed_service import list_error_feed
 from ..services.custom.discussion_service import run_discussion_pass
@@ -208,6 +215,12 @@ from ..services.custom.google_sheets_service import (
     parse_spreadsheet_id,
     service_account_email,
     worksheet_name,
+)
+from ..services.custom.integration_webhook_service import (
+    delete_route as delete_integration_route,
+    ingest_inbound as ingest_integration_inbound,
+    list_routes as list_integration_routes,
+    upsert_route as upsert_integration_route,
 )
 from ..services.custom.solution_templates import is_dmp_notify_pipeline, lock_dmp_bot_modules
 from ..services.custom.telegram_notify_bot_service import (
@@ -266,6 +279,13 @@ from ..services.custom.chat_broadcast_module_service import (
     save_chat_broadcast_module,
     save_chat_broadcast_preset,
 )
+from ..services.custom.dm_broadcast_service import run_dm_broadcast_pass
+from ..services.custom.dm_broadcast_module_service import (
+    add_dm_broadcast_recipients,
+    get_dm_broadcast_module,
+    save_dm_broadcast_module,
+    save_dm_broadcast_preset,
+)
 from ..services.custom.neuroshilling_module_service import (
     add_neuroshilling_targets,
     blackbox_neuroshilling_chat,
@@ -293,7 +313,6 @@ from ..services.custom.account_warmup_service import (
     normalize_warmup_messages,
     normalize_warmup_usernames,
 )
-from ..services.custom.account_roles import normalize_roles
 from ..services.custom.test_lab_service import (
     activate_lab_shilling,
     get_channel_activity_status,
@@ -365,6 +384,12 @@ async def _settings_payload(session, db_automation, *, is_admin: bool = True) ->
     response["account_warmup_enabled"] = bool(db_automation.account_warmup_enabled)
     proxy_payload = await proxy_settings_payload(session, db_automation)
     response.update(proxy_payload)
+    from ..services.custom.work_mode import work_mode_from_automation
+
+    mode = work_mode_from_automation(db_automation)
+    response["work_hour_start"] = mode["hour_start"]
+    response["work_hour_end"] = mode["hour_end"]
+    response["work_weekdays"] = mode["weekdays"]
     if not is_admin:
         response.pop("account_warmup_usernames", None)
         response.pop("account_warmup_messages", None)
@@ -453,7 +478,7 @@ async def automation_ubt_stats(
 ):
     if period not in {"all", "month", "week", "today"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown period")
-    if history_type not in {"neurocommenting", "shilling", "discussion", "intercept", "dmp", "masslooking", "chat_broadcast"}:
+    if history_type not in set(HISTORY_TYPES):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown history type")
     async with async_session_maker() as session:
         data = await get_ubt_stats(
@@ -521,7 +546,7 @@ async def run_neurocommenting_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_neurocommenting_module(session, automation_id, snapshot)
             data = await get_neurocommenting_module(session, automation_id)
@@ -625,7 +650,7 @@ async def run_neurochatting_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_neurochatting_module(session, automation_id, snapshot)
             data = await get_neurochatting_module(session, automation_id)
@@ -730,7 +755,7 @@ async def run_masslooking_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_masslooking_module(session, automation_id, snapshot)
             data = await get_masslooking_module(session, automation_id)
@@ -792,7 +817,7 @@ async def run_chat_broadcasts_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_chat_broadcast_module(session, automation_id, snapshot)
             data = await get_chat_broadcast_module(session, automation_id)
@@ -857,6 +882,81 @@ async def chat_broadcasts_blacklist(
         return ChatBroadcastsModuleResponse.model_validate(data)
 
 
+@router.get("/automations/{automation_id}/modules/dm-broadcasts", response_model=DmBroadcastsModuleResponse)
+async def get_dm_broadcasts_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_dm_broadcast_module(session, automation_id)
+        return DmBroadcastsModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/dm-broadcasts", response_model=DmBroadcastsModuleResponse)
+async def save_dm_broadcasts_screen(
+    automation_id: int,
+    payload: DmBroadcastsSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_dm_broadcast_module(session, automation_id, payload.model_dump())
+        return DmBroadcastsModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/dm-broadcasts/run")
+async def run_dm_broadcasts_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: DmBroadcastsSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
+        if snapshot:
+            await save_dm_broadcast_module(session, automation_id, snapshot)
+            data = await get_dm_broadcast_module(session, automation_id)
+        else:
+            data = await get_dm_broadcast_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "dm_broadcast",
+        run_dm_broadcast_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/dm-broadcasts/recipients", response_model=DmBroadcastsModuleResponse)
+async def add_dm_broadcast_recipient_links(
+    automation_id: int,
+    payload: DmBroadcastsRecipientsRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_dm_broadcast_recipients(
+            session, automation_id, payload.recipients or payload.links
+        )
+        return DmBroadcastsModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/dm-broadcasts/presets", response_model=DmBroadcastsModuleResponse)
+async def save_dm_broadcasts_launch_preset(
+    automation_id: int,
+    payload: DmBroadcastsPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_dm_broadcast_preset(session, automation_id, payload.name)
+        return DmBroadcastsModuleResponse.model_validate(data)
+
+
 @router.get("/automations/{automation_id}/modules/neuroshilling", response_model=NeuroshillingModuleResponse)
 async def get_neuroshilling_screen(
     automation_id: int,
@@ -886,7 +986,7 @@ async def run_neuroshilling_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_neuroshilling_module(session, automation_id, snapshot)
             data = await get_neuroshilling_module(session, automation_id)
@@ -915,7 +1015,7 @@ async def check_neuroshilling_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             data = await save_neuroshilling_module(session, automation_id, snapshot)
         else:
@@ -1011,7 +1111,7 @@ async def run_warmup_module(
     is_admin: bool = Depends(optional_is_custom_admin),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_warmup_module(session, automation_id, snapshot, is_admin=is_admin)
             data = await get_warmup_module(session, automation_id, is_admin=is_admin)
@@ -1088,7 +1188,7 @@ async def run_masspriming_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_masspriming_module(session, automation_id, snapshot)
             data = await get_masspriming_module(session, automation_id)
@@ -1150,7 +1250,7 @@ async def run_parser_module(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        snapshot = payload.model_dump() if payload else None
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
         if snapshot:
             await save_parser_module(session, automation_id, snapshot)
             data = await get_parser_module(session, automation_id)
@@ -1187,11 +1287,14 @@ async def save_parser_launch_preset(
 async def add_parser_target_links(
     automation_id: int,
     payload: ParserTargetsRequest,
+    background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
         data = await add_parser_targets(session, automation_id, payload.links)
-        return ParserModuleResponse.model_validate(data)
+    if data.get("added_ids") and (data.get("settings") or {}).get("do_join") is not False:
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return ParserModuleResponse.model_validate(data)
 
 
 @router.post("/automations/{automation_id}/modules/parser/import", response_model=ParserModuleResponse)
@@ -1324,6 +1427,14 @@ async def update_automation_settings(
                 update_data.get("account_warmup_messages")
             )
         proxy_list_text = update_data.pop("proxy_list_text", None)
+        work_fields = {}
+        for key in ("work_hour_start", "work_hour_end", "work_weekdays"):
+            if key in update_data:
+                work_fields[key] = update_data.pop(key)
+        if work_fields:
+            from ..services.custom.work_mode import persist_work_mode
+
+            persist_work_mode(db_automation, work_fields)
         for field, value in update_data.items():
             setattr(db_automation, field, value)
         if proxy_list_text is not None:
@@ -1399,7 +1510,6 @@ def _account_response(
         avatar_url=social_account.avatar_url
         or (f"/media/{social_account.avatar_file_path}" if social_account.avatar_file_path else None),
         avatar_file_path=social_account.avatar_file_path,
-        roles=normalize_roles(pool_account.roles),
         warmup_status=pool_account.warmup_status or "idle",
         warmup_started_at=pool_account.warmup_started_at,
         warmup_dialog_count=pool_account.warmup_dialog_count or 0,
@@ -1409,7 +1519,6 @@ def _account_response(
         is_spamblocked=bool(getattr(social_account, "is_spamblocked", False)),
         is_frozen=bool(getattr(social_account, "is_frozen", False)),
         is_channel_banned=bool(getattr(social_account, "is_channel_banned", False)),
-        auto_classified=social_account.auto_classified,
         risk_score=social_account.risk_score,
         trust_score=social_account.trust_score,
         session_file_path=social_account.session_file_path,
@@ -1423,7 +1532,6 @@ def _account_response(
         frozen_at=getattr(social_account, "frozen_at", None),
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
-        assigned_class=pool_account.assigned_class or "one_day",
     )
 
 
@@ -1455,15 +1563,7 @@ def _queue_account_health_check(background_tasks: BackgroundTasks, automation_id
     background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
 
 
-def _apply_account_query_filters(stmt, *, status: Optional[str] = None, role: Optional[str] = None, search: Optional[str] = None):
-    if role:
-        from ..services.custom.account_roles import ALL_SHILLING_ROLES, LEGACY_SHILLING_ROLE
-
-        blob = cast(PoolAccount.roles, String)
-        if role in ALL_SHILLING_ROLES:
-            stmt = stmt.where(or_(blob.like(f'%"{role}"%'), blob.like(f'%"{LEGACY_SHILLING_ROLE}"%')))
-        else:
-            stmt = stmt.where(blob.like(f'%"{role}"%'))
+def _apply_account_query_filters(stmt, *, status: Optional[str] = None, search: Optional[str] = None):
     if status in {"loaded", "active"}:
         stmt = stmt.where(
             SocialAccount.session_file_path.isnot(None),
@@ -1517,7 +1617,6 @@ def _apply_account_query_filters(stmt, *, status: Optional[str] = None, role: Op
 async def list_accounts(
     automation_id: int,
     status: Optional[str] = None,
-    role: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -1538,14 +1637,14 @@ async def list_accounts(
             .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
             .where(PoolAccount.account_pool_id == pool.id)
         )
-        stmt = _apply_account_query_filters(stmt, status=status, role=role, search=search)
+        stmt = _apply_account_query_filters(stmt, status=status, search=search)
         count_stmt = (
             select(func.count(PoolAccount.id))
             .select_from(PoolAccount)
             .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
             .where(PoolAccount.account_pool_id == pool.id)
         )
-        count_stmt = _apply_account_query_filters(count_stmt, status=status, role=role, search=search)
+        count_stmt = _apply_account_query_filters(count_stmt, status=status, search=search)
         stmt = stmt.order_by(PoolAccount.added_at.desc()).limit(limit).offset(offset)
 
         result = await session.execute(stmt)
@@ -2301,7 +2400,7 @@ async def update_account(
     payload: AccountClassUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    if payload.roles is None and payload.display_name is None and payload.bio is None:
+    if payload.display_name is None and payload.bio is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
     async with async_session_maker() as session:
         row = await session.execute(
@@ -2318,8 +2417,6 @@ async def update_account(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
         pool_account, social_account = result
-        if payload.roles is not None:
-            pool_account.roles = normalize_roles(payload.roles)
         if payload.display_name is not None:
             try:
                 await update_account_display_name(session, automation_id, social_account, payload.display_name)
@@ -3139,6 +3236,85 @@ async def save_telegram_bot(
         await session.commit()
         await session.refresh(db_automation)
         return await _settings_payload(session, db_automation)
+
+
+@router.get("/automations/{automation_id}/integrations/routes", response_model=IntegrationRouteListResponse)
+async def list_integration_webhooks(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    del automation
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        return IntegrationRouteListResponse(
+            items=[IntegrationRouteResponse.model_validate(item) for item in list_integration_routes(db_automation)]
+        )
+
+
+@router.put("/automations/{automation_id}/integrations/routes", response_model=IntegrationRouteResponse)
+async def save_integration_webhook(
+    automation_id: int,
+    payload: IntegrationRouteUpsert,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        try:
+            route = upsert_integration_route(db_automation, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        await session.commit()
+        return IntegrationRouteResponse.model_validate(route)
+
+
+@router.delete("/automations/{automation_id}/integrations/routes/{route_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_integration_webhook(
+    automation_id: int,
+    route_id: str,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        if not delete_integration_route(db_automation, route_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found")
+        await session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/webhooks/integrations/{automation_id}/{route_id}/{secret}")
+async def integration_inbound_webhook(
+    automation_id: int,
+    route_id: str,
+    secret: str,
+    request: Request,
+    payload: Any = Body(default=None),
+):
+    header_secret = (
+        request.headers.get("X-Webhook-Secret")
+        or request.headers.get("X-Integration-Secret")
+        or ""
+    ).strip()
+    auth = request.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        header_secret = header_secret or auth[7:].strip()
+    async with async_session_maker() as session:
+        try:
+            return await ingest_integration_inbound(
+                session, automation_id, route_id, secret, payload, header_secret
+            )
+        except ValueError as exc:
+            code = str(exc)
+            if code == "forbidden":
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid secret") from exc
+            if code == "contact_required":
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужен contact_value") from exc
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found") from exc
 
 
 @router.post("/automations/{automation_id}/google-sheets", response_model=CustomAutomationSettingsResponse)

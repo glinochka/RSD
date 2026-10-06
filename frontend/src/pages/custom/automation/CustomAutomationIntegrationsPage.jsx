@@ -4,6 +4,7 @@ import customService from '../../../services/customService';
 import CustomAutomationIntegrationsBlock from './CustomAutomationIntegrationsBlock';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
+import '../../../styles/customIntegrations.css';
 
 const CustomAutomationIntegrationsPage = () => {
   const { id } = useParams();
@@ -45,7 +46,7 @@ const CustomAutomationIntegrationsPage = () => {
       <div className="ubt-hero">
         <div>
           <h1>Интеграции</h1>
-          <p>CRM, Telegram-бот и таблицы. DMP подключается в своём разделе.</p>
+          <p>Готовые шаблоны Telegram и AmoCRM плюс конструктор для любых других сервисов.</p>
         </div>
       </div>
       {error ? <p className="form-hint">{error}</p> : null}

@@ -21,23 +21,17 @@ from ...config import settings
 from .chat_join_service import run_join_pending_for_automation
 from .chat_monitoring_service import scan_chats_and_process
 from .dmp_one_service import poll_pending_imports
-from .neurocommenting_service import run_lab_neurocommenting_pass, run_neurocommenting_pass
-from .discussion_service import run_discussion_pass
-from .masslooking_service import run_masslooking_pass
-from .masspriming_service import run_masspriming_pass
-from .chat_broadcast_service import run_chat_broadcast_pass
+from .neurocommenting_service import run_lab_neurocommenting_pass
 from .amocrm_service import run_amocrm_sync_for_automation
 from .chat_discovery_service import run_pending_discovery_for_automation
 from .inbound_dm_service import run_inbound_dm_pass
 from .lead_warmup_service import run_lead_warmup_pass
-from .account_warmup_service import run_account_warmup_pass
-from .account_peer_dialog_service import run_peer_dialog_pass
-from .account_idle_browse_service import run_idle_browse_pass
+from .account_session_orchestrator import close_account_sessions, run_account_sessions
 from .chat_moderation_service import run_moderation_probe_pass
 from .chat_rotation_service import run_chat_rotation_pass
 from .session_hygiene_service import run_session_hygiene_for_automation
-from .shilling_service import run_shilling_pass
 from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
+from .warmup_module_service import warmup_scheduler_active
 
 logger = getLogger(__name__)
 
@@ -46,15 +40,24 @@ JobFactory = Callable[[int], Awaitable[Any]]
 
 async def _run_job_loop(automation_id: int, job_name: str, job: JobFactory, interval_seconds: int) -> None:
     """Run a job in a loop, catching and logging errors."""
+    from .work_mode import apply_work_mode, reset_work_mode
+
     while True:
         start = asyncio.get_event_loop().time()
+        token = None
         try:
+            async with async_session_maker() as session:
+                automation = await session.get(CustomAutomation, automation_id)
+                token = apply_work_mode(automation)
             result = await job(automation_id)
             logger.debug("%s job for automation %s finished: %s", job_name, automation_id, result)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.exception("%s job for automation %s failed: %s", job_name, automation_id, exc)
+        finally:
+            if token is not None:
+                reset_work_mode(token)
         elapsed = asyncio.get_event_loop().time() - start
         pause = interval_seconds
         if job_name == "neurocommenting":
@@ -77,17 +80,9 @@ class CustomAutomationScheduler:
             "monitor": settings.CUSTOM_MONITOR_INTERVAL_SECONDS,
             "join": settings.CUSTOM_JOIN_INTERVAL_SECONDS,
             "discovery": settings.CUSTOM_DISCOVERY_INTERVAL_SECONDS,
-            "neurocommenting": settings.CUSTOM_NEUROCOMMENTING_INTERVAL_SECONDS,
-            "shilling": settings.CUSTOM_SHILLING_INTERVAL_SECONDS,
-            "discussion": settings.CUSTOM_DISCUSSION_INTERVAL_SECONDS,
-            "masslooking": settings.CUSTOM_MASSLOOKING_INTERVAL_SECONDS,
-            "masspriming": settings.CUSTOM_MASSPRIMING_INTERVAL_SECONDS,
-            "chat_broadcast": settings.CUSTOM_CHAT_BROADCAST_INTERVAL_SECONDS,
+            "account_sessions": getattr(settings, "CUSTOM_ACCOUNT_SESSION_INTERVAL_SECONDS", 20),
             "lead_warmup": settings.CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS,
             "inbound_dm": settings.CUSTOM_INBOUND_DM_INTERVAL_SECONDS,
-            "account_warmup": settings.CUSTOM_ACCOUNT_WARMUP_INTERVAL_SECONDS,
-            "peer_dialog": settings.CUSTOM_PEER_DIALOG_INTERVAL_SECONDS,
-            "idle_browse": settings.CUSTOM_IDLE_BROWSE_INTERVAL_SECONDS,
             "mod_probe": settings.CUSTOM_MOD_PROBE_INTERVAL_SECONDS,
             "chat_rotation": settings.CUSTOM_CHAT_ROTATION_INTERVAL_SECONDS,
             "session_hygiene": settings.CUSTOM_SESSION_HYGIENE_INTERVAL_SECONDS,
@@ -103,17 +98,9 @@ class CustomAutomationScheduler:
             "monitor": scan_chats_and_process,
             "join": run_join_pending_for_automation,
             "discovery": run_pending_discovery_for_automation,
-            "neurocommenting": run_neurocommenting_pass,
-            "shilling": run_shilling_pass,
-            "discussion": run_discussion_pass,
-            "masslooking": run_masslooking_pass,
-            "masspriming": run_masspriming_pass,
-            "chat_broadcast": run_chat_broadcast_pass,
+            "account_sessions": run_account_sessions,
             "lead_warmup": run_lead_warmup_pass,
             "inbound_dm": run_inbound_dm_pass,
-            "account_warmup": run_account_warmup_pass,
-            "peer_dialog": run_peer_dialog_pass,
-            "idle_browse": run_idle_browse_pass,
             "mod_probe": run_moderation_probe_pass,
             "chat_rotation": run_chat_rotation_pass,
             "session_hygiene": run_session_hygiene_for_automation,
@@ -123,7 +110,6 @@ class CustomAutomationScheduler:
             "amocrm_sync": run_amocrm_sync_for_automation,
         }
 
-    @staticmethod
     @staticmethod
     def _module_enabled(automation: CustomAutomation, key: str) -> bool:
         blob = getattr(automation, "module_settings", None) or {}
@@ -139,11 +125,15 @@ class CustomAutomationScheduler:
                 automation.is_dmp_one_enabled,
                 automation.is_amocrm_enabled,
                 automation.is_shilling_enabled,
+                CustomAutomationScheduler._module_enabled(automation, "neurocommenting"),
+                CustomAutomationScheduler._module_enabled(automation, "neurochatting"),
+                CustomAutomationScheduler._module_enabled(automation, "neuroshilling"),
                 CustomAutomationScheduler._module_enabled(automation, "masslooking"),
                 CustomAutomationScheduler._module_enabled(automation, "masspriming"),
                 CustomAutomationScheduler._module_enabled(automation, "chat_broadcasts"),
-                bool(getattr(automation, "account_warmup_enabled", False)),
-                CustomAutomationScheduler._module_enabled(automation, "warmup"),
+                CustomAutomationScheduler._module_enabled(automation, "dm_broadcasts"),
+                CustomAutomationScheduler._module_enabled(automation, "parser"),
+                warmup_scheduler_active(automation),
             ]
         )
 
@@ -159,34 +149,11 @@ class CustomAutomationScheduler:
                 jobs.add("lead_warmup")
             return jobs
 
-        jobs = {"join", "discovery", "account_warmup", "peer_dialog", "idle_browse", "mod_probe", "chat_rotation", "inbound_dm", "session_hygiene"}
-        wu = (getattr(automation, "module_settings", None) or {}).get("warmup") or {}
-        if isinstance(wu, dict):
-            if str(wu.get("mode") or "auto").strip().lower() == "manual":
-                jobs.discard("account_warmup")
-                jobs.discard("peer_dialog")
-                jobs.discard("idle_browse")
-            else:
-                if wu.get("do_warmup_dms") is False:
-                    jobs.discard("account_warmup")
-                if wu.get("do_peer_dialogs") is False:
-                    jobs.discard("peer_dialog")
+        jobs = {"join", "discovery", "mod_probe", "chat_rotation", "inbound_dm", "session_hygiene", "account_sessions"}
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
         if automation.is_chat_monitoring_enabled:
             jobs.add("monitor")
-        if automation.is_neurocommenting_enabled or automation.is_shilling_enabled:
-            jobs.add("neurocommenting")
-        if automation.is_shilling_enabled:
-            jobs.add("shilling")
-        if automation.is_digital_footprint_enabled:
-            jobs.add("discussion")
-        if CustomAutomationScheduler._module_enabled(automation, "masslooking"):
-            jobs.add("masslooking")
-        if CustomAutomationScheduler._module_enabled(automation, "masspriming"):
-            jobs.add("masspriming")
-        if CustomAutomationScheduler._module_enabled(automation, "chat_broadcasts"):
-            jobs.add("chat_broadcast")
         if automation.is_chat_monitoring_enabled or automation.is_dmp_one_enabled:
             jobs.add("lead_warmup")
         if automation.is_dmp_one_enabled:
@@ -268,6 +235,7 @@ class CustomAutomationScheduler:
             except asyncio.CancelledError:
                 pass
             logger.info("Stopped %s job for automation %s", job_name, automation_id)
+        await close_account_sessions(automation_id)
 
     async def _run_scheduler(self) -> None:
         from .solution_templates import ensure_builtin_solutions

@@ -148,6 +148,14 @@ async def auto_transfer_lead(
         if bot.get("bot_sent"):
             result["transferred"] = True
             result["reason"] = result.get("reason") or "telegram_bot"
+    if result.get("transferred"):
+        from .integration_webhook_service import dispatch_event
+
+        await dispatch_event(session, automation, "lead.transferred", lead)
+    elif result.get("converted"):
+        from .integration_webhook_service import dispatch_event
+
+        await dispatch_event(session, automation, "lead.qualified", lead)
     return result
 
 

@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
     AutomationActionLog,
-    ChatFolder,
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
@@ -17,8 +16,9 @@ from ...alembic.models import (
     PromptType,
     SocialAccount,
 )
-from .account_roles import account_matches_action
-from .chat_join_service import create_chat_from_link
+from .account_roles import account_is_task_ready
+from .chat_addlist_service import import_chat_links
+from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_broadcast_channel, is_group_chat
 from .job_service import list_jobs
@@ -36,6 +36,7 @@ from .shilling_service import (
 DEFAULT_SHILL_SETTINGS: dict[str, Any] = {
     "account_ids": [],
     "chat_ids": [],
+    "folder_ids": [],
     "channel_ids": [],
     "chat_shilling": True,
     "post_shilling": True,
@@ -82,6 +83,7 @@ def normalize_shill_settings(raw: Any) -> dict[str, Any]:
     incoming = raw if isinstance(raw, dict) else {}
     data["account_ids"] = _as_int_list(incoming.get("account_ids"))
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
+    data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["channel_ids"] = _as_int_list(incoming.get("channel_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     data["chat_shilling"] = bool(incoming.get("chat_shilling", True))
@@ -115,24 +117,12 @@ def normalize_shill_settings(raw: Any) -> dict[str, Any]:
 
 def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
     in_work = bool(account.is_active and (current_daily_messages_sent(account) or 0) > 0)
-    question = account_matches_action(pool, account, "shilling_question")
-    answer = account_matches_action(pool, account, "shilling_answer")
-    eligible = bool(
-        account.session_file_path
-        and account.is_active
-        and not account.is_banned
-        and not account.is_frozen
-        and not account.is_spamblocked
-        and (question or answer)
-    )
+    eligible = account_is_task_ready(pool, account, "shilling", exclude_spamblocked=True)
     return {
         "id": account.id,
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
-        "is_question": question,
-        "is_answer": answer,
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
         "is_active": bool(account.is_active),
@@ -198,8 +188,6 @@ def _issues(settings: dict[str, Any], *, enabled: bool, setup: str, reply: str, 
     selected = [item for item in accounts if item["id"] in set(settings.get("account_ids") or [])]
     if len(selected) < 2:
         issues.append("Выберите хотя бы два аккаунта")
-    elif not any(item.get("is_question") for item in selected) or not any(item.get("is_answer") for item in selected):
-        issues.append("Нужны аккаунты с ролями «вопрос» и «ответ»")
     if not settings.get("chat_shilling") and not settings.get("post_shilling"):
         issues.append("Включите шиллинг в чатах или в комментариях")
     if not setup.strip() or not reply.strip():
@@ -247,11 +235,7 @@ async def get_neuroshilling_module(session: AsyncSession, automation_id: int) ->
             select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id).order_by(ChatTarget.created_at.desc()).limit(400)
         )
     ).scalars().all()
-    folders = (
-        await session.execute(
-            select(ChatFolder).where(ChatFolder.custom_automation_id == automation_id).order_by(ChatFolder.created_at.desc())
-        )
-    ).scalars().all()
+    folders = await folder_payloads(session, automation_id)
     accounts = [_account_row(account, pool) for account, pool in pairs]
     prompt_rows = [_prompt_row(prompt) for prompt in prompts]
     active = next((item for item in prompt_rows if item["is_active"]), prompt_rows[0] if prompt_rows else {"setup": "", "reply": "", "id": None})
@@ -265,13 +249,12 @@ async def get_neuroshilling_module(session: AsyncSession, automation_id: int) ->
     black = [chat for chat in chats if chat.black_boxed_at]
     return {
         "enabled": bool(automation.is_shilling_enabled),
-        "warmup_enabled": bool(automation.account_warmup_enabled),
         "settings": settings,
         "setup": active.get("setup") or "",
         "reply": active.get("reply") or "",
         "accounts": accounts,
         "chats": visible,
-        "folders": [{"id": folder.id, "name": folder.name} for folder in folders],
+        "folders": folders,
         "prompts": prompt_rows,
         "jobs": shill_jobs,
         "summary": await _log_summary(session, automation_id),
@@ -322,8 +305,6 @@ async def save_neuroshilling_module(session: AsyncSession, automation_id: int, p
     settings = normalize_shill_settings(payload)
     if payload.get("enabled") is not None:
         automation.is_shilling_enabled = bool(payload.get("enabled"))
-    if payload.get("warmup_enabled") is not None:
-        automation.account_warmup_enabled = bool(payload.get("warmup_enabled"))
     await _save_lines(session, automation_id, settings, payload.get("setup"), payload.get("reply"))
     if settings["prompt_id"]:
         try:
@@ -341,22 +322,16 @@ async def save_neuroshilling_module(session: AsyncSession, automation_id: int, p
 async def add_neuroshilling_targets(session: AsyncSession, automation_id: int, raw_links: str, *, kind: str = "auto") -> dict[str, Any]:
     added_chats: list[int] = []
     added_channels: list[int] = []
-    errors: list[str] = []
-    chunks: list[str] = []
-    for line in (raw_links or "").replace(",", " ").splitlines():
-        chunks.extend(part.strip() for part in line.split() if part.strip())
-    for link in chunks:
-        try:
-            mode = "neurocommenting" if kind == "channel" else "shilling" if kind == "group" else None
-            chat = await create_chat_from_link(session, automation_id, link, mode=mode)
-            if is_broadcast_channel(chat) or kind == "channel":
-                added_channels.append(chat.id)
-            else:
-                added_chats.append(chat.id)
-        except ValueError as exc:
-            errors.append(f"{link}: {exc}")
-        except Exception as exc:
-            errors.append(f"{link}: {exc}")
+    mode = "neurocommenting" if kind == "channel" else "shilling" if kind == "group" else None
+    added, errors = await import_chat_links(session, automation_id, raw_links, mode=mode)
+    for chat_id in added:
+        chat = await session.get(ChatTarget, chat_id)
+        if not chat:
+            continue
+        if is_broadcast_channel(chat) or kind == "channel":
+            added_channels.append(chat.id)
+        else:
+            added_chats.append(chat.id)
     automation = await session.get(CustomAutomation, automation_id)
     settings = normalize_shill_settings((automation.module_settings or {}).get("neuroshilling") if automation else {})
     settings["chat_ids"] = list(dict.fromkeys([*settings["chat_ids"], *added_chats]))
@@ -405,17 +380,12 @@ async def generate_neuroshilling_lines(session: AsyncSession, automation_id: int
 def check_neuroshilling_payload(data: dict[str, Any]) -> dict[str, Any]:
     settings = data.get("settings") or {}
     accounts = [item for item in (data.get("accounts") or []) if item["id"] in set(settings.get("account_ids") or [])]
-    questions = sum(1 for item in accounts if item.get("is_question"))
-    answers = sum(1 for item in accounts if item.get("is_answer"))
     groups = len(settings.get("chat_ids") or [])
     channels = len(settings.get("channel_ids") or [])
     return {
         "accounts": len(accounts),
-        "questions": questions,
-        "answers": answers,
         "groups": groups,
         "channels": channels,
-        "roles": 2,
         "replies": 2 if (data.get("setup") and data.get("reply")) else 0,
         "ok": not (data.get("issues") or []),
         "issues": data.get("issues") or [],

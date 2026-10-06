@@ -1,8 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtCheck from '../../../components/custom/UbtCheck';
+import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
+import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
-import { ubtModulePath } from './customNav';
+import { matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -45,14 +50,6 @@ const formatWhen = (value) => {
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const Stepper = ({ value, min = 0, max = 999, onChange }) => (
-  <div className="nc-step">
-    <button type="button" onClick={() => onChange(Math.max(min, Number(value || 0) - 1))}>−</button>
-    <strong>{value}</strong>
-    <button type="button" onClick={() => onChange(Math.min(max, Number(value || 0) + 1))}>+</button>
-  </div>
-);
-
 const CustomAutomationMassprimingPage = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -61,8 +58,8 @@ const CustomAutomationMassprimingPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
   const [presetName, setPresetName] = useState('');
   const [targetDraft, setTargetDraft] = useState('');
   const [blackAccountQuery, setBlackAccountQuery] = useState('');
@@ -97,9 +94,13 @@ const CustomAutomationMassprimingPage = () => {
     return () => window.clearInterval(timer);
   }, [jobs, load]);
 
-  const patch = (partial) => setSettings((prev) => ({ ...prev, ...partial }));
+  const patch = (partial) => {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    setDirty(true);
+  };
   const selectedAccounts = new Set(settings?.account_ids || []);
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
+  const selectedUserFolders = new Set(settings?.user_folder_ids || []);
 
   const accounts = useMemo(() => {
     const items = data?.accounts || [];
@@ -114,32 +115,38 @@ const CustomAutomationMassprimingPage = () => {
       if (settings?.hide_in_work && item.in_work) {
         return false;
       }
-      if (roleFilter && roleFilter !== 'all' && !(item.roles || []).includes(roleFilter)) {
-        return false;
-      }
       if (!needle) {
         return true;
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, roleFilter, settings, blockedAccounts]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const chosenAccounts = (data?.accounts || []).filter((item) => selectedAccounts.has(item.id));
   const blockedAccountRows = (data?.accounts || []).filter((item) => blockedAccounts.has(item.id));
   const issues = data?.issues || [];
   const recent = data?.summary?.recent || [];
-  const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length;
+  const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length + selectedUserFolders.size;
+  const settingsRef = useLiveRef(settings);
+  const enabledRef = useLiveRef(enabled);
+  const targetDraftRef = useLiveRef(targetDraft);
 
   const persist = async (next = {}) => {
     const payload = {
-      ...settings,
-      enabled,
+      ...settingsRef.current,
+      enabled: enabledRef.current,
       ...next,
-      targets: (next.targets !== undefined ? next.targets : targetDraft.split('\n').map((item) => item.trim()).filter(Boolean)),
+      targets: (next.targets !== undefined ? next.targets : targetDraftRef.current.split('\n').map((item) => item.trim()).filter(Boolean)),
     };
     const result = await customService.saveMassprimingModule(id, payload);
     applyPayload(result);
+    setDirty(false);
     return result;
+  };
+
+  const persistFlag = (partial) => {
+    setSettings(mergeSettings(settingsRef, partial));
+    persist(partial).catch((err) => setError(err.message || 'Не удалось сохранить'));
   };
 
   const runSafe = async (fn, okText) => {
@@ -165,6 +172,10 @@ const CustomAutomationMassprimingPage = () => {
       ? settings.account_ids.filter((item) => item !== accountId)
       : [...settings.account_ids, accountId];
     patch({ account_ids: next });
+  };
+
+  const toggleUserFolder = (folderId) => {
+    patch({ user_folder_ids: toggleNumericId(settings.user_folder_ids, folderId) });
   };
 
   const blockAccount = (accountId) => {
@@ -210,17 +221,11 @@ const CustomAutomationMassprimingPage = () => {
             <p className="nc-hint">Отфильтровано: {accounts.length} / Всего: {(data.accounts || []).length}</p>
             <div className="nc-row">
               <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
-              <select className="nc-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                <option value="all">Все роли</option>
-                <option value="neurocommenting">Нейрокомментинг</option>
-                <option value="lead_intercept">Перехват</option>
-                <option value="shilling">Шиллинг</option>
-              </select>
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.require_proxy)} onChange={(event) => patch({ require_proxy: event.target.checked })} /> Рабочие прокси</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.hide_in_work)} onChange={(event) => patch({ hide_in_work: event.target.checked })} /> Скрыть в работе</label>
+              <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
+              <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
             {accounts.length === 0 ? <div className="nc-empty">Нет рабочих аккаунтов</div> : (
               <div className="nc-list">
@@ -291,8 +296,10 @@ const CustomAutomationMassprimingPage = () => {
             <h2>Целевые контакты</h2>
             <span className="nc-muted">Целей: {targetCount}</span>
           </div>
-          <textarea className="nc-area" value={targetDraft} onChange={(event) => setTargetDraft(event.target.value)} placeholder={'@username\nhttps://t.me/username'} />
+          <textarea className="nc-area" value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@username\nhttps://t.me/username'} />
           <p className="nc-hint">Только публичные @username. Телефоны, инвайты и чаты пропускаются — модуль не импортирует контакты по номеру и не парсит участников.</p>
+          <h3 className="nc-muted" style={{ marginTop: 16 }}>Папки из парсера юзеров</h3>
+          <UbtFolderPicker kind="users" folders={data.user_folders} selectedIds={selectedUserFolders} onToggle={toggleUserFolder} />
           <div className="nc-setting nc-setting--muted" style={{ marginTop: 12 }}>
             <div className="nc-setting-copy">
               <strong>Сообщения в ЛС</strong>
@@ -304,7 +311,7 @@ const CustomAutomationMassprimingPage = () => {
               <strong>Добавлять в контакты</strong>
               <span>Как в клиенте: сохранить человека в адресную книгу перед переключением автоудаления.</span>
             </div>
-            <FeatureToggle compact title="" checked={Boolean(settings.add_contact)} onChange={(value) => patch({ add_contact: value })} />
+            <FeatureToggle compact title="" label="Добавлять в контакты" checked={Boolean(settings.add_contact)} onChange={(value) => persistFlag({ add_contact: value })} />
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">
@@ -334,8 +341,9 @@ const CustomAutomationMassprimingPage = () => {
               <span>Пауза после каждого успешного прайминга</span>
             </div>
             <div className="nc-row">
-              <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
-              <button type="button" className={`nc-chip ${settings.delay_min === DELAY_PRESETS.rec.delay_min ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рек.</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.min) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.rec) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рек.</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.max) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
               <Stepper value={settings.delay_min} min={0} max={120} onChange={(value) => patch({ delay_min: value, delay_max: Math.max(value, settings.delay_max) })} />
               <span className="nc-muted">до</span>
               <Stepper value={settings.delay_max} min={settings.delay_min} max={180} onChange={(value) => patch({ delay_max: value })} />
@@ -360,7 +368,7 @@ const CustomAutomationMassprimingPage = () => {
             </div>
             <div className="nc-row">
               <Stepper value={settings.skip_hours} min={1} max={168} onChange={(value) => patch({ skip_hours: value, skip_seen: true })} />
-              <FeatureToggle compact title="" checked={Boolean(settings.skip_seen)} onChange={(value) => patch({ skip_seen: value })} />
+              <FeatureToggle compact title="" label="Не повторять" checked={Boolean(settings.skip_seen)} onChange={(value) => persistFlag({ skip_seen: value })} />
             </div>
           </div>
           <div className="nc-setting nc-setting--muted">
@@ -388,7 +396,7 @@ const CustomAutomationMassprimingPage = () => {
             <strong>Ограничивать темп на аккаунт</strong>
             <span>После прохода — пауза 15–30 минут в очереди гуманизации, как у живого прогрева.</span>
           </div>
-          <FeatureToggle compact title="" checked={Boolean(settings.limit_rate)} onChange={(value) => patch({ limit_rate: value })} />
+          <FeatureToggle compact title="" label="Ограничивать темп на аккаунт" checked={Boolean(settings.limit_rate)} onChange={(value) => persistFlag({ limit_rate: value })} />
         </div>
         <div className="nc-setting">
           <div className="nc-setting-copy">
@@ -402,21 +410,14 @@ const CustomAutomationMassprimingPage = () => {
             <strong>Ночной простой</strong>
             <span>С 21:30 до 07:00 по Москве прайминг не идёт.</span>
           </div>
-          <FeatureToggle compact title="" checked={Boolean(settings.respect_night_hours)} onChange={(value) => patch({ respect_night_hours: value })} />
+          <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>
         <div className="nc-setting">
           <div className="nc-setting-copy">
             <strong>Пропускать карантин прогрева</strong>
             <span>Аккаунты в статусе rest/warming не праймят, пока не отойдут от прогрева.</span>
           </div>
-          <FeatureToggle compact title="" checked={Boolean(settings.skip_quarantine)} onChange={(value) => patch({ skip_quarantine: value })} />
-        </div>
-        <div className="nc-setting nc-setting--muted">
-          <div className="nc-setting-copy">
-            <strong>Прогрев новых аккаунтов</strong>
-            <span>Общий разгон живёт в подразделе «Прогрев», здесь его не дублируем.</span>
-          </div>
-          <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
+          <FeatureToggle compact title="" label="Пропускать карантин прогрева" checked={Boolean(settings.skip_quarantine)} onChange={(value) => persistFlag({ skip_quarantine: value })} />
         </div>
       </div>
 
@@ -439,6 +440,7 @@ const CustomAutomationMassprimingPage = () => {
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>
+        <UbtUnsaved dirty={dirty} />
         <div className="nc-launch" style={{ marginTop: 12 }}>
           <div className="nc-status">
             <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
@@ -452,10 +454,10 @@ const CustomAutomationMassprimingPage = () => {
             <button
               type="button"
               className="acc-btn acc-btn--primary"
-              disabled={busy}
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
               onClick={() => runSafe(async () => {
-                const saved = await persist();
-                await customService.runMassprimingModule(id, { ...saved.settings, enabled: true });
+                const saved = assertCanRun(await persist());
+                await customService.runMassprimingModule(id, { ...saved.settings, enabled: saved.enabled });
                 await load();
               }, 'Запуск поставлен в очередь')}
             >

@@ -5,6 +5,7 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { parseShillingContent, PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const CustomAutomationPromptEditPage = () => {
   const { id, promptId } = useParams();

@@ -1065,6 +1065,7 @@ async def _account_ids_on_cooldown(
             .where(
                 AccountChatMembership.custom_automation_id == automation_id,
                 AccountChatMembership.last_join_attempt_at.is_not(None),
+            AccountChatMembership.purpose == WATCHER_PURPOSE,
             )
             .group_by(AccountChatMembership.social_account_id)
         )
@@ -1094,6 +1095,7 @@ async def pick_next_pending_membership(
         ChatTarget.mod_status != "moderated",
         or_(
             AccountChatMembership.purpose == WATCHER_PURPOSE,
+            AccountChatMembership.purpose == ACTOR_PURPOSE,
             AccountChatMembership.priority > 0,
         ),
     ]

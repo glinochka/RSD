@@ -600,6 +600,50 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getDmBroadcastsModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_DM_BROADCASTS(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveDmBroadcastsModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_DM_BROADCASTS(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runDmBroadcastsModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_DM_BROADCASTS_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addDmBroadcastsRecipients(automationId, recipients) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_DM_BROADCASTS_RECIPIENTS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ recipients }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveDmBroadcastsPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_DM_BROADCASTS_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
   async getNeuroshillingModule(automationId) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING(automationId)}`, {
       method: 'GET',
@@ -758,16 +802,10 @@ const customService = {
     return handleResponse(response);
   },
 
-  async getAutomationAccounts(automationId, { status, accountClass, role, search, limit, offset } = {}) {
+  async getAutomationAccounts(automationId, { status, search, limit, offset } = {}) {
     const params = new URLSearchParams();
     if (status) {
       params.set('status', status);
-    }
-    if (accountClass) {
-      params.set('account_class', accountClass);
-    }
-    if (role) {
-      params.set('role', role);
     }
     if (search) {
       params.set('search', search);
@@ -891,8 +929,8 @@ const customService = {
     return handleResponse(response);
   },
 
-  async startAccountQr(automationId, assignClass = 'one_day', { proxyId, proxyLine } = {}) {
-    const body = { assign_class: assignClass };
+  async startAccountQr(automationId, { proxyId, proxyLine } = {}) {
+    const body = {};
     const line = (proxyLine || '').trim();
     if (line) {
       body.proxy_line = line;
@@ -934,8 +972,8 @@ const customService = {
     return handleResponse(response);
   },
 
-  async requestAccountSms(automationId, phoneNumber, assignClass = 'one_day', { proxyId, proxyLine } = {}) {
-    const body = { phone_number: phoneNumber, assign_class: assignClass };
+  async requestAccountSms(automationId, phoneNumber, { proxyId, proxyLine } = {}) {
+    const body = { phone_number: phoneNumber };
     const line = (proxyLine || '').trim();
     if (line) {
       body.proxy_line = line;
@@ -980,28 +1018,13 @@ const customService = {
     return handleResponse(response);
   },
 
-  async bulkClassifyAccounts(automationId, accountIds = []) {
-    const response = await fetch(
-      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/bulk-classify`,
-      {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ account_ids: accountIds }),
-      },
-    );
-    return handleResponse(response);
-  },
-
-    async updateAccount(automationId, accountId, { displayName, bio, roles } = {}) {
+    async updateAccount(automationId, accountId, { displayName, bio } = {}) {
       const body = {};
       if (displayName !== undefined) {
         body.display_name = displayName;
       }
       if (bio !== undefined) {
         body.bio = bio;
-      }
-      if (roles !== undefined) {
-        body.roles = roles;
       }
       const response = await fetch(
         `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,
@@ -1730,6 +1753,40 @@ const customService = {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async listIntegrationRoutes(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_INTEGRATION_ROUTES(automationId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async saveIntegrationRoute(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_INTEGRATION_ROUTES(automationId)}`,
+      {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async deleteIntegrationRoute(automationId, routeId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_INTEGRATION_ROUTE(automationId, routeId)}`,
+      {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
       },
     );
     return handleResponse(response);

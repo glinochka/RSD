@@ -16,7 +16,8 @@ from .account_pacing import (
     farm_overlap_active_hours,
     schedule_account_humanization_rest,
 )
-from .humanization_session import load_feed_peer_stories, load_peer_stories, mark_peer_stories_read
+from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .humanization_session import inspect_peer_profile, load_feed_peer_stories, load_peer_stories, mark_peer_stories_read
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
@@ -166,6 +167,7 @@ async def _view_entity(
 ) -> int:
     if await _seen_recently(session, automation_id, account.id, target_id, hours=skip_hours):
         return 0
+    await inspect_peer_profile(client, entity)
     peer, stories = await load_peer_stories(client, entity)
     counted = await mark_peer_stories_read(client, peer or entity, stories, lab_mode=False)
     if not counted:
@@ -188,13 +190,14 @@ async def _process_account(
     account: SocialAccount,
     cfg: dict[str, Any],
     targets: list[str],
+    pool: PoolAccount | None = None,
 ) -> int:
     if not account.session_file_path:
         return 0
     session_path = _media_root() / account.session_file_path
     if not session_path.exists():
         return 0
-    if bool(cfg.get("require_proxy")) and not getattr(account, "telegram_proxy", None):
+    if skip_account_for_module(cfg, account, pool):
         return 0
     if account_humanization_should_idle(account):
         return 0
@@ -247,6 +250,7 @@ async def _process_account(
                 peer_key = f"feed:{getattr(peer, 'user_id', None) or getattr(peer, 'channel_id', None) or viewed}"
                 if await _seen_recently(session, automation.id, account.id, peer_key, hours=skip_hours):
                     continue
+                await inspect_peer_profile(client, peer)
                 counted = await mark_peer_stories_read(client, peer, stories, lab_mode=False)
                 if not counted:
                     continue
@@ -305,10 +309,14 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
         cfg = run_config if isinstance(run_config, dict) else ((automation.module_settings or {}).get("masslooking") or {})
         if not bool(cfg.get("enabled")):
             return {"status": "skipped", "reason": "disabled", "views": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "views": 0}
         if bool(cfg.get("respect_night_hours", True)) and not farm_overlap_active_hours():
             return {"status": "skipped", "reason": "night", "views": 0}
         targets = normalize_story_targets(cfg.get("targets"))
-        chat_ids = set(_as_int_list(cfg.get("chat_ids")))
+        from .task_targets import resolve_task_chat_ids
+
+        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
         if chat_ids:
             chats = (
                 await session.execute(
@@ -339,7 +347,7 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
             if not account.is_active or account.is_banned or account.is_frozen:
                 continue
             try:
-                added = await _process_account(session, automation, account, cfg, targets)
+                added = await _process_account(session, automation, account, cfg, targets, _pool)
             except Exception as exc:
                 logger.exception("Masslooking failed for account %s: %s", account.id, exc)
                 continue

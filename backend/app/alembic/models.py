@@ -2227,6 +2227,10 @@ class CustomAutomation(Base):
         back_populates="automation",
         cascade="all, delete-orphan",
     )
+    user_folders: Mapped[list["UserFolder"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
     amocrm_connection: Mapped["AmocrmConnection | None"] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
@@ -2677,6 +2681,51 @@ class ParserUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="parser_users")
+
+
+class UserFolder(Base):
+    __tablename__ = "user_folders"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "name", name="uq_user_folder_automation_name"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="parser", server_default="parser")
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="user_folders")
+    members: Mapped[list["UserFolderMember"]] = relationship(back_populates="folder", cascade="all, delete-orphan")
+
+
+class UserFolderMember(Base):
+    __tablename__ = "user_folder_members"
+    __table_args__ = (
+        UniqueConstraint("user_folder_id", "telegram_user_id", name="uq_user_folder_member"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_folder_id: Mapped[int] = mapped_column(
+        ForeignKey("user_folders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    folder: Mapped["UserFolder"] = relationship(back_populates="members")
 
 
 class ChatTarget(Base):

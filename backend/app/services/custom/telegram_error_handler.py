@@ -1,6 +1,7 @@
 """Telegram error classification, retry with backoff, and account state updates."""
 import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
@@ -19,12 +20,11 @@ from .account_pacing import (
 
 
 def _schedule_rest_for_action(account: "SocialAccount", action_type: str) -> None:
-    """Route to target (40-70 min) or humanization (15-30 min) rest queue."""
+    """Humanization keeps a short gap; target writes no longer flash-rest 40–70 min."""
     if action_uses_humanization_rest(action_type) or action_type == "account_warmup":
-        schedule_account_humanization_rest(account)
-    else:
-        # Target actions (neurocommenting, shilling, discussion, dm …)
-        schedule_account_target_rest(account)
+        schedule_account_humanization_rest(account, seconds=random.uniform(120, 300))
+        return
+    # Target actions continue through the work window; idle gaps are planned globally.
 
 logger = logging.getLogger(__name__)
 

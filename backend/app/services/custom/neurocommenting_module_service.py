@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
     AutomationActionLog,
-    ChatFolder,
     ChatTarget,
     CustomAutomation,
     CustomJob,
@@ -18,8 +17,9 @@ from ...alembic.models import (
     PromptType,
     SocialAccount,
 )
-from .account_roles import account_matches_action
-from .chat_join_service import create_chat_from_link
+from .account_roles import account_is_task_ready
+from .chat_addlist_service import import_chat_links
+from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .job_service import list_jobs
 from .lead_keywords import normalize_lead_keywords
@@ -35,6 +35,7 @@ from .rotation_service import current_daily_messages_sent
 DEFAULT_NC_SETTINGS: dict[str, Any] = {
     "account_ids": [],
     "chat_ids": [],
+    "folder_ids": [],
     "post_filter": "new",
     "keywords": [],
     "probability": 100,
@@ -75,6 +76,7 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
     incoming = raw if isinstance(raw, dict) else {}
     data["account_ids"] = _as_int_list(incoming.get("account_ids"))
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
+    data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     post_filter = str(incoming.get("post_filter") or "new").strip().lower()
     data["post_filter"] = post_filter if post_filter in {"new", "keywords"} else "new"
     data["keywords"] = normalize_lead_keywords(incoming.get("keywords"))
@@ -134,7 +136,6 @@ def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
         "warmup_status": pool.warmup_status or "idle",
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
@@ -145,7 +146,7 @@ def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
         "is_channel_banned": bool(account.is_channel_banned),
         "in_work": in_work,
         "daily_messages_sent": current_daily_messages_sent(account),
-        "eligible": account_matches_action(pool, account, "commenting") and bool(account.session_file_path) and account.is_active and not account.is_banned and not account.is_frozen,
+        "eligible": account_is_task_ready(pool, account, "commenting"),
     }
 
 
@@ -188,7 +189,7 @@ def _issues(settings: dict[str, Any], *, enabled: bool) -> list[str]:
         issues.append("Модуль нейрокомментинга выключен")
     if not settings.get("account_ids"):
         issues.append("Аккаунты не выбраны")
-    if not settings.get("chat_ids"):
+    if not settings.get("chat_ids") and not settings.get("folder_ids"):
         issues.append("Каналы не указаны")
     if settings.get("post_filter") == "keywords" and not settings.get("keywords"):
         issues.append("Не заданы ключевые слова")
@@ -223,21 +224,16 @@ async def get_neurocommenting_module(session: AsyncSession, automation_id: int) 
             select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id).order_by(ChatTarget.created_at.desc()).limit(400)
         )
     ).scalars().all()
-    folders = (
-        await session.execute(
-            select(ChatFolder).where(ChatFolder.custom_automation_id == automation_id).order_by(ChatFolder.created_at.desc())
-        )
-    ).scalars().all()
+    folders = await folder_payloads(session, automation_id)
     black = [chat for chat in chats if chat.black_boxed_at]
     jobs = await list_jobs(session, automation_id, bucket="all", category="module", limit=80)
     nc_jobs = [item for item in jobs["items"] if item.get("job_type") == "neurocommenting"][:12]
     return {
         "enabled": bool(automation.is_neurocommenting_enabled),
-        "warmup_enabled": bool(automation.account_warmup_enabled),
         "settings": settings,
         "accounts": [_account_row(account, pool) for account, pool in pairs],
         "chats": [_chat_row(chat) for chat in chats if not chat.black_boxed_at],
-        "folders": [{"id": folder.id, "name": folder.name} for folder in folders],
+        "folders": folders,
         "prompts": [
             {
                 "id": prompt.id,
@@ -274,8 +270,6 @@ async def save_neurocommenting_module(
     settings = normalize_nc_settings(payload)
     if payload.get("enabled") is not None:
         automation.is_neurocommenting_enabled = bool(payload.get("enabled"))
-    if payload.get("warmup_enabled") is not None:
-        automation.account_warmup_enabled = bool(payload.get("warmup_enabled"))
     if settings["prompt_id"]:
         try:
             await activate_prompt(session, automation_id, settings["prompt_id"])
@@ -308,19 +302,7 @@ async def save_neurocommenting_module(
 
 
 async def add_neurocommenting_channels(session: AsyncSession, automation_id: int, raw_links: str) -> dict[str, Any]:
-    added: list[int] = []
-    errors: list[str] = []
-    for line in (raw_links or "").splitlines():
-        link = line.strip()
-        if not link:
-            continue
-        try:
-            chat = await create_chat_from_link(session, automation_id, link, mode="neurocommenting")
-            added.append(chat.id)
-        except ValueError as exc:
-            errors.append(f"{link}: {exc}")
-        except Exception as exc:
-            errors.append(f"{link}: {exc}")
+    added, errors = await import_chat_links(session, automation_id, raw_links, mode="neurocommenting")
     automation = await session.get(CustomAutomation, automation_id)
     settings = normalize_nc_settings((automation.module_settings or {}).get("neurocommenting") if automation else {})
     settings["chat_ids"] = list(dict.fromkeys([*settings["chat_ids"], *added]))

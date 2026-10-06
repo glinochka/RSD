@@ -96,13 +96,18 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "automation_not_found"}
+        from .module_account_filters import skip_account_for_module
         from .warmup_module_service import account_allowed, runtime_warmup_cfg, session_action_allowlist
 
         cfg = runtime_warmup_cfg(automation)
+        if not automation.account_warmup_enabled:
+            return {"status": "skipped", "reason": "warmup_off", "browsed": 0, "errors": 0}
+
+        rows = await _eligible_accounts(session, automation_id)
         rows = [
             (pool_account, social)
-            for pool_account, social in await _eligible_accounts(session, automation_id)
-            if account_allowed(cfg, social.id)
+            for pool_account, social in rows
+            if account_allowed(cfg, social.id) and not skip_account_for_module(cfg, social, pool_account)
         ]
         if not rows:
             return {"browsed": 0, "errors": 0}

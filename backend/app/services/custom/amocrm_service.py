@@ -201,6 +201,9 @@ async def save_credentials(
         if (client_secret or "").strip():
             connection.client_secret_enc = _encrypt(client_secret.strip())
         connection.updated_at = _utc_now()
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation:
+        automation.is_amocrm_enabled = True
     await session.commit()
     await session.refresh(connection)
     return connection
@@ -238,6 +241,9 @@ async def deactivate_connection(session: AsyncSession, automation_id: int) -> No
     connection.refresh_token_hash = None
     connection.expires_at = None
     connection.updated_at = _utc_now()
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation:
+        automation.is_amocrm_enabled = False
     await session.commit()
 
 
@@ -338,6 +344,9 @@ async def exchange_authorization_code(
         raise ValueError(f"Не удалось обменять код AmoCRM: {exc}") from exc
 
     _apply_token_payload(connection, data)
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation:
+        automation.is_amocrm_enabled = True
     await session.commit()
     await session.refresh(connection)
     return connection

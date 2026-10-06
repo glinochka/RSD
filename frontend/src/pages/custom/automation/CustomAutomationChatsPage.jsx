@@ -339,9 +339,9 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     <div className="project-crm-page">
       <div className="crm-header">
         <div>
-          <h1 className="crm-title">Чаты</h1>
+          <h1 className="crm-title">Чаты и каналы</h1>
           <p className="crm-subtitle">
-            Публичные каналы читаются без вступления. Чтобы комментировать, аккаунт вступает в группу обсуждения.
+            Один файл — одна папка. Папку можно выбрать целью задачи: аккаунты вступят пачкой через addlist и начнут работу.
           </p>
         </div>
         <div className="crm-stats">
@@ -368,7 +368,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             </button>
             <CustomFileButton
               accept=".csv,.xlsx,.xls"
-              variant="black"
+              variant="ubt"
               busy={isImporting}
               onFile={handleImport}
             >
@@ -382,7 +382,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             </button>
           </div>
           <p className="form-hint">
-            Импорт Excel сразу отсекает каналы без постов 2+ месяца или с менее чем 100 подписчиками
+            Один файл — одна папка. Импорт Excel отсекает каналы без постов 2+ месяца или с менее чем 100 подписчиками
             и чаты с менее чем 50 участниками.
           </p>
 
@@ -398,7 +398,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                     <h5 className="crm-item-title">Все чаты</h5>
                     <button
                       type="button"
-                      className={`btn ${filters.folderId === '' ? 'btn-black' : 'btn-outline'}`}
+                      className={`btn ${filters.folderId === '' ? 'btn-on' : 'btn-outline'}`}
                       onClick={() => {
                         setOffset(0);
                         setFilters((current) => ({ ...current, folderId: '' }));
@@ -417,7 +417,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                     <div className="crm-item-actions">
                       <button
                         type="button"
-                        className={`btn ${String(filters.folderId) === String(folder.id) ? 'btn-black' : 'btn-outline'}`}
+                        className={`btn ${String(filters.folderId) === String(folder.id) ? 'btn-on' : 'btn-outline'}`}
                         onClick={() => {
                           setOffset(0);
                           setFilters((current) => ({ ...current, folderId: String(folder.id) }));

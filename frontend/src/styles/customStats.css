@@ -1,26 +1,28 @@
-/** My statistics — UBT dashboards, accent #1e88e5 */
+/** My statistics — UBT dashboards, accent #2f2f2f */
 
 .st-page {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: calc(100vh - 120px);
+  min-height: 0;
 }
 
 .st-hero {
-  background: linear-gradient(180deg, #eef6ff 0%, #f7fbff 100%);
-  border: 1px solid #d7e8f8;
+  background: #fff;
+  border: 1px solid #e8ecf0;
   border-radius: 16px;
   padding: 18px 20px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .st-hero h1 {
   margin: 0 0 10px;
-  font-size: 1.35rem;
+  font-size: 1.5rem;
+  font-weight: 700;
   color: #111827;
 }
 
@@ -38,7 +40,7 @@
 
 .st-chip {
   appearance: none;
-  height: 32px;
+  height: 36px;
   padding: 0 14px;
   border-radius: 999px;
   border: 1px solid #e4ebf3;
@@ -50,10 +52,17 @@
   cursor: pointer;
 }
 
+.st-chip:focus-visible,
+.st-tab:focus-visible,
+.st-subtab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(47, 47, 47, 0.12);
+}
+
 .st-chip.is-active,
 .st-tab.is-active {
-  background: #1e88e5;
-  border-color: #1e88e5;
+  background: #2f2f2f;
+  border-color: #2f2f2f;
   color: #fff;
 }
 
@@ -87,7 +96,7 @@
 
 .st-tab.is-active {
   background: #fff;
-  color: #1e88e5;
+  color: #2f2f2f;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
   border: 1px solid #e8ecf0;
 }
@@ -221,7 +230,7 @@
 .st-bar-fill {
   height: 100%;
   border-radius: inherit;
-  background: #1e88e5;
+  background: #2f2f2f;
 }
 
 .st-cols {
@@ -349,8 +358,8 @@
 }
 
 .st-subtab.is-active {
-  background: #1e88e5;
-  border-color: #1e88e5;
+  background: #2f2f2f;
+  border-color: #2f2f2f;
   color: #fff;
 }
 
@@ -413,7 +422,7 @@
   appearance: none;
   border: 0;
   background: transparent;
-  color: #1e88e5;
+  color: #2f2f2f;
   font: inherit;
   font-size: 0.75rem;
   font-weight: 600;
@@ -423,20 +432,24 @@
 .st-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .st-filters input,
-.st-filters select {
-  height: 36px;
+.st-filters .custom-select-trigger {
+  height: 40px;
   border: 1px solid #e4ebf3;
   border-radius: 10px;
   padding: 0 12px;
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   background: #fff;
+}
+
+.st-filters .custom-select {
+  min-width: 180px;
 }
 
 .st-filters input {

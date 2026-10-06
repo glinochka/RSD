@@ -10,6 +10,7 @@ import { ubtModulePath } from './customNav';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/customSolutionNav.css';
+import '../../../styles/customNeuro.css';
 
 const ROTATION_STRATEGIES = [
   { value: 'round_robin', label: 'По кругу' },
@@ -145,6 +146,9 @@ const CustomAutomationSettingsPage = () => {
         : {
             rotation_strategy: form.rotation_strategy,
             max_daily_messages_per_account: form.max_daily_messages_per_account,
+            work_hour_start: form.work_hour_start,
+            work_hour_end: form.work_hour_end,
+            work_weekdays: form.work_weekdays,
             is_chat_monitoring_enabled: form.is_chat_monitoring_enabled,
             is_dmp_one_enabled: form.is_dmp_one_enabled,
             is_amocrm_enabled: form.is_amocrm_enabled,
@@ -336,6 +340,65 @@ const CustomAutomationSettingsPage = () => {
               min={0}
             />
           </div>
+          <div className="form-group">
+            <label>Рабочие часы (МСК)</label>
+            <div className="form-row" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                name="work_hour_start"
+                value={form.work_hour_start ?? 8}
+                onChange={handleNumberChange}
+                aria-label="Начало"
+              />
+              <span>—</span>
+              <input
+                type="number"
+                min={0}
+                max={24}
+                name="work_hour_end"
+                value={form.work_hour_end ?? 20}
+                onChange={handleNumberChange}
+                aria-label="Конец"
+              />
+            </div>
+            <p className="settings-hint">Сессия включена на всё окно. Внутри дня: 1 длинный простой 40–60 мин и 5 коротких по 5–10 мин.</p>
+          </div>
+          <div className="form-group">
+            <label>Дни работы</label>
+            <div className="nc-row" style={{ marginTop: 6 }}>
+              {[
+                { id: 0, label: 'Пн' },
+                { id: 1, label: 'Вт' },
+                { id: 2, label: 'Ср' },
+                { id: 3, label: 'Чт' },
+                { id: 4, label: 'Пт' },
+                { id: 5, label: 'Сб' },
+                { id: 6, label: 'Вс' },
+              ].map((day) => {
+                const selected = (form.work_weekdays || []).includes(day.id);
+                return (
+                  <button
+                    key={day.id}
+                    type="button"
+                    className={`nc-chip ${selected ? 'is-on' : ''}`}
+                    onClick={() => {
+                      const current = form.work_weekdays || [];
+                      setForm((prev) => ({
+                        ...prev,
+                        work_weekdays: selected
+                          ? current.filter((item) => item !== day.id)
+                          : [...current, day.id].sort(),
+                      }));
+                    }}
+                  >
+                    {day.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
         )}
 
@@ -399,25 +462,10 @@ const CustomAutomationSettingsPage = () => {
         {settings.solution_kind === 'dmp_bot' ? null : (
         <div className="settings-section">
           <h3 className="settings-section-title">Прокси</h3>
-          <p className="form-hint">
-            Список прокси и раздача по аккаунтам живут в менеджере аккаунтов. Здесь его не дублируем, чтобы сохранение настроек не затирало пул.
-          </p>
+          <p className="form-hint">Список и раздача — в менеджере аккаунтов.</p>
           <Link className="btn btn-outline" to={ubtModulePath(id, 'accounts')}>Пул прокси</Link>
         </div>
         )}
-
-        {isAdmin && settings.solution_kind !== 'dmp_bot' ? (
-          <div className="settings-section">
-            <h3 className="settings-section-title">Прогрев аккаунтов</h3>
-            <p className="form-hint">
-              Доверенные юзернеймы и сценарий диалога задаются в подразделе «Прогрев».
-              {form.account_warmup_enabled
-                ? ' Сейчас прогрев включён — следующие заливы идут в него.'
-                : ' Сейчас выключен — включить можно там же или кнопкой в менеджере аккаунтов.'}
-            </p>
-            <Link className="btn btn-outline" to={ubtModulePath(id, 'warmup')}>Открыть прогрев</Link>
-          </div>
-        ) : null}
 
         <div className="settings-actions">
           <button type="submit" className="btn btn-black" disabled={isSaving}>

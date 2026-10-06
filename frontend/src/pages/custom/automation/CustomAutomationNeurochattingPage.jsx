@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import CustomSelect from '../../../components/CustomSelect';
+import UbtCheck from '../../../components/custom/UbtCheck';
+import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
+import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { ubtModulePath } from './customNav';
+import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -34,14 +40,6 @@ const formatWhen = (value) => {
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const Stepper = ({ value, min = 0, max = 999, onChange }) => (
-  <div className="nc-step">
-    <button type="button" onClick={() => onChange(Math.max(min, Number(value || 0) - 1))}>−</button>
-    <strong>{value}</strong>
-    <button type="button" onClick={() => onChange(Math.min(max, Number(value || 0) + 1))}>+</button>
-  </div>
-);
-
 const CustomAutomationNeurochattingPage = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -50,8 +48,8 @@ const CustomAutomationNeurochattingPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
   const [chatTab, setChatTab] = useState('links');
   const [links, setLinks] = useState('');
   const [folderId, setFolderId] = useState('');
@@ -90,9 +88,13 @@ const CustomAutomationNeurochattingPage = () => {
     return () => window.clearInterval(timer);
   }, [jobs, load]);
 
-  const patch = (partial) => setSettings((prev) => ({ ...prev, ...partial }));
+  const patch = (partial) => {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    setDirty(true);
+  };
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedChats = new Set(settings?.chat_ids || []);
+  const selectedFolders = new Set(settings?.folder_ids || []);
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
 
   const accounts = useMemo(() => {
@@ -108,15 +110,12 @@ const CustomAutomationNeurochattingPage = () => {
       if (settings?.hide_in_work && item.in_work) {
         return false;
       }
-      if (roleFilter && roleFilter !== 'all' && !(item.roles || []).includes(roleFilter)) {
-        return false;
-      }
       if (!needle) {
         return true;
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, roleFilter, settings, blockedAccounts]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const dbChats = useMemo(() => {
     const items = data?.chats || [];
@@ -136,12 +135,20 @@ const CustomAutomationNeurochattingPage = () => {
   const chosenChats = (data?.chats || []).filter((item) => selectedChats.has(item.id));
   const blockedAccountRows = (data?.accounts || []).filter((item) => blockedAccounts.has(item.id));
   const issues = data?.issues || [];
+  const settingsRef = useLiveRef(settings);
+  const enabledRef = useLiveRef(enabled);
 
   const persist = async (next = {}) => {
-    const payload = { ...settings, enabled, ...next };
+    const payload = { ...settingsRef.current, enabled: enabledRef.current, ...next };
     const result = await customService.saveNeurochattingModule(id, payload);
     applyPayload(result);
+    setDirty(false);
     return result;
+  };
+
+  const persistFlag = (partial) => {
+    setSettings(mergeSettings(settingsRef, partial));
+    persist(partial).catch((err) => setError(err.message || 'Не удалось сохранить'));
   };
 
   const runSafe = async (fn, okText) => {
@@ -173,7 +180,11 @@ const CustomAutomationNeurochattingPage = () => {
     const next = selectedChats.has(chatId)
       ? settings.chat_ids.filter((item) => item !== chatId)
       : [...settings.chat_ids, chatId];
-    patch({ chat_ids: next });
+    patch({ chat_ids: next, only_joined: false });
+  };
+
+  const toggleFolder = (folderId) => {
+    patch({ folder_ids: toggleNumericId(settings.folder_ids, folderId), only_joined: false });
   };
 
   const blockAccount = (accountId) => {
@@ -218,17 +229,11 @@ const CustomAutomationNeurochattingPage = () => {
             </div>
             <div className="nc-row">
               <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
-              <select className="nc-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                <option value="all">Все роли</option>
-                <option value="neurocommenting">Нейрокомментинг</option>
-                <option value="lead_intercept">Перехват</option>
-                <option value="shilling">Шиллинг</option>
-              </select>
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.require_proxy)} onChange={(event) => patch({ require_proxy: event.target.checked })} /> Рабочие прокси</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.hide_in_work)} onChange={(event) => patch({ hide_in_work: event.target.checked })} /> Скрыть в работе</label>
+              <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
+              <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
             {accounts.length === 0 ? <div className="nc-empty">Нет аккаунтов, соответствующих фильтрам</div> : (
               <div className="nc-list">
@@ -267,7 +272,7 @@ const CustomAutomationNeurochattingPage = () => {
         <div className="nc-row" style={{ marginTop: 12 }}>
           <span className="nc-muted">Пресеты настроек</span>
           {(settings.presets || []).map((item) => (
-            <button key={item.name} type="button" className="nc-chip" onClick={() => setSettings({ ...item.settings, presets: settings.presets })}>{item.name}</button>
+            <button key={item.name} type="button" className="nc-chip" onClick={() => { setSettings({ ...item.settings, presets: settings.presets }); setDirty(true); }}>{item.name}</button>
           ))}
           <input className="nc-input" value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Название пресета" />
           <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => runSafe(async () => { await persist(); return customService.saveNeurochattingPreset(id, presetName); }, 'Пресет сохранён')}>Сохранить</button>
@@ -301,7 +306,7 @@ const CustomAutomationNeurochattingPage = () => {
           </div>
           {settings.work_mode === 'time' ? (
             <div style={{ marginTop: 12 }}>
-              <FeatureToggle compact title="Работать всегда" description="Игнорировать окна активности. Ночной простой по Москве можно оставить отдельно." checked={Boolean(settings.work_always)} onChange={(value) => patch({ work_always: value })} />
+              <FeatureToggle compact title="Работать всегда" description="Игнорировать окна активности. Ночной простой по Москве можно оставить отдельно." checked={Boolean(settings.work_always)} onChange={(value) => persistFlag({ work_always: value })} />
             </div>
           ) : <p className="nc-muted" style={{ marginTop: 12 }}>По умолчанию не больше одного ответа на группу в сутки — чтобы не выглядеть ботом.</p>}
         </div>
@@ -309,8 +314,8 @@ const CustomAutomationNeurochattingPage = () => {
 
       <div className="nc-card">
         <div className="nc-card-head">
-          <h2>Целевые группы <span className="nc-muted">{selectedChats.size}</span></h2>
-          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты</Link>
+          <h2>Целевые группы <span className="nc-muted">{selectedFolders.size} пап. · {selectedChats.size} гр.</span></h2>
+          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
         </div>
         <div className="nc-row">
           <button type="button" className={`nc-chip ${chatTab === 'links' ? 'is-on' : ''}`} onClick={() => setChatTab('links')}>Юзернейм / ссылка</button>
@@ -341,13 +346,16 @@ const CustomAutomationNeurochattingPage = () => {
         ) : null}
         {chatTab === 'folder' ? (
           <div style={{ marginTop: 12 }}>
-            <div className="nc-row">
-              <select className="nc-select" value={folderId} onChange={(event) => setFolderId(event.target.value)}>
-                <option value="">Все папки</option>
-                {(data.folders || []).map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-              </select>
+            <UbtFolderPicker folders={data.folders} selectedIds={selectedFolders} onToggle={toggleFolder} />
+            <div className="nc-row" style={{ marginTop: 12 }}>
+              <CustomSelect
+                className="nc-select"
+                value={String(folderId || '')}
+                options={folderOptions(data.folders, 'Чаты внутри папки')}
+                onChange={(event) => setFolderId(event.target.value)}
+              />
               <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск группы" />
-              <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ chat_ids: dbChats.filter((item) => item.is_group !== false).map((item) => item.id) })}>Добавить найденные</button>
+              <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ chat_ids: dbChats.filter((item) => item.is_group !== false).map((item) => item.id), only_joined: false })}>Добавить найденные</button>
             </div>
             <div className="nc-list" style={{ marginTop: 8 }}>
               {dbChats.map((item) => (
@@ -372,7 +380,7 @@ const CustomAutomationNeurochattingPage = () => {
           </div>
         ) : null}
         <div style={{ marginTop: 12 }}>
-          <FeatureToggle compact title="Не вступать — писать только туда, где аккаунт уже состоит" description="Новые вступления не ставим в очередь. Группы без членства пропускаются." checked={Boolean(settings.only_joined)} onChange={(value) => patch({ only_joined: value })} />
+          <FeatureToggle compact title="Не вступать — писать только туда, где аккаунт уже состоит" description="Новые вступления не ставим в очередь. Группы без членства пропускаются." checked={Boolean(settings.only_joined)} onChange={(value) => persistFlag({ only_joined: value })} />
         </div>
       </div>
 
@@ -395,15 +403,8 @@ const CustomAutomationNeurochattingPage = () => {
         </div>
         <label className="nc-muted" style={{ display: 'block', marginTop: 14 }}>Отвечать только если...</label>
         <textarea className="nc-area" style={{ marginTop: 8 }} value={settings.reply_condition || ''} onChange={(event) => patch({ reply_condition: event.target.value })} placeholder="Например: человек задаёт вопрос по теме чата. На рекламу и объявления не отвечать." />
-        <div className="nc-split" style={{ marginTop: 14 }}>
-          <div className="nc-setting" style={{ border: 0, padding: 0 }}>
-            <div className="nc-setting-copy">
-              <strong>Прогрев новых аккаунтов</strong>
-              <span>Общий разгон живёт в подразделе «Прогрев», здесь его не дублируем.</span>
-            </div>
-            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
-          </div>
-          <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве ответы не отправляются." checked={Boolean(settings.respect_night_hours)} onChange={(value) => patch({ respect_night_hours: value })} />
+        <div style={{ marginTop: 14 }}>
+          <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве ответы не отправляются." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>
         <div className="nc-slider" style={{ marginTop: 16 }}>
           <span className="nc-muted">Контекст разговора: {settings.context_depth === 0 ? 'без контекста' : `${settings.context_depth} сообщений`}</span>
@@ -416,9 +417,9 @@ const CustomAutomationNeurochattingPage = () => {
         <div className="nc-card-head">
           <h2>Настройка задержек</h2>
           <div className="nc-row">
-            <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
-            <button type="button" className="nc-chip is-on" onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
-            <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
+            <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.min) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
+            <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.rec) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
+            <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.max) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
           </div>
         </div>
         <div className="nc-row">
@@ -431,13 +432,11 @@ const CustomAutomationNeurochattingPage = () => {
         <p className="nc-muted" style={{ marginTop: 10 }}>Не отвечаем на слишком свежие сообщения — антибот-пауза. FloodWait Telegram обрабатывается сам.</p>
       </div>
 
-      <p className="nc-note">Продвижение продукта в группах — отдельный модуль <Link to={ubtModulePath(id, 'neuroshilling')}>Нейрошиллинг</Link>. Здесь аккаунты только поддерживают живой диалог.</p>
-
       <div className="nc-card">
         <div className="nc-card-head"><h2>Запуск и логи</h2></div>
         <div className="nc-kpis">
           <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
-          <div className="nc-kpi"><strong>{selectedChats.size}</strong><span>Группы</span></div>
+          <div className="nc-kpi"><strong>{selectedFolders.size || selectedChats.size}</strong><span>Папки / группы</span></div>
           <div className="nc-kpi"><strong>{settings.delay_before_max}s</strong><span>Макс. интервал</span></div>
           <div className="nc-kpi"><strong>{settings.max_per_chat}</strong><span>Макс. сообщений</span></div>
         </div>
@@ -452,6 +451,7 @@ const CustomAutomationNeurochattingPage = () => {
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>
+        <UbtUnsaved dirty={dirty} />
         <div className="nc-launch" style={{ marginTop: 12 }}>
           <div className="nc-status">
             <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
@@ -465,10 +465,10 @@ const CustomAutomationNeurochattingPage = () => {
             <button
               type="button"
               className="acc-btn acc-btn--primary"
-              disabled={busy}
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
               onClick={() => runSafe(async () => {
-                await persist();
-                await customService.runNeurochattingModule(id, { ...settings, enabled });
+                const saved = assertCanRun(await persist());
+                await customService.runNeurochattingModule(id, { ...saved.settings, enabled: saved.enabled });
                 await load();
               }, 'Запуск поставлен в очередь')}
             >

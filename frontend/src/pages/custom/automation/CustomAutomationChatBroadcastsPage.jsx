@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import CustomSelect from '../../../components/CustomSelect';
+import UbtCheck from '../../../components/custom/UbtCheck';
+import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
+import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { ubtModulePath } from './customNav';
+import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -44,14 +50,6 @@ const formatWhen = (value) => {
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const Stepper = ({ value, min = 0, max = 999, onChange }) => (
-  <div className="nc-step">
-    <button type="button" onClick={() => onChange(Math.max(min, Number(value || 0) - 1))}>−</button>
-    <strong>{value}</strong>
-    <button type="button" onClick={() => onChange(Math.min(max, Number(value || 0) + 1))}>+</button>
-  </div>
-);
-
 const CustomAutomationChatBroadcastsPage = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -60,8 +58,8 @@ const CustomAutomationChatBroadcastsPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
   const [chatTab, setChatTab] = useState('links');
   const [links, setLinks] = useState('');
   const [folderId, setFolderId] = useState('');
@@ -99,9 +97,13 @@ const CustomAutomationChatBroadcastsPage = () => {
     return () => window.clearInterval(timer);
   }, [jobs, load]);
 
-  const patch = (partial) => setSettings((prev) => ({ ...prev, ...partial }));
+  const patch = (partial) => {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    setDirty(true);
+  };
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedChats = new Set(settings?.chat_ids || []);
+  const selectedFolders = new Set(settings?.folder_ids || []);
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
   const messages = settings?.messages || [];
 
@@ -118,15 +120,12 @@ const CustomAutomationChatBroadcastsPage = () => {
       if (settings?.hide_in_work && item.in_work) {
         return false;
       }
-      if (roleFilter && roleFilter !== 'all' && !(item.roles || []).includes(roleFilter)) {
-        return false;
-      }
       if (!needle) {
         return true;
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, roleFilter, settings, blockedAccounts]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const dbChats = useMemo(() => {
     const items = data?.chats || [];
@@ -151,12 +150,20 @@ const CustomAutomationChatBroadcastsPage = () => {
   const remaining = settings?.only_joined
     ? (data?.chats || []).filter((item) => item.is_group !== false && !deliveredIds.has(item.id)).length
     : chosenChats.filter((item) => !deliveredIds.has(item.id)).length;
+  const settingsRef = useLiveRef(settings);
+  const enabledRef = useLiveRef(enabled);
 
   const persist = async (next = {}) => {
-    const payload = { ...settings, enabled, ...next };
+    const payload = { ...settingsRef.current, enabled: enabledRef.current, ...next };
     const result = await customService.saveChatBroadcastsModule(id, payload);
     applyPayload(result);
+    setDirty(false);
     return result;
+  };
+
+  const persistFlag = (partial) => {
+    setSettings(mergeSettings(settingsRef, partial));
+    persist(partial).catch((err) => setError(err.message || 'Не удалось сохранить'));
   };
 
   const runSafe = async (fn, okText) => {
@@ -188,7 +195,11 @@ const CustomAutomationChatBroadcastsPage = () => {
     const next = selectedChats.has(chatId)
       ? settings.chat_ids.filter((item) => item !== chatId)
       : [...settings.chat_ids, chatId];
-    patch({ chat_ids: next });
+    patch({ chat_ids: next, only_joined: false });
+  };
+
+  const toggleFolder = (folderId) => {
+    patch({ folder_ids: toggleNumericId(settings.folder_ids, folderId), only_joined: false });
   };
 
   const blockAccount = (accountId) => {
@@ -256,17 +267,11 @@ const CustomAutomationChatBroadcastsPage = () => {
             </div>
             <div className="nc-row">
               <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
-              <select className="nc-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                <option value="all">Все роли</option>
-                <option value="neurocommenting">Нейрокомментинг</option>
-                <option value="lead_intercept">Перехват</option>
-                <option value="shilling">Шиллинг</option>
-              </select>
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.require_proxy)} onChange={(event) => patch({ require_proxy: event.target.checked })} /> Рабочие прокси</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.hide_in_work)} onChange={(event) => patch({ hide_in_work: event.target.checked })} /> Скрыть в работе</label>
+              <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
+              <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
             {accounts.length === 0 ? <div className="nc-empty">Нет рабочих аккаунтов</div> : (
               <div className="nc-list">
@@ -305,7 +310,7 @@ const CustomAutomationChatBroadcastsPage = () => {
         <div className="nc-row" style={{ marginTop: 12 }}>
           <span className="nc-muted">Заготовки запуска</span>
           {(settings.presets || []).map((item) => (
-            <button key={item.name} type="button" className="nc-chip" onClick={() => setSettings({ ...item.settings, presets: settings.presets })}>{item.name}</button>
+            <button key={item.name} type="button" className="nc-chip" onClick={() => { setSettings({ ...item.settings, presets: settings.presets }); setDirty(true); }}>{item.name}</button>
           ))}
           <input className="nc-input" value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Название заготовки" />
           <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => runSafe(async () => { await persist(); return customService.saveChatBroadcastsPreset(id, presetName); }, 'Заготовка сохранена')}>Сохранить заготовку</button>
@@ -316,8 +321,8 @@ const CustomAutomationChatBroadcastsPage = () => {
       <div className="nc-split">
         <div className="nc-card">
           <div className="nc-card-head">
-            <h2>Группы <span className="nc-muted">{settings.only_joined ? 'по чатам аккаунта' : `${selectedChats.size} групп`}</span></h2>
-            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты</Link>
+            <h2>Группы <span className="nc-muted">{settings.only_joined ? 'по чатам аккаунта' : `${selectedFolders.size} пап. · ${selectedChats.size} групп`}</span></h2>
+            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
           </div>
           <div style={{ marginBottom: 12 }}>
             <FeatureToggle
@@ -325,7 +330,7 @@ const CustomAutomationChatBroadcastsPage = () => {
               title="По чатам аккаунта"
               description="Список и папки игнорируются — каждый аккаунт пишет только в те чаты, где уже состоит. Никуда не вступает."
               checked={Boolean(settings.only_joined)}
-              onChange={(value) => patch({ only_joined: value })}
+              onChange={(value) => persistFlag({ only_joined: value })}
             />
           </div>
           <div className="nc-row">
@@ -341,7 +346,7 @@ const CustomAutomationChatBroadcastsPage = () => {
                 <button type="button" className="acc-btn acc-btn--primary" disabled={busy} onClick={() => runSafe(() => customService.addChatBroadcastsGroups(id, links).then((payload) => { applyPayload(payload); setLinks(''); return payload; }), 'Группы добавлены')}>+ Добавить</button>
                 <span className="nc-muted">Строк: {links.split(/[\s,]+/).filter((item) => item.trim()).length}</span>
               </div>
-              <p className="nc-hint">Папки t.me/addlist не импортируем. Группы подтянутся при запуске, если «По чатам аккаунта» выключено.</p>
+              <p className="nc-hint">Можно вставить t.me/addlist/... — чаты из папки попадут в пул, а воркеры вступят пачкой по этой ссылке.</p>
             </div>
           ) : null}
           {chatTab === 'delivered' ? (
@@ -366,11 +371,14 @@ const CustomAutomationChatBroadcastsPage = () => {
           ) : null}
           {chatTab === 'folder' ? (
             <div style={{ marginTop: 12 }}>
-              <div className="nc-row">
-                <select className="nc-select" value={folderId} onChange={(event) => setFolderId(event.target.value)}>
-                  <option value="">Все папки</option>
-                  {(data.folders || []).map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                </select>
+              <UbtFolderPicker folders={data.folders} selectedIds={selectedFolders} onToggle={toggleFolder} />
+              <div className="nc-row" style={{ marginTop: 12 }}>
+                <CustomSelect
+                  className="nc-select"
+                  value={String(folderId || '')}
+                  options={folderOptions(data.folders, 'Чаты внутри папки')}
+                  onChange={(event) => setFolderId(event.target.value)}
+                />
                 <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск группы" />
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ chat_ids: dbChats.filter((item) => item.is_group !== false).map((item) => item.id), only_joined: false })}>Добавить найденные</button>
               </div>
@@ -431,7 +439,7 @@ const CustomAutomationChatBroadcastsPage = () => {
           <p className="nc-hint">{'{вариант1|вариант2}'} в тексте — бот подставит один вариант случайно при каждой отправке. Это одно сообщение, а не несколько.</p>
           <p className="nc-hint">Переменные чата: {'{group_title}'}, {'{group_username}'}. Отправитель: {'{my_name}'}, {'{my_first_name}'}, {'{my_username}'}.</p>
           <div style={{ marginTop: 12 }}>
-            <FeatureToggle compact title="Пропускать ошибки" description="При ошибке отправки (нет доступа, бан) — пропустить группу и продолжить." checked={Boolean(settings.skip_errors)} onChange={(value) => patch({ skip_errors: value })} />
+            <FeatureToggle compact title="Пропускать ошибки" description="При ошибке отправки (нет доступа, бан) — пропустить группу и продолжить." checked={Boolean(settings.skip_errors)} onChange={(value) => persistFlag({ skip_errors: value })} />
           </div>
         </div>
       </div>
@@ -441,9 +449,9 @@ const CustomAutomationChatBroadcastsPage = () => {
           <div className="nc-card-head">
             <h2>Темп и режим работы</h2>
             <div className="nc-row">
-              <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
-              <button type="button" className="nc-chip is-on" onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
-              <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.min) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.rec) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.max) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
             </div>
           </div>
           <div className="nc-row">
@@ -453,14 +461,14 @@ const CustomAutomationChatBroadcastsPage = () => {
             <Stepper value={settings.delay_group_max} min={settings.delay_group_min} max={3600} onChange={(value) => patch({ delay_group_max: value })} />
             <span className="nc-muted">с</span>
           </div>
-          <div className="nc-row" style={{ marginTop: 10 }}>
+          <div className="nc-row">
             <span className="nc-muted">Между сообщениями</span>
             <Stepper value={settings.delay_msg_min} min={0} max={600} onChange={(value) => patch({ delay_msg_min: value, delay_msg_max: Math.max(value, settings.delay_msg_max) })} />
             <span className="nc-muted">до</span>
             <Stepper value={settings.delay_msg_max} min={settings.delay_msg_min} max={600} onChange={(value) => patch({ delay_msg_max: value })} />
             <span className="nc-muted">с</span>
           </div>
-          <div className="nc-card-head" style={{ marginTop: 18 }}><h2>Объём рассылки</h2></div>
+          <div className="nc-card-head"><h2>Объём рассылки</h2></div>
           <div className="nc-mode">
             <button type="button" className={settings.work_mode !== 'time' ? 'is-on' : ''} onClick={() => patch({ work_mode: 'count' })}># По количеству</button>
             <button type="button" className={settings.work_mode === 'time' ? 'is-on' : ''} onClick={() => patch({ work_mode: 'time' })}>По времени</button>
@@ -474,10 +482,10 @@ const CustomAutomationChatBroadcastsPage = () => {
             </div>
           )}
           <div style={{ marginTop: 14 }}>
-            <FeatureToggle compact title="Пропускать чаты, куда уже отправляли" description="Учитывается история всех ваших аккаунтов, а не только этой задачи." checked={Boolean(settings.skip_sent)} onChange={(value) => patch({ skip_sent: value })} />
+            <FeatureToggle compact title="Пропускать чаты, куда уже отправляли" description="Учитывается история всех ваших аккаунтов, а не только этой задачи." checked={Boolean(settings.skip_sent)} onChange={(value) => persistFlag({ skip_sent: value })} />
           </div>
           <div style={{ marginTop: 8 }}>
-            <FeatureToggle compact title="Ограничивать темп на аккаунт" description="После группы аккаунт уходит на целевой отдых, чтобы не писать пачкой." checked={Boolean(settings.limit_rate)} onChange={(value) => patch({ limit_rate: value })} />
+            <FeatureToggle compact title="Ограничивать темп на аккаунт" description="После группы аккаунт уходит на целевой отдых, чтобы не писать пачкой." checked={Boolean(settings.limit_rate)} onChange={(value) => persistFlag({ limit_rate: value })} />
           </div>
         </div>
 
@@ -504,10 +512,10 @@ const CustomAutomationChatBroadcastsPage = () => {
           </div>
           <p className="nc-hint">Пусто — без ограничений. Вне часов и дней рассылка ждёт, в «Окончание» — завершается.</p>
           <div style={{ marginTop: 12 }}>
-            <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве рассылка не идёт — тот же фермерский ритм, что у остальных модулей." checked={Boolean(settings.respect_night_hours)} onChange={(value) => patch({ respect_night_hours: value })} />
+            <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве рассылка не идёт — тот же фермерский ритм, что у остальных модулей." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
           </div>
           <div className="nc-card-head" style={{ marginTop: 16 }}><h2>Особые настройки</h2></div>
-          <FeatureToggle compact title="Имитация набора" description="Перед отправкой аккаунт смотрит чат и печатает. Выключите — сырой send_message без набора." checked={Boolean(settings.imitate_typing)} onChange={(value) => patch({ imitate_typing: value })} />
+          <FeatureToggle compact title="Имитация набора" description="Перед отправкой аккаунт смотрит чат и печатает. Выключите — сырой send_message без набора." checked={Boolean(settings.imitate_typing)} onChange={(value) => persistFlag({ imitate_typing: value })} />
           <div className="nc-row" style={{ marginTop: 12 }}>
             <span className="nc-muted">Ошибок подряд до остановки</span>
             <Stepper value={settings.errors_until_stop} min={1} max={50} onChange={(value) => patch({ errors_until_stop: value })} />
@@ -516,14 +524,7 @@ const CustomAutomationChatBroadcastsPage = () => {
             <span className="nc-muted">Замедление непрогретых</span>
             <Stepper value={settings.warmup_slow ? 2 : 1} min={1} max={2} onChange={(value) => patch({ warmup_slow: value > 1 })} />
           </div>
-          <p className="nc-hint">Непрогретые аккаунты ждут в {settings.warmup_slow ? '2' : '1'} раза дольше. Сам прогрев включается в своём подразделе.</p>
-          <div className="nc-setting nc-setting--muted" style={{ marginTop: 8 }}>
-            <div className="nc-setting-copy">
-              <strong>Прогрев новых аккаунтов</strong>
-              <span>Не дублируем общий тумблер фермы на экране рассылки.</span>
-            </div>
-            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
-          </div>
+          <p className="nc-hint">Непрогретые аккаунты ждут в {settings.warmup_slow ? '2' : '1'} раза дольше.</p>
         </div>
       </div>
 
@@ -538,7 +539,7 @@ const CustomAutomationChatBroadcastsPage = () => {
         <div className="nc-card-head"><h2>Запуск и логи</h2></div>
         <div className="nc-kpis">
           <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
-          <div className="nc-kpi"><strong>{settings.only_joined ? 'по членству' : selectedChats.size}</strong><span>Группы</span></div>
+          <div className="nc-kpi"><strong>{settings.only_joined ? 'по членству' : (selectedFolders.size || selectedChats.size)}</strong><span>Папки / группы</span></div>
           <div className="nc-kpi"><strong>{settings.delay_group_max}c</strong><span>Задержка макс.</span></div>
           <div className="nc-kpi"><strong>{settings.work_mode === 'time' ? 'окно' : settings.max_messages}</strong><span>Макс. отправок</span></div>
         </div>
@@ -553,6 +554,7 @@ const CustomAutomationChatBroadcastsPage = () => {
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>
+        <UbtUnsaved dirty={dirty} />
         <div className="nc-launch" style={{ marginTop: 12 }}>
           <div className="nc-status">
             <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
@@ -566,10 +568,10 @@ const CustomAutomationChatBroadcastsPage = () => {
             <button
               type="button"
               className="acc-btn acc-btn--primary"
-              disabled={busy}
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
               onClick={() => runSafe(async () => {
-                await persist();
-                await customService.runChatBroadcastsModule(id, { ...settings, enabled: true });
+                const saved = assertCanRun(await persist());
+                await customService.runChatBroadcastsModule(id, { ...saved.settings, enabled: saved.enabled });
                 await load();
               }, 'Запуск поставлен в очередь')}
             >

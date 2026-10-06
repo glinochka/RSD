@@ -6,6 +6,7 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customTasks.css';
+import '../../../styles/customSolutionNav.css';
 
 const STATUS_LABELS = {
   pending: 'Ожидает',

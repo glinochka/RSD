@@ -235,11 +235,15 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "not_found"}
-        from .warmup_module_service import account_allowed, runtime_warmup_cfg
+        from .module_account_filters import skip_account_for_module
+        from .warmup_module_service import account_allowed, enroll_warmup_accounts, runtime_warmup_cfg
 
         cfg = runtime_warmup_cfg(automation)
+        if not automation.account_warmup_enabled:
+            return {"status": "skipped", "reason": "warmup_off", "processed": 0, "dialogs": 0, "completed": 0}
         if cfg.get("do_warmup_dms") is False:
             return {"status": "skipped", "reason": "warmup_dms_off", "processed": 0, "dialogs": 0, "completed": 0}
+        await enroll_warmup_accounts(session, automation_id, cfg.get("account_ids") or None)
         usernames = normalize_warmup_usernames(automation.account_warmup_usernames)
         messages = normalize_warmup_messages(automation.account_warmup_messages)
         result = await session.execute(
@@ -253,6 +257,8 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         rows = list(result.all())
         for pool_account, social in rows:
             if not account_allowed(cfg, social.id):
+                continue
+            if skip_account_for_module(cfg, social, pool_account):
                 continue
             if not social.is_active or social.is_banned or getattr(social, "is_frozen", False) or not social.session_file_path:
                 continue

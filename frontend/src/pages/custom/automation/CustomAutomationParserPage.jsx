@@ -2,9 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
 import CustomFileButton from '../../../components/custom/CustomFileButton';
+import UbtCheck from '../../../components/custom/UbtCheck';
+import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
+import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { ubtModulePath } from './customNav';
+import { toggleNumericId, ubtModulePath } from './customNav';
+import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -44,14 +49,6 @@ const formatWhen = (value) => {
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const Stepper = ({ value, min = 0, max = 999, onChange }) => (
-  <div className="nc-step">
-    <button type="button" onClick={() => onChange(Math.max(min, Number(value || 0) - 1))}>−</button>
-    <strong>{value}</strong>
-    <button type="button" onClick={() => onChange(Math.min(max, Number(value || 0) + 1))}>+</button>
-  </div>
-);
-
 const copyText = async (value) => {
   if (!value) {
     return;
@@ -67,8 +64,8 @@ const CustomAutomationParserPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
   const [presetName, setPresetName] = useState('');
   const [targetDraft, setTargetDraft] = useState('');
   const [folderQuery, setFolderQuery] = useState('');
@@ -105,7 +102,10 @@ const CustomAutomationParserPage = () => {
     return () => window.clearInterval(timer);
   }, [jobs, load]);
 
-  const patch = (partial) => setSettings((prev) => ({ ...prev, ...partial }));
+  const patch = (partial) => {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    setDirty(true);
+  };
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedChats = new Set(settings?.chat_ids || []);
   const selectedFolders = new Set(settings?.folder_ids || []);
@@ -124,15 +124,12 @@ const CustomAutomationParserPage = () => {
       if (settings?.hide_in_work && item.in_work) {
         return false;
       }
-      if (roleFilter && roleFilter !== 'all' && !(item.roles || []).includes(roleFilter)) {
-        return false;
-      }
       if (!needle) {
         return true;
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, roleFilter, settings, blockedAccounts]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const folders = useMemo(() => {
     const items = data?.folders || [];
@@ -154,17 +151,26 @@ const CustomAutomationParserPage = () => {
     return `${item.title} ${item.username || ''} ${item.telegram_user_id} ${item.source_title || ''}`.toLowerCase().includes(needle);
   });
   const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length + selectedChats.size + selectedFolders.size;
+  const settingsRef = useLiveRef(settings);
+  const enabledRef = useLiveRef(enabled);
+  const targetDraftRef = useLiveRef(targetDraft);
 
   const persist = async (next = {}) => {
     const payload = {
-      ...settings,
-      enabled,
+      ...settingsRef.current,
+      enabled: enabledRef.current,
       ...next,
-      targets: (next.targets !== undefined ? next.targets : targetDraft.split('\n').map((item) => item.trim()).filter(Boolean)),
+      targets: (next.targets !== undefined ? next.targets : targetDraftRef.current.split('\n').map((item) => item.trim()).filter(Boolean)),
     };
     const result = await customService.saveParserModule(id, payload);
     applyPayload(result);
+    setDirty(false);
     return result;
+  };
+
+  const persistFlag = (partial) => {
+    setSettings(mergeSettings(settingsRef, partial));
+    persist(partial).catch((err) => setError(err.message || 'Не удалось сохранить'));
   };
 
   const runSafe = async (fn, okText) => {
@@ -193,17 +199,7 @@ const CustomAutomationParserPage = () => {
   };
 
   const toggleFolder = (folderId) => {
-    const selected = selectedFolders.has(folderId);
-    const next = selected
-      ? settings.folder_ids.filter((item) => item !== folderId)
-      : [...(settings.folder_ids || []), folderId];
-    const folderChats = (data.chats || []).filter((item) => item.folder_id === folderId).map((item) => item.id);
-    patch({
-      folder_ids: next,
-      chat_ids: selected
-        ? (settings.chat_ids || []).filter((item) => !folderChats.includes(item))
-        : [...new Set([...(settings.chat_ids || []), ...folderChats])],
-    });
+    patch({ folder_ids: toggleNumericId(settings.folder_ids, folderId) });
   };
 
   const blockAccount = (accountId) => {
@@ -253,10 +249,10 @@ const CustomAutomationParserPage = () => {
 
       <div className="nc-card">
         <div className="nc-card-head">
-          <h2>Парсер пользователей</h2>
+          <h2>Парсер юзеров</h2>
           <FeatureToggle compact title={enabled ? 'Модуль включён' : 'Модуль выключен'} checked={enabled} onChange={(value) => { setEnabled(value); persist({ enabled: value }); }} />
         </div>
-        <p className="nc-intro">Готовой базы каналов нет — вы сами заливаете списки. Один файл становится одной папкой чатов. Затем аккаунты вступают в целевые чаты и собирают людей, которые писали в выбранном окне времени.</p>
+        <p className="nc-intro">Цели берём из «Чаты и каналы»: один файл — одна папка. Выберите папку, аккаунты вступят и соберут людей. После выполнения появится папка юзеров для ЛС-рассылок и масспрайминга.</p>
         <div className="nc-mode nc-mode--3" style={{ marginTop: 12 }}>
           {SOURCES.map((item) => (
             <button key={item.value} type="button" className={settings.source === item.value ? 'is-on' : ''} onClick={() => patch({ source: item.value })}>{item.label}</button>
@@ -282,17 +278,11 @@ const CustomAutomationParserPage = () => {
             <p className="nc-hint">Отфильтровано: {accounts.length} / Всего: {(data.accounts || []).length}</p>
             <div className="nc-row">
               <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
-              <select className="nc-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                <option value="all">Все роли</option>
-                <option value="neurocommenting">Нейрокомментинг</option>
-                <option value="lead_intercept">Перехват</option>
-                <option value="shilling">Шиллинг</option>
-              </select>
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.require_proxy)} onChange={(event) => patch({ require_proxy: event.target.checked })} /> Рабочие прокси</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.hide_in_work)} onChange={(event) => patch({ hide_in_work: event.target.checked })} /> Скрыть в работе</label>
+              <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
+              <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
             {accounts.length === 0 ? <div className="nc-empty">Нет рабочих аккаунтов</div> : (
               <div className="nc-list">
@@ -363,19 +353,19 @@ const CustomAutomationParserPage = () => {
             <h2>Чаты и каналы</h2>
             <span className="nc-muted">Целей: {targetCount}</span>
           </div>
-          <textarea className="nc-area" value={targetDraft} onChange={(event) => setTargetDraft(event.target.value)} placeholder={'@groupname\nhttps://t.me/group\n-1001234567890'} />
-          <p className="nc-hint">Форматы: @username, t.me/group, -100id. Папки те же, что в разделе «Чаты» — внутренней витрины каналов нет.</p>
+          <textarea className="nc-area" value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@groupname\nhttps://t.me/group\n-1001234567890'} />
+          <p className="nc-hint">Форматы: @username, t.me/group, -100id. Папки те же, что в «Чаты и каналы».</p>
           <div className="nc-row" style={{ marginTop: 10 }}>
             <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => runSafe(() => persist().then((saved) => customService.addParserTargets(id, (saved.settings.targets || []).join('\n'))), 'Ссылки добавлены в чаты')}>Сохранить в чаты</button>
             <CustomFileButton variant="ubt" accept=".csv,.xlsx,.xls,.txt" disabled={busy} onFile={(file) => runSafe(() => customService.importParserFile(id, file).then(applyPayload), 'Файл стал папкой чатов')}>Загрузить файл</CustomFileButton>
-            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты</Link>
+            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
           </div>
           <p className="nc-hint">Один файл — одна папка. CSV/Excel/txt со ссылками. Отсев «маленьких чатов» для своего файла не применяется.</p>
           <div style={{ marginTop: 12 }}>
             <div className="nc-row">
               <input className="nc-search" value={folderQuery} onChange={(event) => setFolderQuery(event.target.value)} placeholder="Поиск папки" />
             </div>
-            {(folders || []).length === 0 ? <p className="nc-muted" style={{ marginTop: 8 }}>Папок пока нет — загрузите файл со списком чатов.</p> : (
+            {(folders || []).length === 0 ? <p className="nc-muted" style={{ marginTop: 8 }}>Папок пока нет — загрузите файл в «Чаты и каналы».</p> : (
               <div className="nc-list" style={{ marginTop: 8 }}>
                 {folders.map((item) => (
                   <button key={item.id} type="button" className={`nc-item ${selectedFolders.has(item.id) ? 'is-on' : ''}`} onClick={() => toggleFolder(item.id)}>
@@ -383,6 +373,7 @@ const CustomAutomationParserPage = () => {
                       <strong>{item.name}</strong>
                       <span>{item.count} чатов</span>
                     </div>
+                    <span>{selectedFolders.has(item.id) ? 'цель' : 'выбрать'}</span>
                   </button>
                 ))}
               </div>
@@ -393,7 +384,7 @@ const CustomAutomationParserPage = () => {
               <strong>Вступать перед сбором</strong>
               <span>Выбранные аккаунты сначала заходят в чаты, потом читают историю.</span>
             </div>
-            <FeatureToggle compact title="" checked={Boolean(settings.do_join)} onChange={(value) => patch({ do_join: value })} />
+            <FeatureToggle compact title="" label="Вступать перед сбором" checked={Boolean(settings.do_join)} onChange={(value) => persistFlag({ do_join: value })} />
           </div>
           <div className="nc-setting nc-setting--muted">
             <div className="nc-setting-copy">
@@ -428,9 +419,9 @@ const CustomAutomationParserPage = () => {
               <span>Отсекаем служебные и мёртвые аккаунты Telegram</span>
             </div>
             <div className="nc-checks">
-              <label className="check"><input type="checkbox" checked={Boolean(settings.skip_bots)} onChange={(event) => patch({ skip_bots: event.target.checked })} /> Пропустить ботов</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.skip_deleted)} onChange={(event) => patch({ skip_deleted: event.target.checked })} /> Пропустить удалённых</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.skip_scam)} onChange={(event) => patch({ skip_scam: event.target.checked })} /> Пропустить scam/fake</label>
+              <UbtCheck checked={Boolean(settings.skip_bots)} onChange={(value) => persistFlag({ skip_bots: value })}>Пропустить ботов</UbtCheck>
+              <UbtCheck checked={Boolean(settings.skip_deleted)} onChange={(value) => persistFlag({ skip_deleted: value })}>Пропустить удалённых</UbtCheck>
+              <UbtCheck checked={Boolean(settings.skip_scam)} onChange={(value) => persistFlag({ skip_scam: value })}>Пропустить scam/fake</UbtCheck>
             </div>
           </div>
           <div className="nc-setting">
@@ -439,11 +430,11 @@ const CustomAutomationParserPage = () => {
               <span>То, что Telegram отдаёт в карточке пользователя</span>
             </div>
             <div className="nc-checks">
-              <label className="check"><input type="checkbox" checked={Boolean(settings.only_username)} onChange={(event) => patch({ only_username: event.target.checked })} /> Только с username</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.only_photo)} onChange={(event) => patch({ only_photo: event.target.checked })} /> Только с фото</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.only_premium)} onChange={(event) => patch({ only_premium: event.target.checked })} /> Только Premium</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.only_admins)} onChange={(event) => patch({ only_admins: event.target.checked })} /> Только админы</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.only_active_stories)} onChange={(event) => patch({ only_active_stories: event.target.checked })} /> Только с активной историей</label>
+              <UbtCheck checked={Boolean(settings.only_username)} onChange={(value) => persistFlag({ only_username: value })}>Только с username</UbtCheck>
+              <UbtCheck checked={Boolean(settings.only_photo)} onChange={(value) => persistFlag({ only_photo: value })}>Только с фото</UbtCheck>
+              <UbtCheck checked={Boolean(settings.only_premium)} onChange={(value) => persistFlag({ only_premium: value })}>Только Premium</UbtCheck>
+              <UbtCheck checked={Boolean(settings.only_admins)} onChange={(value) => persistFlag({ only_admins: value })}>Только админы</UbtCheck>
+              <UbtCheck checked={Boolean(settings.only_active_stories)} onChange={(value) => persistFlag({ only_active_stories: value })}>Только с активной историей</UbtCheck>
             </div>
           </div>
           <div className="nc-setting nc-setting--muted">
@@ -470,10 +461,17 @@ const CustomAutomationParserPage = () => {
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">
+              <strong>Ограничивать темп на аккаунт</strong>
+              <span>После чата аккаунт уходит на паузу гуманизации, как у остальных модулей.</span>
+            </div>
+            <FeatureToggle compact title="" label="Ограничивать темп на аккаунт" checked={Boolean(settings.limit_rate)} onChange={(value) => persistFlag({ limit_rate: value })} />
+          </div>
+          <div className="nc-setting">
+            <div className="nc-setting-copy">
               <strong>Ночной простой</strong>
               <span>С 21:30 до 07:00 по Москве парсер не идёт.</span>
             </div>
-            <FeatureToggle compact title="" checked={Boolean(settings.respect_night_hours)} onChange={(value) => patch({ respect_night_hours: value })} />
+            <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
           </div>
         </div>
       </div>
@@ -497,6 +495,7 @@ const CustomAutomationParserPage = () => {
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>
+        <UbtUnsaved dirty={dirty} />
         <div className="nc-launch" style={{ marginTop: 12 }}>
           <div className="nc-status">
             <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
@@ -510,10 +509,10 @@ const CustomAutomationParserPage = () => {
             <button
               type="button"
               className="acc-btn acc-btn--primary"
-              disabled={busy}
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
               onClick={() => runSafe(async () => {
-                const saved = await persist();
-                await customService.runParserModule(id, { ...saved.settings, enabled: true });
+                const saved = assertCanRun(await persist());
+                await customService.runParserModule(id, { ...saved.settings, enabled: saved.enabled });
                 await load();
               }, 'Запуск поставлен в очередь')}
             >
@@ -552,6 +551,24 @@ const CustomAutomationParserPage = () => {
           </div>
         )}
         <p className="nc-muted" style={{ marginTop: 8 }}>Всего: {data.results_total || 0}</p>
+      </div>
+
+      <div className="nc-card">
+        <div className="nc-card-head">
+          <h2>Папки юзеров</h2>
+          <span className="nc-muted">После задачи</span>
+        </div>
+        <p className="nc-hint">Каждый успешный запуск создаёт папку. Её можно выбрать целью в ЛС-рассылках и масспрайминге.</p>
+        <UbtFolderPicker
+          kind="users"
+          readOnly
+          folders={data.user_folders}
+          emptyText="Папок ещё нет — они появятся после успешного парсинга."
+        />
+        <div className="nc-row" style={{ marginTop: 12 }}>
+          <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'dm-broadcasts')}>ЛС-рассылки</Link>
+          <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'masspriming')}>Масспрайминг</Link>
+        </div>
       </div>
 
       <div className="nc-split">

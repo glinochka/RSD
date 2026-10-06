@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...alembic.models import AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
 from .job_service import list_jobs
 from .masspriming_service import TTL_DAY, normalize_prime_targets, normalize_ttl_period
+from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
 
@@ -17,6 +18,7 @@ DEFAULT_PRIME_SETTINGS: dict[str, Any] = {
     "enabled": False,
     "account_ids": [],
     "targets": [],
+    "user_folder_ids": [],
     "add_contact": True,
     "ttl_mode": "toggle",
     "ttl_period": TTL_DAY,
@@ -68,6 +70,7 @@ def normalize_prime_settings(raw: Any) -> dict[str, Any]:
     data["enabled"] = bool(incoming.get("enabled")) if incoming.get("enabled") is not None else data["enabled"]
     data["account_ids"] = _as_int_list(incoming.get("account_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["user_folder_ids"] = _as_int_list(incoming.get("user_folder_ids"))
     data["targets"] = normalize_prime_targets(incoming.get("targets"))
     data["add_contact"] = bool(incoming.get("add_contact", True))
     mode = str(incoming.get("ttl_mode") or "toggle").strip().lower()
@@ -105,19 +108,12 @@ def normalize_prime_settings(raw: Any) -> dict[str, Any]:
 
 def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
     in_work = bool(account.is_active and (current_daily_messages_sent(account) or 0) > 0)
-    eligible = bool(
-        account.session_file_path
-        and account.is_active
-        and not account.is_banned
-        and not account.is_frozen
-        and not account.is_spamblocked
-    )
+    eligible = account_is_task_ready(pool, account, "commenting", exclude_spamblocked=True)
     return {
         "id": account.id,
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
         "warmup_status": pool.warmup_status or "idle",
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
@@ -178,7 +174,7 @@ def _issues(settings: dict[str, Any]) -> list[str]:
         issues.append("Модуль масспрайминга выключен")
     if not settings.get("account_ids"):
         issues.append("Выберите хотя бы один аккаунт")
-    if not settings.get("targets"):
+    if not settings.get("targets") and not settings.get("user_folder_ids"):
         issues.append("Добавьте хотя бы один @username")
     return issues
 
@@ -199,12 +195,13 @@ async def get_masspriming_module(session: AsyncSession, automation_id: int) -> d
     ).all()
     jobs = await list_jobs(session, automation_id, bucket="all", category="module", limit=80)
     prime_jobs = [item for item in jobs["items"] if item.get("job_type") == "masspriming"][:12]
+    from .user_folder_service import list_user_folders
     return {
         "enabled": bool(settings.get("enabled")),
-        "warmup_enabled": bool(automation.account_warmup_enabled),
         "settings": settings,
         "accounts": [_account_row(account, pool) for account, pool in pairs],
         "jobs": prime_jobs,
+        "user_folders": await list_user_folders(session, automation_id),
         "summary": await _log_summary(session, automation_id),
         "issues": _issues(settings),
     }
@@ -217,8 +214,6 @@ async def save_masspriming_module(session: AsyncSession, automation_id: int, pay
     settings = normalize_prime_settings(payload)
     if payload.get("enabled") is not None:
         settings["enabled"] = bool(payload.get("enabled"))
-    if payload.get("warmup_enabled") is not None:
-        automation.account_warmup_enabled = bool(payload.get("warmup_enabled"))
     blob = dict(automation.module_settings or {})
     blob["masspriming"] = settings
     automation.module_settings = blob

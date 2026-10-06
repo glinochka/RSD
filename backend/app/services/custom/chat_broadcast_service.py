@@ -20,6 +20,7 @@ from .account_pacing import (
     moscow_now,
     schedule_account_target_rest,
 )
+from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .chat_membership_service import account_is_joined
 from .chat_scope import is_group_chat, is_paused
 from .conversation_guard import sanitize_public_text
@@ -193,10 +194,7 @@ async def _send_line(
     async def _do_send():
         async with TelegramAccountClient.for_account(account) as client:
             entity = await client.get_entity(chat_entity_key(chat))
-            if imitate_typing:
-                return await human_send_public(client, entity, body, lab_mode=False)
-            telethon = getattr(client, "client", client)
-            return await telethon.send_message(entity, body)
+            return await human_send_public(client, entity, body, lab_mode=False)
 
     try:
         await execute_with_telegram_retry(
@@ -262,7 +260,7 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
             continue
         if not account.is_active or account.is_banned or account.is_frozen or account.is_spamblocked:
             continue
-        if bool(cfg.get("require_proxy")) and not getattr(account, "telegram_proxy", None):
+        if skip_account_for_module(cfg, account, _pool):
             continue
         if account_should_idle(account):
             continue
@@ -275,12 +273,17 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
 
 
 async def _target_chats(session: AsyncSession, automation_id: int, cfg: dict[str, Any], accounts: list[SocialAccount]) -> list[ChatTarget]:
-    only_joined = bool(cfg.get("only_joined", True))
+    from .task_targets import resolve_task_chat_ids
+
+    pool_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
+    only_joined = bool(cfg.get("only_joined", True)) and not pool_ids
     stmt = select(ChatTarget).where(
         ChatTarget.custom_automation_id == automation_id,
         ChatTarget.black_boxed_at.is_(None),
     )
-    if only_joined:
+    if pool_ids:
+        stmt = stmt.where(ChatTarget.id.in_(pool_ids))
+    elif only_joined:
         if not accounts:
             return []
         joined_ids = (
@@ -296,10 +299,7 @@ async def _target_chats(session: AsyncSession, automation_id: int, cfg: dict[str
             return []
         stmt = stmt.where(ChatTarget.id.in_(set(joined_ids)))
     else:
-        chat_ids = set(_as_int_list(cfg.get("chat_ids")))
-        if not chat_ids:
-            return []
-        stmt = stmt.where(ChatTarget.id.in_(chat_ids))
+        return []
     chats = list((await session.execute(stmt)).scalars().all())
     return [chat for chat in chats if is_group_chat(chat) and not is_paused(chat)]
 
@@ -316,6 +316,8 @@ async def run_chat_broadcast_pass(automation_id: int, run_config: dict[str, Any]
         cfg = run_config if isinstance(run_config, dict) else ((automation.module_settings or {}).get("chat_broadcasts") or {})
         if not bool(cfg.get("enabled")):
             return {"status": "skipped", "reason": "disabled", "sent": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "sent": 0}
         if not _in_work_window(cfg):
             return {"status": "skipped", "reason": "schedule", "sent": 0}
         end_at = str(cfg.get("end_at") or "").strip()

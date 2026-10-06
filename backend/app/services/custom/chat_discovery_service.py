@@ -20,11 +20,9 @@ from telethon.tl.types import InputMessagesFilterEmpty, InputPeerEmpty
 
 from .prompt_service import DEFAULT_PROMPTS, render_prompt
 from .chat_target_dedup import find_existing_chat_target
-from .account_roles import AccountRole, effective_roles
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from ...alembic.models import (
-    AccountPool,
     ChatDiscoveryTask,
     ChatJoinStatus,
     ChatMode,
@@ -32,9 +30,7 @@ from ...alembic.models import (
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
-    PoolAccount,
     PromptType,
-    SocialAccount,
 )
 from ...config import settings
 from ...services.ai_authoring import ai_client
@@ -181,35 +177,8 @@ async def _enrich_entity(client: TelegramAccountClient, entity) -> dict[str, Any
 
 
 async def _discovery_exclude_ids(session: AsyncSession, automation_id: int) -> set[int]:
-    """Prefer accounts that are not neurocommenters for SearchGlobal."""
-    pool = await session.scalar(
-        select(AccountPool).where(
-            AccountPool.custom_automation_id == automation_id,
-            AccountPool.is_default.is_(True),
-        )
-    )
-    if not pool:
-        return set()
-    rows = list(
-        (
-            await session.execute(
-                select(PoolAccount, SocialAccount)
-                .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
-                .where(PoolAccount.account_pool_id == pool.id)
-            )
-        ).all()
-    )
-    commenters: set[int] = set()
-    others: set[int] = set()
-    role = AccountRole.NEUROCOMMENTING.value
-    for pool_account, social in rows:
-        if not social.is_active or social.is_banned or getattr(social, "is_frozen", False):
-            continue
-        if role in effective_roles(pool_account, social):
-            commenters.add(social.id)
-        else:
-            others.add(social.id)
-    return commenters if others else set()
+    del session, automation_id
+    return set()
 
 
 async def _search_telegram(

@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_humanization_should_idle, farm_overlap_active_hours, schedule_account_humanization_rest
+from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -461,6 +462,8 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         cfg = run_config if isinstance(run_config, dict) else ((automation.module_settings or {}).get("parser") or {})
         if not bool(cfg.get("enabled")):
             return {"status": "skipped", "reason": "disabled", "users": 0}
+        if no_accounts_picked(cfg):
+            return {"status": "skipped", "reason": "no_accounts", "users": 0}
         if bool(cfg.get("respect_night_hours", True)) and not farm_overlap_active_hours():
             return {"status": "skipped", "reason": "night", "users": 0}
         allowed = set(_as_int_list(cfg.get("account_ids")))
@@ -493,9 +496,9 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
                 continue
             if not account.session_file_path or not (_media_root() / account.session_file_path).exists():
                 continue
-            if bool(cfg.get("require_proxy")) and not (getattr(account, "telegram_proxy", None) or (pool and pool.proxy_id)):
+            if skip_account_for_module(cfg, account, pool):
                 continue
-            if bool(cfg.get("respect_night_hours", True)) and account_humanization_should_idle(account):
+            if account_humanization_should_idle(account):
                 continue
             accounts.append((account, pool))
         if not accounts:
@@ -611,4 +614,10 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
                 if bool(cfg.get("limit_rate", True)):
                     schedule_account_humanization_rest(account)
             await session.commit()
+            from .user_folder_service import snapshot_parser_users
+
+            folder = await snapshot_parser_users(session, automation_id)
+            if folder:
+                await session.commit()
+            return {"status": "ok", "users": total, "chats": chats_used, "user_folder_id": getattr(folder, "id", None)}
     return {"status": "ok", "users": total, "chats": chats_used}

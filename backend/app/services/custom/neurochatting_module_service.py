@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
     AutomationActionLog,
-    ChatFolder,
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
@@ -17,19 +16,22 @@ from ...alembic.models import (
     PromptType,
     SocialAccount,
 )
-from .chat_join_service import create_chat_from_link
+from .chat_addlist_service import import_chat_links
+from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
 from .discussion_service import DEFAULT_DISCUSSION_PROMPT
 from .job_service import list_jobs
 from .lead_keywords import normalize_lead_keywords
 from .prompt_service import activate_prompt, create_named_prompt, list_prompts
+from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
 
 DEFAULT_CHAT_SETTINGS: dict[str, Any] = {
     "account_ids": [],
     "chat_ids": [],
+    "folder_ids": [],
     "reply_mode": "interval",
     "keywords": [],
     "reply_condition": "",
@@ -82,6 +84,7 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
     incoming = raw if isinstance(raw, dict) else {}
     data["account_ids"] = _as_int_list(incoming.get("account_ids"))
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
+    data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     reply_mode = str(incoming.get("reply_mode") or "interval").strip().lower()
     data["reply_mode"] = reply_mode if reply_mode in {"interval", "triggers"} else "interval"
@@ -136,19 +139,12 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
 
 def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
     in_work = bool(account.is_active and (current_daily_messages_sent(account) or 0) > 0)
-    eligible = bool(
-        account.session_file_path
-        and account.is_active
-        and not account.is_banned
-        and not account.is_frozen
-        and not account.is_spamblocked
-    )
+    eligible = account_is_task_ready(pool, account, "discussion", exclude_spamblocked=True)
     return {
         "id": account.id,
         "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
         "username": account.username,
         "phone_number": account.phone_number,
-        "roles": pool.roles or [],
         "warmup_status": pool.warmup_status or "idle",
         "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
         "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
@@ -203,13 +199,18 @@ def _issues(settings: dict[str, Any], *, enabled: bool, chats: list[dict[str, An
         issues.append("Модуль нейрочаттинга выключен")
     if not settings.get("account_ids"):
         issues.append("Аккаунты не выбраны")
-    if not settings.get("chat_ids"):
+    if not settings.get("chat_ids") and not settings.get("folder_ids"):
         issues.append("Группы не указаны")
     if settings.get("reply_mode") == "triggers" and not settings.get("keywords"):
         issues.append("Не заданы триггеры")
     selected = {item["id"] for item in chats if item["id"] in set(settings.get("chat_ids") or [])}
     if selected and not any(item["id"] in selected and item.get("is_group") for item in chats):
         issues.append("Нейрочаттинг отвечает только в группах — среди выбранных нет чатов")
+    folder_ids = set(settings.get("folder_ids") or [])
+    if folder_ids:
+        in_folders = [item for item in chats if item.get("folder_id") in folder_ids]
+        if in_folders and not any(item.get("is_group") for item in in_folders):
+            issues.append("Нейрочаттинг отвечает только в группах — в выбранных папках нет чатов")
     return issues
 
 
@@ -241,11 +242,7 @@ async def get_neurochatting_module(session: AsyncSession, automation_id: int) ->
             select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id).order_by(ChatTarget.created_at.desc()).limit(400)
         )
     ).scalars().all()
-    folders = (
-        await session.execute(
-            select(ChatFolder).where(ChatFolder.custom_automation_id == automation_id).order_by(ChatFolder.created_at.desc())
-        )
-    ).scalars().all()
+    folders = await folder_payloads(session, automation_id)
     visible = [_chat_row(chat) for chat in chats if not chat.black_boxed_at]
     black = [chat for chat in chats if chat.black_boxed_at]
     jobs = await list_jobs(session, automation_id, bucket="all", category="module", limit=80)
@@ -253,11 +250,10 @@ async def get_neurochatting_module(session: AsyncSession, automation_id: int) ->
     accounts = [_account_row(account, pool) for account, pool in pairs]
     return {
         "enabled": bool(automation.is_digital_footprint_enabled),
-        "warmup_enabled": bool(automation.account_warmup_enabled),
         "settings": settings,
         "accounts": accounts,
         "chats": visible,
-        "folders": [{"id": folder.id, "name": folder.name} for folder in folders],
+        "folders": folders,
         "prompts": [
             {
                 "id": prompt.id,
@@ -294,8 +290,6 @@ async def save_neurochatting_module(
     settings = normalize_chat_settings(payload)
     if payload.get("enabled") is not None:
         automation.is_digital_footprint_enabled = bool(payload.get("enabled"))
-    if payload.get("warmup_enabled") is not None:
-        automation.account_warmup_enabled = bool(payload.get("warmup_enabled"))
     if settings["prompt_id"]:
         try:
             await activate_prompt(session, automation_id, settings["prompt_id"])
@@ -328,19 +322,7 @@ async def save_neurochatting_module(
 
 
 async def add_neurochatting_groups(session: AsyncSession, automation_id: int, raw_links: str) -> dict[str, Any]:
-    added: list[int] = []
-    errors: list[str] = []
-    for line in (raw_links or "").splitlines():
-        link = line.strip()
-        if not link:
-            continue
-        try:
-            chat = await create_chat_from_link(session, automation_id, link, mode="discussion")
-            added.append(chat.id)
-        except ValueError as exc:
-            errors.append(f"{link}: {exc}")
-        except Exception as exc:
-            errors.append(f"{link}: {exc}")
+    added, errors = await import_chat_links(session, automation_id, raw_links, mode="discussion")
     automation = await session.get(CustomAutomation, automation_id)
     settings = normalize_chat_settings((automation.module_settings or {}).get("neurochatting") if automation else {})
     settings["chat_ids"] = list(dict.fromkeys([*settings["chat_ids"], *added]))

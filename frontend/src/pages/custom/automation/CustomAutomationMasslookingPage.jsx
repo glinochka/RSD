@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import CustomSelect from '../../../components/CustomSelect';
+import UbtCheck from '../../../components/custom/UbtCheck';
+import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
+import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { ubtModulePath } from './customNav';
+import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -34,14 +40,6 @@ const formatWhen = (value) => {
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const Stepper = ({ value, min = 0, max = 999, onChange }) => (
-  <div className="nc-step">
-    <button type="button" onClick={() => onChange(Math.max(min, Number(value || 0) - 1))}>−</button>
-    <strong>{value}</strong>
-    <button type="button" onClick={() => onChange(Math.min(max, Number(value || 0) + 1))}>+</button>
-  </div>
-);
-
 const CustomAutomationMasslookingPage = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -50,8 +48,8 @@ const CustomAutomationMasslookingPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
   const [folderId, setFolderId] = useState('');
   const [dbQuery, setDbQuery] = useState('');
   const [presetName, setPresetName] = useState('');
@@ -88,9 +86,13 @@ const CustomAutomationMasslookingPage = () => {
     return () => window.clearInterval(timer);
   }, [jobs, load]);
 
-  const patch = (partial) => setSettings((prev) => ({ ...prev, ...partial }));
+  const patch = (partial) => {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    setDirty(true);
+  };
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedChats = new Set(settings?.chat_ids || []);
+  const selectedFolders = new Set(settings?.folder_ids || []);
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
 
   const accounts = useMemo(() => {
@@ -106,15 +108,12 @@ const CustomAutomationMasslookingPage = () => {
       if (settings?.hide_in_work && item.in_work) {
         return false;
       }
-      if (roleFilter && roleFilter !== 'all' && !(item.roles || []).includes(roleFilter)) {
-        return false;
-      }
       if (!needle) {
         return true;
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, roleFilter, settings, blockedAccounts]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const dbChats = useMemo(() => {
     const items = data?.chats || [];
@@ -135,18 +134,27 @@ const CustomAutomationMasslookingPage = () => {
   const blockedAccountRows = (data?.accounts || []).filter((item) => blockedAccounts.has(item.id));
   const issues = data?.issues || [];
   const recent = data?.summary?.recent || [];
-  const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length + selectedChats.size;
+  const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length + selectedChats.size + selectedFolders.size;
+  const settingsRef = useLiveRef(settings);
+  const enabledRef = useLiveRef(enabled);
+  const targetDraftRef = useLiveRef(targetDraft);
 
   const persist = async (next = {}) => {
     const payload = {
-      ...settings,
-      enabled,
+      ...settingsRef.current,
+      enabled: enabledRef.current,
       ...next,
-      targets: (next.targets !== undefined ? next.targets : targetDraft.split('\n').map((item) => item.trim()).filter(Boolean)),
+      targets: (next.targets !== undefined ? next.targets : targetDraftRef.current.split('\n').map((item) => item.trim()).filter(Boolean)),
     };
     const result = await customService.saveMasslookingModule(id, payload);
     applyPayload(result);
+    setDirty(false);
     return result;
+  };
+
+  const persistFlag = (partial) => {
+    setSettings(mergeSettings(settingsRef, partial));
+    persist(partial).catch((err) => setError(err.message || 'Не удалось сохранить'));
   };
 
   const runSafe = async (fn, okText) => {
@@ -179,6 +187,10 @@ const CustomAutomationMasslookingPage = () => {
       ? settings.chat_ids.filter((item) => item !== chatId)
       : [...settings.chat_ids, chatId];
     patch({ chat_ids: next });
+  };
+
+  const toggleFolder = (folderId) => {
+    patch({ folder_ids: toggleNumericId(settings.folder_ids, folderId) });
   };
 
   const blockAccount = (accountId) => {
@@ -224,17 +236,11 @@ const CustomAutomationMasslookingPage = () => {
             <p className="nc-hint">Отфильтровано: {accounts.length} / Всего: {(data.accounts || []).length}</p>
             <div className="nc-row">
               <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
-              <select className="nc-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                <option value="all">Все роли</option>
-                <option value="neurocommenting">Нейрокомментинг</option>
-                <option value="lead_intercept">Перехват</option>
-                <option value="shilling">Шиллинг</option>
-              </select>
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.require_proxy)} onChange={(event) => patch({ require_proxy: event.target.checked })} /> Рабочие прокси</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.hide_in_work)} onChange={(event) => patch({ hide_in_work: event.target.checked })} /> Скрыть в работе</label>
+              <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
+              <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
             {accounts.length === 0 ? <div className="nc-empty">Нет рабочих аккаунтов</div> : (
               <div className="nc-list">
@@ -305,19 +311,22 @@ const CustomAutomationMasslookingPage = () => {
             <h2>Пользователи и чаты</h2>
             <span className="nc-muted">Целей: {targetCount}</span>
           </div>
-          <textarea className="nc-area" value={targetDraft} onChange={(event) => setTargetDraft(event.target.value)} placeholder={'@username\nhttps://t.me/channel\nhttps://t.me/chat'} />
+          <textarea className="nc-area" value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@username\nhttps://t.me/channel\nhttps://t.me/chat'} />
           <p className="nc-hint">Юзеры — цель; каналы/чаты с публичным @username. Приватные инвайты без username пропускаются: у них нет публичных историй.</p>
           <div style={{ marginTop: 12 }}>
-            <FeatureToggle compact title="Смотреть ленту историй аккаунта" description="Как в живой сессии: открываем сторис из ленты подписок, даже если список целей пуст." checked={Boolean(settings.view_feed)} onChange={(value) => patch({ view_feed: value })} />
+            <FeatureToggle compact title="Смотреть ленту историй аккаунта" description="Как в живой сессии: открываем сторис из ленты подписок, даже если список целей пуст." checked={Boolean(settings.view_feed)} onChange={(value) => persistFlag({ view_feed: value })} />
           </div>
           <div style={{ marginTop: 12 }}>
-            <div className="nc-row">
-              <select className="nc-select" value={folderId} onChange={(event) => setFolderId(event.target.value)}>
-                <option value="">Все папки</option>
-                {(data.folders || []).map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-              </select>
+            <UbtFolderPicker folders={data.folders} selectedIds={selectedFolders} onToggle={toggleFolder} />
+            <div className="nc-row" style={{ marginTop: 12 }}>
+              <CustomSelect
+                className="nc-select"
+                value={String(folderId || '')}
+                options={folderOptions(data.folders, 'Чаты внутри папки')}
+                onChange={(event) => setFolderId(event.target.value)}
+              />
               <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск канала" />
-              <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>База</Link>
+              <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
             </div>
             <div className="nc-list" style={{ marginTop: 8 }}>
               {dbChats.slice(0, 40).map((item) => (
@@ -345,8 +354,9 @@ const CustomAutomationMasslookingPage = () => {
               <span>Пауза после каждого просмотренного источника</span>
             </div>
             <div className="nc-row">
-              <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
-              <button type="button" className="nc-chip is-on" onClick={() => patch(DELAY_PRESETS.rec)}>Рек.</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.min) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.rec) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рек.</button>
+              <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.max) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
               <Stepper value={settings.delay_min} min={0} max={120} onChange={(value) => patch({ delay_min: value, delay_max: Math.max(value, settings.delay_max) })} />
               <span className="nc-muted">до</span>
               <Stepper value={settings.delay_max} min={settings.delay_min} max={180} onChange={(value) => patch({ delay_max: value })} />
@@ -378,7 +388,7 @@ const CustomAutomationMasslookingPage = () => {
             </div>
             <div className="nc-row">
               <Stepper value={settings.skip_hours} min={1} max={168} onChange={(value) => patch({ skip_hours: value, skip_seen: true })} />
-              <FeatureToggle compact title="" checked={Boolean(settings.skip_seen)} onChange={(value) => patch({ skip_seen: value })} />
+              <FeatureToggle compact title="" label="Не повторять" checked={Boolean(settings.skip_seen)} onChange={(value) => persistFlag({ skip_seen: value })} />
             </div>
           </div>
           <div className="nc-setting nc-setting--muted">
@@ -406,7 +416,7 @@ const CustomAutomationMasslookingPage = () => {
             <strong>Ограничивать темп на аккаунт</strong>
             <span>После просмотров — пауза 15–30 минут в очереди гуманизации, как у живого прогрева.</span>
           </div>
-          <FeatureToggle compact title="" checked={Boolean(settings.limit_rate)} onChange={(value) => patch({ limit_rate: value })} />
+          <FeatureToggle compact title="" label="Ограничивать темп на аккаунт" checked={Boolean(settings.limit_rate)} onChange={(value) => persistFlag({ limit_rate: value })} />
         </div>
         <div className="nc-setting">
           <div className="nc-setting-copy">
@@ -420,14 +430,7 @@ const CustomAutomationMasslookingPage = () => {
             <strong>Ночной простой</strong>
             <span>С 21:30 до 07:00 по Москве просмотры не идут.</span>
           </div>
-          <FeatureToggle compact title="" checked={Boolean(settings.respect_night_hours)} onChange={(value) => patch({ respect_night_hours: value })} />
-        </div>
-        <div className="nc-setting nc-setting--muted">
-          <div className="nc-setting-copy">
-            <strong>Прогрев новых аккаунтов</strong>
-            <span>Общий разгон живёт в подразделе «Прогрев», здесь его не дублируем.</span>
-          </div>
-          <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
+          <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>
       </div>
 
@@ -450,6 +453,7 @@ const CustomAutomationMasslookingPage = () => {
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>
+        <UbtUnsaved dirty={dirty} />
         <div className="nc-launch" style={{ marginTop: 12 }}>
           <div className="nc-status">
             <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
@@ -463,10 +467,10 @@ const CustomAutomationMasslookingPage = () => {
             <button
               type="button"
               className="acc-btn acc-btn--primary"
-              disabled={busy}
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
               onClick={() => runSafe(async () => {
-                const saved = await persist();
-                await customService.runMasslookingModule(id, { ...saved.settings, enabled: true });
+                const saved = assertCanRun(await persist());
+                await customService.runMasslookingModule(id, { ...saved.settings, enabled: saved.enabled });
                 await load();
               }, 'Запуск поставлен в очередь')}
             >

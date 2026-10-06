@@ -56,6 +56,53 @@ _SPAMBOT_WAIT_SECONDS = 2.0
 SESSION_RECONNECT_HINT = "Нет входа в Telegram. Подключите аккаунт заново по QR или SMS."
 _session_locks: dict[str, asyncio.Lock] = {}
 _session_locks_guard = asyncio.Lock()
+_live_handles: dict[str, "_LiveHandle"] = {}
+
+
+class _RpcGate:
+    """Reentrant per-task gate so nested for_account on the same session does not deadlock."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._task: asyncio.Task | None = None
+        self._depth = 0
+
+    async def acquire(self) -> None:
+        task = asyncio.current_task()
+        if self._task is task:
+            self._depth += 1
+            return
+        await self._lock.acquire()
+        self._task = task
+        self._depth = 1
+
+    def release(self) -> None:
+        self._depth = max(0, self._depth - 1)
+        if self._depth:
+            return
+        self._task = None
+        if self._lock.locked():
+            self._lock.release()
+
+
+class _LiveHandle:
+    def __init__(self, wrapper: "TelegramAccountClient") -> None:
+        self.wrapper = wrapper
+        self.rpc = _RpcGate()
+        self.persistent = False
+
+
+def _session_key(path: str) -> str:
+    return str(Path(path).resolve())
+
+
+def live_client_for_path(path: str | None) -> "TelegramAccountClient | None":
+    if not path:
+        return None
+    handle = _live_handles.get(_session_key(path))
+    if handle and handle.wrapper.client:
+        return handle.wrapper
+    return None
 _SESSION_SIDECARS = ("-journal", "-wal", "-shm")
 _PRODUCTION_DCS = {
     1: ("149.154.175.53", 443),
@@ -337,6 +384,8 @@ class TelegramAccountClient:
         self._work_path: Path | None = None
         self._detected_api_id: int | None = None
         self._converted_pyrogram = False
+        self._borrowed = False
+        self._live_handle: _LiveHandle | None = None
 
     @classmethod
     def for_account(
@@ -473,17 +522,34 @@ class TelegramAccountClient:
             self._raise_connect_error(last_exc)
         raise SessionInvalidError(SESSION_RECONNECT_HINT)
 
-    def _release_locks(self) -> None:
-        _release_session_file_lock(self._file_lock)
-        self._file_lock = None
+    def _release_asyncio_lock(self) -> None:
         if self._session_lock is not None:
             self._session_lock.release()
             self._session_lock = None
 
-    async def __aenter__(self) -> "TelegramAccountClient":
+    def _release_locks(self) -> None:
+        _release_session_file_lock(self._file_lock)
+        self._file_lock = None
+        self._release_asyncio_lock()
+
+    def _adopt_live(self, handle: _LiveHandle) -> None:
+        live = handle.wrapper
+        self.client = live.client
+        self.api_id = live.api_id
+        self.api_hash = live.api_hash
+        self._live_handle = handle
+        self._borrowed = live is not self
+
+    async def _connect_fresh(self) -> None:
         self._session_lock = await _lock_for_session(self.session_path)
         await self._session_lock.acquire()
         try:
+            key = _session_key(self.session_path)
+            handle = _live_handles.get(key)
+            if handle and handle.wrapper.client:
+                self._release_asyncio_lock()
+                self._adopt_live(handle)
+                return
             self._file_lock = await asyncio.to_thread(_acquire_session_file_lock, self.session_path)
             authorized = await self._connect_with_api_fallbacks()
             if not authorized and self._encrypted_session:
@@ -495,14 +561,82 @@ class TelegramAccountClient:
                 raise SessionInvalidError(SESSION_RECONNECT_HINT)
             if self._converted_pyrogram and self._work_path:
                 copy_session_bundle(self._work_path, Path(self.session_path))
-            return self
         except Exception:
             await self._close_client()
             self._cleanup_work_dir()
             self._release_locks()
             raise
 
+    async def keep_alive(self) -> "TelegramAccountClient":
+        """Open (or reuse) the MTProto session and keep it connected across task streams."""
+        key = _session_key(self.session_path)
+        handle = _live_handles.get(key)
+        if handle and handle.wrapper.client:
+            self._adopt_live(handle)
+            handle.persistent = True
+            return handle.wrapper
+        await self._connect_fresh()
+        if self._borrowed:
+            handle = self._live_handle
+            if handle:
+                handle.persistent = True
+            return handle.wrapper
+        handle = _LiveHandle(self)
+        handle.persistent = True
+        _live_handles[key] = handle
+        self._live_handle = handle
+        # Publish the live client, then free the in-process lock so other
+        # tasks borrow this handle instead of opening a second MTProto conn.
+        self._release_asyncio_lock()
+        return self
+
+    async def drop_alive(self) -> None:
+        key = _session_key(self.session_path)
+        handle = _live_handles.get(key)
+        if handle:
+            handle.persistent = False
+            if handle.wrapper is not self:
+                await handle.wrapper.drop_alive()
+                return
+            _live_handles.pop(key, None)
+        try:
+            await self._close_client()
+        finally:
+            self._cleanup_work_dir()
+            self._release_locks()
+
+    async def __aenter__(self) -> "TelegramAccountClient":
+        key = _session_key(self.session_path)
+        handle = _live_handles.get(key)
+        if handle and handle.wrapper.client:
+            self._adopt_live(handle)
+            await handle.rpc.acquire()
+            return self
+        await self._connect_fresh()
+        if self._borrowed:
+            handle = self._live_handle
+            if handle:
+                await handle.rpc.acquire()
+            return self
+        handle = _LiveHandle(self)
+        _live_handles[key] = handle
+        self._live_handle = handle
+        self._release_asyncio_lock()
+        await handle.rpc.acquire()
+        return self
+
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        handle = self._live_handle
+        if handle is not None:
+            handle.rpc.release()
+        if self._borrowed:
+            self.client = None
+            return
+        if handle is not None and handle.persistent:
+            return
+        key = _session_key(self.session_path)
+        if _live_handles.get(key) is handle:
+            _live_handles.pop(key, None)
         try:
             await self._close_client()
         finally:

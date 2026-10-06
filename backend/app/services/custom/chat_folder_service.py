@@ -61,6 +61,13 @@ async def list_folders(session: AsyncSession, automation_id: int) -> list[tuple[
     return [(folder, int(count or 0)) for folder, count in rows]
 
 
+async def folder_payloads(session: AsyncSession, automation_id: int) -> list[dict]:
+    return [
+        {"id": folder.id, "name": folder.name, "count": count}
+        for folder, count in await list_folders(session, automation_id)
+    ]
+
+
 async def delete_folder(session: AsyncSession, automation_id: int, folder_id: int) -> bool:
     folder = await session.get(ChatFolder, folder_id)
     if not folder or folder.custom_automation_id != automation_id:

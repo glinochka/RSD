@@ -450,6 +450,7 @@ HISTORY_TYPES = {
     "discussion": ("discussion",),
     "masslooking": ("masslooking",),
     "chat_broadcast": ("chat_broadcast",),
+    "dm_broadcast": ("dm_broadcast",),
     "intercept": ("dm", "chat_monitoring"),
     "dmp": ("dmp", "dmp_outreach"),
     "warmup": ("account_warmup", "peer_dialog", "comment_contact"),
@@ -648,11 +649,12 @@ async def get_ubt_stats(
     dmp = await _log_counts(session, automation_id, HISTORY_TYPES["dmp"], since=since)
     masslooking = await _log_counts(session, automation_id, HISTORY_TYPES["masslooking"], since=since)
     chat_broadcast = await _log_counts(session, automation_id, HISTORY_TYPES["chat_broadcast"], since=since)
+    dm_broadcast = await _log_counts(session, automation_id, HISTORY_TYPES["dm_broadcast"], since=since)
     warmup = await _log_counts(session, automation_id, HISTORY_TYPES["warmup"], since=since)
     masspriming = await _log_counts(session, automation_id, HISTORY_TYPES["masspriming"], since=since)
     parser = await _log_counts(session, automation_id, HISTORY_TYPES["parser"], since=since)
-    success_all = comments["success"] + shilling["success"] + discussion["success"] + intercept["success"] + dmp["success"] + masslooking["success"] + chat_broadcast["success"] + warmup["success"] + masspriming["success"] + parser["success"]
-    attempts_all = comments["attempts"] + shilling["attempts"] + discussion["attempts"] + intercept["attempts"] + dmp["attempts"] + masslooking["attempts"] + chat_broadcast["attempts"] + warmup["attempts"] + masspriming["attempts"] + parser["attempts"]
+    success_all = comments["success"] + shilling["success"] + discussion["success"] + intercept["success"] + dmp["success"] + masslooking["success"] + chat_broadcast["success"] + dm_broadcast["success"] + warmup["success"] + masspriming["success"] + parser["success"]
+    attempts_all = comments["attempts"] + shilling["attempts"] + discussion["attempts"] + intercept["attempts"] + dmp["attempts"] + masslooking["attempts"] + chat_broadcast["attempts"] + dm_broadcast["attempts"] + warmup["attempts"] + masspriming["attempts"] + parser["attempts"]
 
     wanted = HISTORY_TYPES.get(history_type) or HISTORY_TYPES["neurocommenting"]
     history_stmt = (
@@ -801,6 +803,7 @@ async def get_ubt_stats(
                 "dmp": dmp["success"],
                 "masslooking": masslooking["success"],
                 "chat_broadcast": chat_broadcast["success"],
+                "dm_broadcast": dm_broadcast["success"],
                 "warmup": warmup["success"],
                 "masspriming": masspriming["success"],
                 "parser": parser["success"],
@@ -842,6 +845,7 @@ async def get_ubt_stats(
                 "dmp": dmp,
                 "masslooking": masslooking,
                 "chat_broadcast": chat_broadcast,
+                "dm_broadcast": dm_broadcast,
                 "warmup": warmup,
                 "masspriming": masspriming,
                 "parser": parser,

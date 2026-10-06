@@ -5,6 +5,7 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const LEAD_STATUSES = [
   { value: 'new', label: 'Новый' },

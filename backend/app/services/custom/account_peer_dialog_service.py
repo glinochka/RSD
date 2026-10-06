@@ -28,7 +28,7 @@ DAILY_MIN_MESSAGES = 5
 DAILY_MAX_MESSAGES = 10
 HISTORY_KEEP = 12
 MAX_PEER_SENDS_PER_PASS = 1
-MAX_PEER_STARTS_PER_PASS = 1
+MAX_PEER_STARTS_PER_PASS = 2
 
 _OPENERS = (
     "Привет, как день?",
@@ -110,6 +110,16 @@ def pair_accounts(accounts: list[SocialAccount], *, rng: random.Random | None = 
     pairs: list[tuple[SocialAccount, SocialAccount]] = []
     for index in range(0, len(pool) - 1, 2):
         pairs.append((pool[index], pool[index + 1]))
+    return pairs
+
+
+def pair_accounts_covering(accounts: list[SocialAccount], *, rng: random.Random | None = None) -> list[tuple[SocialAccount, SocialAccount]]:
+    """Pair everyone. The leftover odd account writes with someone who already has a pair."""
+    pairs = pair_accounts(accounts, rng=rng)
+    used = {account.id for pair in pairs for account in pair}
+    leftover = [account for account in accounts if account.id not in used]
+    if leftover and pairs:
+        pairs.append((leftover[0], pairs[0][0]))
     return pairs
 
 
@@ -213,9 +223,16 @@ def _busy_account_ids(dialogs: list[CustomAccountPeerDialog], today: str) -> set
     return busy
 
 
-async def _load_alive_accounts(session: AsyncSession, automation_id: int) -> list[SocialAccount]:
+async def _load_alive_accounts(
+    session: AsyncSession,
+    automation_id: int,
+    cfg: dict[str, Any] | None = None,
+) -> list[SocialAccount]:
+    from .module_account_filters import skip_account_for_module
+    from .warmup_module_service import account_allowed
+
     result = await session.execute(
-        select(SocialAccount)
+        select(SocialAccount, PoolAccount)
         .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
         .where(
             PoolAccount.custom_automation_id == automation_id,
@@ -230,8 +247,12 @@ async def _load_alive_accounts(session: AsyncSession, automation_id: int) -> lis
     )
     accounts = []
     seen: set[int] = set()
-    for account in result.scalars().all():
+    for account, pool in result.all():
         if account.id in seen or not _account_can_peer(account):
+            continue
+        if cfg is not None and not account_allowed(cfg, account.id):
+            continue
+        if skip_account_for_module(cfg, account, pool):
             continue
         seen.add(account.id)
         accounts.append(account)
@@ -355,16 +376,14 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "not_found"}
-        from .warmup_module_service import account_allowed, runtime_warmup_cfg
+        from .warmup_module_service import runtime_warmup_cfg
 
         cfg = runtime_warmup_cfg(automation)
+        if not automation.account_warmup_enabled:
+            return {"status": "skipped", "reason": "warmup_off", "sent": 0}
         if cfg.get("do_peer_dialogs") is False:
             return {"status": "skipped", "reason": "peer_dialogs_off", "sent": 0}
-        accounts = [
-            account
-            for account in await _load_alive_accounts(session, automation_id)
-            if account_allowed(cfg, account.id)
-        ]
+        accounts = await _load_alive_accounts(session, automation_id, cfg)
         if len(accounts) < 2:
             return {"status": "skipped", "reason": "need_two_accounts", "sent": 0}
         by_id = {account.id: account for account in accounts}
@@ -408,10 +427,10 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
         busy = _busy_account_ids(rows, today)
         free = [account for account in accounts if account.id not in busy]
         started_this_pass = 0
-        for left, right in pair_accounts(free):
+        for left, right in pair_accounts_covering(free):
             if started_this_pass >= MAX_PEER_STARTS_PER_PASS:
                 break
-            if left.id in busy or right.id in busy:
+            if left.id in busy and right.id in busy:
                 continue
             dialog = await _get_or_create_dialog(session, automation_id, left, right)
             _reset_dialog_if_new_day(dialog, today)

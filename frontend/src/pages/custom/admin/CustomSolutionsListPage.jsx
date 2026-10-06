@@ -5,8 +5,6 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
 import { SOLUTION_KIND_LABELS } from '../automation/activityLabels';
 import '../../../styles/projectLayout.css';
-import '../../../styles/agentsPage.css';
-import '../../../styles/projectDashboard.css';
 import '../../../styles/customSolutionNav.css';
 
 const STATUS_LABELS = {
@@ -53,7 +51,8 @@ const CustomSolutionsListPage = () => {
     };
   }, []);
 
-  const selected = automations.find((item) => item.id === selectedId) || dashboard?.automations?.find((item) => item.id === selectedId);
+  const selected = automations.find((item) => item.id === selectedId)
+    || dashboard?.automations?.find((item) => item.id === selectedId);
   const selectedStats = dashboard?.automations?.find((item) => item.id === selectedId);
 
   const handleDelete = async (id) => {
@@ -85,115 +84,112 @@ const CustomSolutionsListPage = () => {
       </header>
 
       <main className="project-content">
-        <div className="agents-page-content">
-          <section className="agents-section">
-          <div className="section-header">
-            <h2 className="section-title">Решения</h2>
+        <div className="ubt-page">
+          <div className="ubt-hero">
+            <div>
+              <h1>Решения</h1>
+              <p>Откройте существующее решение или создайте новое.</p>
+            </div>
             <button
               type="button"
-              className="btn btn-black btn-add"
+              className="btn btn-black"
               onClick={() => navigate(NAVIGATION_ROUTES.CUSTOM_ADMIN_NEW)}
             >
               + Новое решение
             </button>
           </div>
 
-          {error ? <div className="dashboard-error">{error}</div> : null}
+          {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
           {isLoading ? (
-            <div className="dashboard-loading">Загрузка...</div>
+            <p className="ubt-empty">Загрузка...</p>
           ) : automations.length === 0 ? (
-            <div className="agent-management-empty">Пока нет решений. Создайте первое.</div>
+            <div className="ubt-panel">
+              <p className="ubt-empty">Пока нет решений. Создайте первое.</p>
+            </div>
           ) : (
-            <div className="agents-layout">
-              <div className="agents-list">
-                {automations.map((automation) => (
-                  <div
-                    key={automation.id}
-                    className={`agent-item ${selectedId === automation.id ? 'agent-item--selected' : ''}`}
-                    onClick={() => setSelectedId(automation.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        setSelectedId(automation.id);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="agent-info">
-                      <span
-                        className={`agent-status-dot ${
-                          automation.status === 'active' ? 'agent-status-dot--active' : 'agent-status-dot--inactive'
-                        }`}
-                      />
-                      <div className="agent-details">
-                        <h3 className="agent-name">{automation.name}</h3>
-                        <p className="agent-role">
-                          {SOLUTION_KIND_LABELS[automation.solution_kind] || automation.client_name || 'Без клиента'}
-                          {' · '}
-                          {STATUS_LABELS[automation.status] || automation.status}
+            <div className="ubt-health">
+              <div className="ubt-panel">
+                <div className="ubt-panel-header">
+                  <h2>Список</h2>
+                </div>
+                <div className="ubt-pick-list">
+                  {automations.map((automation) => (
+                    <button
+                      key={automation.id}
+                      type="button"
+                      className={`ubt-pick ${selectedId === automation.id ? 'is-on' : ''}`}
+                      onClick={() => setSelectedId(automation.id)}
+                    >
+                      <strong>{automation.name}</strong>
+                      <span>
+                        {SOLUTION_KIND_LABELS[automation.solution_kind] || automation.client_name || 'Без клиента'}
+                        {' · '}
+                        {STATUS_LABELS[automation.status] || automation.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="ubt-panel">
+                {selected ? (
+                  <>
+                    <div className="ubt-panel-header">
+                      <div>
+                        <h2>{selected.name}</h2>
+                        <p>
+                          {[
+                            `ID ${selected.id}`,
+                            selected.client_name,
+                            SOLUTION_KIND_LABELS[selected.solution_kind] !== selected.client_name
+                              ? SOLUTION_KIND_LABELS[selected.solution_kind]
+                              : null,
+                          ].filter(Boolean).join(' · ')}
                         </p>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="agent-management-card">
-                {selected ? (
-                  <>
-                    <div className="agent-management-header">
-                      <h3>{selected.name}</h3>
-                      <p>ID: {selected.id}</p>
-                      <p>{selected.client_name || 'Клиент не указан'}</p>
-                    <p className="agent-role">{SOLUTION_KIND_LABELS[selected.solution_kind] || selected.solution_kind || ''}</p>
-                    </div>
-                    <div className="dashboard-stats-grid">
-                      <div className="dashboard-stat-card">
-                        <div className="dashboard-stat-content">
-                          <span className="dashboard-stat-value">{selectedStats?.accounts_total ?? '—'}</span>
-                          <span className="dashboard-stat-label">Аккаунты</span>
-                        </div>
+                    <div className="ubt-health-grid ubt-health-grid--3">
+                      <div className="ubt-kpi ubt-kpi--soft">
+                        <strong>{selectedStats?.accounts_total ?? '—'}</strong>
+                        <span>Аккаунты</span>
                       </div>
-                      <div className="dashboard-stat-card">
-                        <div className="dashboard-stat-content">
-                          <span className="dashboard-stat-value">{selectedStats?.leads_total ?? '—'}</span>
-                          <span className="dashboard-stat-label">Лиды</span>
-                        </div>
+                      <div className="ubt-kpi ubt-kpi--soft">
+                        <strong>{selectedStats?.leads_total ?? '—'}</strong>
+                        <span>Лиды</span>
                       </div>
-                      <div className="dashboard-stat-card">
-                        <div className="dashboard-stat-content">
-                          <span className="dashboard-stat-value">{selectedStats?.messages_total ?? '—'}</span>
-                          <span className="dashboard-stat-label">Сообщения</span>
-                        </div>
+                      <div className="ubt-kpi ubt-kpi--soft">
+                        <strong>{selectedStats?.messages_total ?? '—'}</strong>
+                        <span>Сообщения</span>
                       </div>
                     </div>
-                    <p className="agent-role">
+                    <p className="ubt-empty">
                       {selected.is_dmp_one_enabled || selectedStats?.is_dmp_one_enabled ? 'DMP.one · ' : ''}
                       {selected.is_amocrm_enabled || selectedStats?.is_amocrm_enabled ? 'AmoCRM' : 'Без AmoCRM'}
                     </p>
-                    <button
-                      type="button"
-                      className="btn btn-black analytics-btn"
-                      onClick={() => navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(selected.id))}
-                    >
-                      Открыть решение
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline analytics-btn"
-                      onClick={() => handleDelete(selected.id)}
-                    >
-                      Удалить
-                    </button>
+                    <div className="settings-actions">
+                      <button
+                        type="button"
+                        className="btn btn-black"
+                        onClick={() => navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(selected.id))}
+                      >
+                        Открыть решение
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={() => handleDelete(selected.id)}
+                      >
+                        Удалить
+                      </button>
+                    </div>
                   </>
                 ) : (
-                  <div className="agent-management-empty">Выберите решение для управления</div>
+                  <p className="ubt-empty">Выберите решение для управления</p>
                 )}
               </div>
             </div>
           )}
-          </section>
         </div>
       </main>
     </div>

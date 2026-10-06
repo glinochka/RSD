@@ -30,8 +30,9 @@ JOB_META = {
     "discussion": {"category": "module", "title": "Нейрочаттинг", "badge": "ЧТ"},
     "masslooking": {"category": "module", "title": "Масслукинг", "badge": "МЛ"},
     "masspriming": {"category": "module", "title": "Масспрайминг", "badge": "МП"},
-    "parser": {"category": "module", "title": "Парсер", "badge": "ПР"},
+    "parser": {"category": "module", "title": "Парсер юзеров", "badge": "ПР"},
     "chat_broadcast": {"category": "module", "title": "Чат-рассылки", "badge": "ЧР"},
+    "dm_broadcast": {"category": "module", "title": "ЛС-рассылки", "badge": "ЛС"},
     "shilling": {"category": "module", "title": "Нейрошиллинг", "badge": "НШ"},
     "inspect": {"category": "module", "title": "Проверка комментариев", "badge": "КМ"},
     "join": {"category": "module", "title": "Вступление в чаты", "badge": "ВС"},
@@ -462,7 +463,10 @@ async def finish_job(
 
 async def queue_tracked(background_tasks, automation_id: int, job_type: str, fn: Callable[..., Awaitable[Any]], *args: Any, params: dict[str, Any] | None = None) -> int:
     job_id = await spawn_job(automation_id, job_type, params=params)
-    background_tasks.add_task(run_spawned, job_id, fn, *args)
+    bound_args = args
+    if args and isinstance(args[-1], dict):
+        bound_args = (*args[:-1], {**args[-1], "_job_id": job_id})
+    background_tasks.add_task(run_spawned, job_id, fn, *bound_args)
     return job_id
 
 

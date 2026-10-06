@@ -54,7 +54,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess, embedded = false }) =>
 
   if (!isOpen) {
     return (
-      <button type="button" onClick={() => setIsOpen(true)} className="btn btn-outline">
+      <button type="button" onClick={() => setIsOpen(true)} className="acc-btn acc-btn--ghost">
         Массовое обновление профилей
       </button>
     );
@@ -65,7 +65,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess, embedded = false }) =>
       {embedded ? null : (
         <div className="crm-item-header">
           <h3 className="crm-item-title">Массовое обновление профилей</h3>
-          <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
+          <button type="button" onClick={() => setIsOpen(false)} className="acc-btn acc-btn--ghost">
             Скрыть
           </button>
         </div>
@@ -108,6 +108,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess, embedded = false }) =>
           <CustomFileButton
             id="bulk-avatar"
             accept="image/*"
+            variant="ubt"
             fileName={avatar ? avatar.name : null}
             onFile={handleFileChange}
           >
@@ -116,11 +117,11 @@ const CustomBulkProfileForm = ({ automationId, onSuccess, embedded = false }) =>
           <span className="form-hint">Шаблон сохранится для «Начать подготовку»</span>
         </div>
         <div className="settings-actions">
-          <button type="submit" disabled={isSubmitting} className="btn btn-black">
+          <button type="submit" disabled={isSubmitting} className="acc-btn acc-btn--dark">
             {isSubmitting ? 'Отправка...' : 'Обновить профили'}
           </button>
           {embedded ? null : (
-            <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
+            <button type="button" onClick={() => setIsOpen(false)} className="acc-btn acc-btn--ghost">
               Отмена
             </button>
           )}

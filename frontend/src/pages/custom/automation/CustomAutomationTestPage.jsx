@@ -5,6 +5,7 @@ import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const targetLabel = (target) => {
   if (!target) {
@@ -287,7 +288,7 @@ const CustomAutomationTestPage = () => {
       <div className="settings-section">
         <h3 className="settings-section-title">Шиллинг в чате</h3>
         <p className="form-hint">
-          Аккаунты с функцией «Шиллинг» пишут в целевом чате фиксированные вопрос и ответ из промптов.
+          Два выбранных аккаунта пишут в целевом чате вопрос и ответ из промптов.
         </p>
         <div className="settings-actions">
           <button type="button" className="btn btn-black" disabled={Boolean(busy)} onClick={handleChatShilling}>
@@ -316,7 +317,7 @@ const CustomAutomationTestPage = () => {
       <form onSubmit={handleDmp} className="settings-section">
         <h3 className="settings-section-title">Искусственный DMP</h3>
         <p className="form-hint">
-          Введите номер: система ищет аккаунт с этим телефоном и сразу пишет ему от аккаунта с функцией DMP.
+          Введите номер: система ищет аккаунт с этим телефоном и пишет ему от живого аккаунта пула.
         </p>
         <div className="form-group">
           <label htmlFor="test-dmp-phone">Номер</label>

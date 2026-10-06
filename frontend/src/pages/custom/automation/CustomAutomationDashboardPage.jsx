@@ -72,6 +72,11 @@ const CustomAutomationDashboardPage = () => {
     .filter((key) => grouped24h[key])
     .map((key) => [ACTION_LABELS[key], grouped24h[key]]);
 
+  const health = data.accounts || {};
+  const dmpPurchased = data.dmp?.purchased || 0;
+  const dmpCost = data.dmp?.cost_rub;
+  const showDmp = dmpPurchased > 0 || (dmpCost !== undefined && dmpCost !== null && Number(dmpCost) > 0);
+
   return (
     <div className="ubt-page">
       <div className="ubt-hero">
@@ -96,35 +101,59 @@ const CustomAutomationDashboardPage = () => {
           <span>Передано</span>
         </div>
         <div className="ubt-kpi">
-          <strong>{data.accounts?.active ?? 0}</strong>
+          <strong>{health.active ?? 0}</strong>
           <span>Активные аккаунты</span>
         </div>
-        <div className="ubt-kpi">
-          <strong>{data.accounts?.revoked ?? 0}</strong>
-          <span>Сессия отозвана</span>
+      </div>
+
+      <div className={`ubt-health${showDmp ? '' : ' ubt-health--solo'}`}>
+        <div className="ubt-panel">
+          <div className="ubt-panel-header">
+            <div>
+              <h2>Состояние аккаунтов</h2>
+              <p>Проблемы лучше смотреть в статистике, здесь только сводка.</p>
+            </div>
+            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'accounts')}>Аккаунты</Link>
+          </div>
+          <div className="ubt-health-grid">
+            <div className={`ubt-kpi ubt-kpi--soft${(health.revoked ?? 0) > 0 ? ' ubt-kpi--warn' : ''}`}>
+              <strong>{health.revoked ?? 0}</strong>
+              <span>Сессия отозвана</span>
+            </div>
+            <div className={`ubt-kpi ubt-kpi--soft${(health.spamblocked ?? 0) > 0 ? ' ubt-kpi--warn' : ''}`}>
+              <strong>{health.spamblocked ?? 0}</strong>
+              <span>Спамблок</span>
+            </div>
+            <div className={`ubt-kpi ubt-kpi--soft${(health.frozen ?? 0) > 0 ? ' ubt-kpi--warn' : ''}`}>
+              <strong>{health.frozen ?? 0}</strong>
+              <span>Заморожены</span>
+            </div>
+            <div className={`ubt-kpi ubt-kpi--soft${(health.banned ?? 0) > 0 ? ' ubt-kpi--danger' : ''}`}>
+              <strong>{health.banned ?? 0}</strong>
+              <span>Баны</span>
+            </div>
+          </div>
         </div>
-        <div className="ubt-kpi">
-          <strong>{data.accounts?.spamblocked ?? 0}</strong>
-          <span>СПАМБЛОК</span>
-        </div>
-        <div className="ubt-kpi">
-          <strong>{data.accounts?.frozen ?? 0}</strong>
-          <span>Заморожены</span>
-        </div>
-        <div className="ubt-kpi">
-          <strong>{data.accounts?.banned ?? 0}</strong>
-          <span>Баны аккаунтов</span>
-        </div>
-        <div className="ubt-kpi">
-          <strong>{data.dmp?.purchased ?? 0}</strong>
-          <span>DMP куплено</span>
-        </div>
-        <div className="ubt-kpi">
-          <strong>
-            {data.dmp?.cost_rub === undefined || data.dmp?.cost_rub === null ? '—' : `${data.dmp.cost_rub} ₽`}
-          </strong>
-          <span>Расход DMP</span>
-        </div>
+        {showDmp ? (
+          <div className="ubt-panel">
+            <div className="ubt-panel-header">
+              <div>
+                <h2>DMP</h2>
+                <p>Закупки и расход — отдельный контур.</p>
+              </div>
+            </div>
+            <div className="ubt-health-grid">
+              <div className="ubt-kpi ubt-kpi--soft ubt-kpi--ok">
+                <strong>{dmpPurchased}</strong>
+                <span>Куплено</span>
+              </div>
+              <div className="ubt-kpi ubt-kpi--soft">
+                <strong>{dmpCost === undefined || dmpCost === null ? '—' : `${dmpCost} ₽`}</strong>
+                <span>Расход</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="ubt-split">

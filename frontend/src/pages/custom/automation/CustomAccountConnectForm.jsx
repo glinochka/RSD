@@ -1,18 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import CustomAccountProxyFields from './CustomAccountProxyFields';
 
-const CONNECT_CLASSES = [
-  { value: 'one_day', label: 'Однодневный' },
-  { value: 'mid', label: 'Средний' },
-  { value: 'trusted', label: 'Доверенный' },
-  { value: 'shilling', label: 'Шиллинг' },
-];
-
 const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false }) => {
   const [mode, setMode] = useState('qr');
-  const [assignClass, setAssignClass] = useState('one_day');
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const onConnectedRef = useRef(onConnected);
@@ -81,7 +72,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
     setQrConnected(false);
     lastQrStatusRef.current = '';
     try {
-      const response = await customService.startAccountQr(automationId, assignClass, {
+      const response = await customService.startAccountQr(automationId, {
         proxyId,
         proxyLine,
       });
@@ -178,7 +169,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
     setIsRequestingSms(true);
     setSmsNeeds2fa(false);
     try {
-      const response = await customService.requestAccountSms(automationId, phone.trim(), assignClass, {
+      const response = await customService.requestAccountSms(automationId, phone.trim(), {
         proxyId,
         proxyLine,
       });
@@ -228,22 +219,12 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
       {hideTitle ? null : (
         <>
           <h3 className="settings-section-title">Добавить аккаунт</h3>
-          <p className="form-hint">Как у ИИ-агента: QR или код по SMS. 2FA — если включена на аккаунте.</p>
+          <p className="form-hint">QR или код по SMS. 2FA — если включена на аккаунте.</p>
         </>
       )}
 
       {message ? <p className="crm-flash">{message}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
-
-      <div className="form-group">
-        <label htmlFor="connect-class">Класс</label>
-        <CustomSelect
-          id="connect-class"
-          value={assignClass}
-          options={CONNECT_CLASSES}
-          onChange={(e) => setAssignClass(e.target.value)}
-        />
-      </div>
 
       <CustomAccountProxyFields
         proxies={poolProxies}
@@ -274,7 +255,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
       {mode === 'qr' ? (
         <>
           <div className="settings-actions">
-            <button type="button" className="btn btn-black" onClick={handleQrStart} disabled={isStartingQr}>
+            <button type="button" className="acc-btn acc-btn--dark" onClick={handleQrStart} disabled={isStartingQr}>
               {isStartingQr ? 'Генерация...' : 'Показать QR-код'}
             </button>
           </div>
@@ -296,7 +277,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
               <div className="settings-actions">
                 <button
                   type="button"
-                  className="btn btn-outline"
+                  className="acc-btn acc-btn--ghost"
                   onClick={handleQrVerify2fa}
                   disabled={isVerifyingQr2fa || !qrNeeds2fa}
                 >
@@ -319,7 +300,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
             />
           </div>
           <div className="settings-actions">
-            <button type="button" className="btn btn-black" onClick={handleSmsRequest} disabled={isRequestingSms}>
+            <button type="button" className="acc-btn acc-btn--dark" onClick={handleSmsRequest} disabled={isRequestingSms}>
               {isRequestingSms ? 'Отправка...' : 'Запросить код'}
             </button>
           </div>
@@ -348,7 +329,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
                 </div>
               ) : null}
               <div className="settings-actions">
-                <button type="button" className="btn btn-outline" onClick={handleSmsVerify} disabled={isVerifyingSms}>
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={handleSmsVerify} disabled={isVerifyingSms}>
                   {isVerifyingSms ? 'Проверка...' : 'Подтвердить'}
                 </button>
               </div>

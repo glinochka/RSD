@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import CustomSelect from '../../../components/CustomSelect';
+import UbtCheck from '../../../components/custom/UbtCheck';
+import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
+import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { ubtModulePath } from './customNav';
+import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -34,14 +40,6 @@ const formatWhen = (value) => {
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const Stepper = ({ value, min = 0, max = 999, onChange }) => (
-  <div className="nc-step">
-    <button type="button" onClick={() => onChange(Math.max(min, Number(value || 0) - 1))}>−</button>
-    <strong>{value}</strong>
-    <button type="button" onClick={() => onChange(Math.min(max, Number(value || 0) + 1))}>+</button>
-  </div>
-);
-
 const CustomAutomationNeuroshillingPage = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -53,8 +51,8 @@ const CustomAutomationNeuroshillingPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
   const [targetTab, setTargetTab] = useState('links');
   const [links, setLinks] = useState('');
   const [linkKind, setLinkKind] = useState('auto');
@@ -98,10 +96,14 @@ const CustomAutomationNeuroshillingPage = () => {
     return () => window.clearInterval(timer);
   }, [jobs, load]);
 
-  const patch = (partial) => setSettings((prev) => ({ ...prev, ...partial }));
+  const patch = (partial) => {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    setDirty(true);
+  };
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedGroups = new Set(settings?.chat_ids || []);
   const selectedChannels = new Set(settings?.channel_ids || []);
+  const selectedFolders = new Set(settings?.folder_ids || []);
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
 
   const accounts = useMemo(() => {
@@ -117,18 +119,12 @@ const CustomAutomationNeuroshillingPage = () => {
       if (settings?.hide_in_work && item.in_work) {
         return false;
       }
-      if (roleFilter === 'question' && !item.is_question) {
-        return false;
-      }
-      if (roleFilter === 'answer' && !item.is_answer) {
-        return false;
-      }
       if (!needle) {
         return true;
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, roleFilter, settings, blockedAccounts]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const dbChats = useMemo(() => {
     const items = data?.chats || [];
@@ -154,24 +150,32 @@ const CustomAutomationNeuroshillingPage = () => {
   const chosenGroups = (data?.chats || []).filter((item) => selectedGroups.has(item.id));
   const chosenChannels = (data?.chats || []).filter((item) => selectedChannels.has(item.id));
   const issues = data?.issues || [];
-  const hasQuestion = chosenAccounts.some((item) => item.is_question);
-  const hasAnswer = chosenAccounts.some((item) => item.is_answer);
   const scenarioReady = Boolean(setup.trim() && reply.trim());
-  const accountsReady = chosenAccounts.length >= 2 && hasQuestion && hasAnswer;
+  const accountsReady = chosenAccounts.length >= 2;
   const busyAccounts = chosenAccounts.filter((item) => item.in_work);
   const delayLabel = settings ? `${settings.delay_min}–${settings.delay_max}с` : 'сразу';
+  const settingsRef = useLiveRef(settings);
+  const enabledRef = useLiveRef(enabled);
+  const setupRef = useLiveRef(setup);
+  const replyRef = useLiveRef(reply);
 
   const persist = async (next = {}) => {
     const payload = {
-      ...settings,
+      ...settingsRef.current,
       ...next,
-      enabled: next.enabled !== undefined ? next.enabled : enabled,
-      setup: next.setup !== undefined ? next.setup : setup,
-      reply: next.reply !== undefined ? next.reply : reply,
+      enabled: next.enabled !== undefined ? next.enabled : enabledRef.current,
+      setup: next.setup !== undefined ? next.setup : setupRef.current,
+      reply: next.reply !== undefined ? next.reply : replyRef.current,
     };
     const result = await customService.saveNeuroshillingModule(id, payload);
     applyPayload(result);
+    setDirty(false);
     return result;
+  };
+
+  const persistFlag = (partial) => {
+    setSettings(mergeSettings(settingsRef, partial));
+    persist(partial).catch((err) => setError(err.message || 'Не удалось сохранить'));
   };
 
   const runSafe = async (fn, okText) => {
@@ -211,6 +215,10 @@ const CustomAutomationNeuroshillingPage = () => {
       ? settings.channel_ids.filter((item) => item !== chatId)
       : [...settings.channel_ids, chatId];
     patch({ channel_ids: next });
+  };
+
+  const toggleFolder = (folderId) => {
+    patch({ folder_ids: toggleNumericId(settings.folder_ids, folderId) });
   };
 
   const applyPreset = (item) => {
@@ -259,18 +267,13 @@ const CustomAutomationNeuroshillingPage = () => {
             </div>
             <div className="nc-row">
               <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
-              <select className="nc-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                <option value="all">Все роли</option>
-                <option value="question">Инициатор</option>
-                <option value="answer">Ответчик</option>
-              </select>
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.require_proxy)} onChange={(event) => patch({ require_proxy: event.target.checked })} /> Рабочие прокси</label>
-              <label className="check"><input type="checkbox" checked={Boolean(settings.hide_in_work)} onChange={(event) => patch({ hide_in_work: event.target.checked })} /> Скрыть в работе</label>
+              <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
+              <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
-            {accounts.length === 0 ? <div className="nc-empty">Нет аккаунтов с ролями вопроса или ответа</div> : (
+            {accounts.length === 0 ? <div className="nc-empty">Нет аккаунтов</div> : (
               <div className="nc-list">
                 {accounts.map((item) => (
                   <button key={item.id} type="button" className={`nc-item ${selectedAccounts.has(item.id) ? 'is-on' : ''}`} onClick={() => toggleAccount(item.id)}>
@@ -278,11 +281,7 @@ const CustomAutomationNeuroshillingPage = () => {
                       <strong>{item.label}</strong>
                       <span>{item.username ? `@${item.username}` : item.phone_number || `#${item.id}`} · {item.proxy_label || 'без прокси'}</span>
                     </div>
-                    <span>
-                      {item.is_question ? <span className="nc-role-tag is-q">И</span> : null}
-                      {item.is_answer ? <span className="nc-role-tag is-a">О</span> : null}
-                      {' '}{item.in_work ? 'в работе' : item.eligible ? 'доступен' : 'недоступен'}
-                    </span>
+                    <span>{item.in_work ? 'в работе' : item.eligible ? 'доступен' : 'недоступен'}</span>
                   </button>
                 ))}
               </div>
@@ -293,15 +292,14 @@ const CustomAutomationNeuroshillingPage = () => {
               <strong>Пара для диалога {chosenAccounts.length}</strong>
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: [] })}>Удалить все</button>
             </div>
-            {chosenAccounts.length === 0 ? <div className="nc-empty">Выберите минимум двух аккаунтов: инициатор и ответчик</div> : (
+            {chosenAccounts.length === 0 ? <div className="nc-empty">Выберите минимум два аккаунта</div> : (
               <div className="nc-list">
                 {chosenAccounts.map((item) => (
                   <button key={item.id} type="button" className="nc-item is-on" onClick={() => toggleAccount(item.id)}>
                     <div>
                       <strong>{item.label}</strong>
                       <span>
-                        {item.is_question ? 'Инициатор' : ''}{item.is_question && item.is_answer ? ' · ' : ''}{item.is_answer ? 'Ответчик' : ''}
-                        {item.daily_messages_sent ? ` · ${item.daily_messages_sent} сегодня` : ''}
+                        {item.daily_messages_sent ? `${item.daily_messages_sent} сегодня` : 'выбран'}
                       </span>
                     </div>
                     <span>×</span>
@@ -324,8 +322,8 @@ const CustomAutomationNeuroshillingPage = () => {
       <div className="nc-card">
         <div className="nc-card-head"><h2>Конфигурация сценария</h2></div>
         <div className="nc-mode">
-          <button type="button" className={settings.chat_shilling ? 'is-on' : ''} onClick={() => patch({ chat_shilling: !settings.chat_shilling })}>В чатах</button>
-          <button type="button" className={settings.post_shilling ? 'is-on' : ''} onClick={() => patch({ post_shilling: !settings.post_shilling })}>В комментариях</button>
+          <button type="button" className={settings.chat_shilling ? 'is-on' : ''} onClick={() => persistFlag({ chat_shilling: !settings.chat_shilling })}>В чатах</button>
+          <button type="button" className={settings.post_shilling ? 'is-on' : ''} onClick={() => persistFlag({ post_shilling: !settings.post_shilling })}>В комментариях</button>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>
           Можно включить оба режима сразу. Пара сама выбирает случайную группу или свежий пост — это не сценарий с ролями и шагами, а живой вопрос-ответ двух аккаунтов.
@@ -336,7 +334,7 @@ const CustomAutomationNeuroshillingPage = () => {
               <span className="nc-muted">Тема обсуждения</span>
               <button
                 type="button"
-                className="nc-chip is-on"
+                className="nc-chip"
                 disabled={busy}
                 onClick={() => runSafe(async () => {
                   if (!topic.trim()) {
@@ -360,11 +358,11 @@ const CustomAutomationNeuroshillingPage = () => {
         <div className="nc-split" style={{ marginTop: 14 }}>
           <div>
             <span className="nc-muted">Вопрос инициатора</span>
-            <textarea className="nc-area" style={{ marginTop: 8 }} value={setup} onChange={(event) => setSetup(event.target.value)} placeholder="Живой вопрос от первого аккаунта" />
+            <textarea className="nc-area" style={{ marginTop: 8 }} value={setup} onChange={(event) => { setSetup(event.target.value); setDirty(true); }} placeholder="Живой вопрос от первого аккаунта" />
           </div>
           <div>
             <span className="nc-muted">Ответ второго аккаунта</span>
-            <textarea className="nc-area" style={{ marginTop: 8 }} value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Спокойный ответ знакомого, без рекламы" />
+            <textarea className="nc-area" style={{ marginTop: 8 }} value={reply} onChange={(event) => { setReply(event.target.value); setDirty(true); }} placeholder="Спокойный ответ знакомого, без рекламы" />
           </div>
         </div>
         <div className="nc-prompts" style={{ marginTop: 12 }}>
@@ -387,14 +385,14 @@ const CustomAutomationNeuroshillingPage = () => {
         <div className="nc-card-head">
           <h2>Поведение пары</h2>
           <div className="nc-row">
-            <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
-            <button type="button" className="nc-chip is-on" onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
-            <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
+            <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.min) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
+            <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.rec) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
+            <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.max) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
           </div>
         </div>
         <div className="nc-split">
-          <FeatureToggle compact title="Уникальные сообщения" description="Каждый запуск слегка варьирует вопрос и ответ, чтобы пары не копировали друг друга." checked={Boolean(settings.unique_messages)} onChange={(value) => patch({ unique_messages: value })} />
-          <FeatureToggle compact title="Пропускать свежие аккаунты" description="Новые аккаунты в осторожной стадии не идут в шиллинг, пока не прогреются." checked={Boolean(settings.skip_fresh)} onChange={(value) => patch({ skip_fresh: value })} />
+          <FeatureToggle compact title="Уникальные сообщения" description="Каждый запуск слегка варьирует вопрос и ответ, чтобы пары не копировали друг друга." checked={Boolean(settings.unique_messages)} onChange={(value) => persistFlag({ unique_messages: value })} />
+          <FeatureToggle compact title="Пропускать свежие аккаунты" description="Новые аккаунты в осторожной стадии не идут в шиллинг, пока не прогреются." checked={Boolean(settings.skip_fresh)} onChange={(value) => persistFlag({ skip_fresh: value })} />
         </div>
         <div className="nc-row" style={{ marginTop: 12 }}>
           <span className="nc-muted">Пауза между репликами</span>
@@ -403,29 +401,12 @@ const CustomAutomationNeuroshillingPage = () => {
           <Stepper value={settings.delay_max} min={settings.delay_min} max={600} onChange={(value) => patch({ delay_max: value })} />
           <span className="nc-muted">с</span>
         </div>
-        <div className="nc-split" style={{ marginTop: 14 }}>
-          <div className="nc-role-card">
-            <strong><span className="nc-role-tag is-q">И</span> Инициатор</strong>
-            <p className="nc-muted" style={{ marginTop: 6 }}>Роль «шиллинг 1 / вопрос». Пишет первую реплику. Назначается в менеджере аккаунтов.</p>
-          </div>
-          <div className="nc-role-card">
-            <strong><span className="nc-role-tag is-a">О</span> Ответчик</strong>
-            <p className="nc-muted" style={{ marginTop: 6 }}>Роль «шиллинг 2 / ответ». Отвечает спустя паузу. Это не выдуманные ИИ-персоны.</p>
-          </div>
-        </div>
-        <div className="nc-setting nc-setting--muted" style={{ marginTop: 12 }}>
-          <div className="nc-setting-copy">
-            <strong>Прогрев новых аккаунтов</strong>
-            <span>Общий разгон живёт в подразделе «Прогрев», здесь его не дублируем.</span>
-          </div>
-          <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
-        </div>
       </div>
 
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Настройка кампании</h2>
-          <span className="nc-muted">{chosenGroups.length} групп · {chosenChannels.length} каналов</span>
+          <span className="nc-muted">{selectedFolders.size} пап. · {chosenGroups.length} групп · {chosenChannels.length} каналов</span>
         </div>
         <div className="nc-split">
           <div>
@@ -433,6 +414,7 @@ const CustomAutomationNeuroshillingPage = () => {
             <p className="nc-hint">@username, t.me/chan — Enter; можно списком. Пустой список = все доступные цели, куда аккаунты уже могут писать.</p>
             <div className="nc-row" style={{ marginTop: 8 }}>
               <button type="button" className={`nc-chip ${targetTab === 'links' ? 'is-on' : ''}`} onClick={() => setTargetTab('links')}>Ссылки</button>
+              <button type="button" className={`nc-chip ${targetTab === 'folder' ? 'is-on' : ''}`} onClick={() => setTargetTab('folder')}>Папки</button>
               <button type="button" className={`nc-chip ${targetTab === 'groups' ? 'is-on' : ''}`} onClick={() => setTargetTab('groups')}>Группы из папок</button>
               <button type="button" className={`nc-chip ${targetTab === 'channels' ? 'is-on' : ''}`} onClick={() => setTargetTab('channels')}>Каналы из папок</button>
               <button type="button" className={`nc-chip ${targetTab === 'jobs' ? 'is-on' : ''}`} onClick={() => setTargetTab('jobs')}>Прошлые запуски</button>
@@ -441,15 +423,23 @@ const CustomAutomationNeuroshillingPage = () => {
               <div style={{ marginTop: 10 }}>
                 <textarea className="nc-area" value={links} onChange={(event) => setLinks(event.target.value)} placeholder="@chat или https://t.me/channel" />
                 <div className="nc-row" style={{ marginTop: 8 }}>
-                  <select className="nc-select" value={linkKind} onChange={(event) => setLinkKind(event.target.value)}>
-                    <option value="auto">Авто: группа или канал</option>
-                    <option value="group">Как группу</option>
-                    <option value="channel">Как канал</option>
-                  </select>
+                  <CustomSelect
+                    className="nc-select"
+                    value={linkKind}
+                    options={[
+                      { value: 'auto', label: 'Авто: группа или канал' },
+                      { value: 'group', label: 'Как группу' },
+                      { value: 'channel', label: 'Как канал' },
+                    ]}
+                    onChange={(event) => setLinkKind(event.target.value)}
+                  />
                   <button type="button" className="acc-btn acc-btn--primary" disabled={busy} onClick={() => runSafe(() => customService.addNeuroshillingTargets(id, links, linkKind).then((payload) => { applyPayload(payload); setLinks(''); if (payload.add_errors?.length) { setError(payload.add_errors.join('; ')); } return payload; }), 'Цели добавлены')}>+ Добавить</button>
-                  <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты</Link>
+                  <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
                 </div>
               </div>
+            ) : null}
+            {targetTab === 'folder' ? (
+              <UbtFolderPicker folders={data.folders} selectedIds={selectedFolders} onToggle={toggleFolder} />
             ) : null}
             {targetTab === 'jobs' ? (
               <div className="nc-list" style={{ marginTop: 10 }}>
@@ -466,10 +456,12 @@ const CustomAutomationNeuroshillingPage = () => {
             {targetTab === 'groups' || targetTab === 'channels' ? (
               <div style={{ marginTop: 10 }}>
                 <div className="nc-row">
-                  <select className="nc-select" value={folderId} onChange={(event) => setFolderId(event.target.value)}>
-                    <option value="">Все папки</option>
-                    {(data.folders || []).map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                  </select>
+                  <CustomSelect
+                    className="nc-select"
+                    value={String(folderId || '')}
+                    options={folderOptions(data.folders)}
+                    onChange={(event) => setFolderId(event.target.value)}
+                  />
                   <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск" />
                   <button
                     type="button"
@@ -537,7 +529,7 @@ const CustomAutomationNeuroshillingPage = () => {
             {issues.map((item) => <div key={item}>{item}</div>)}
           </div>
         ) : null}
-        <div className="nc-card" style={{ marginTop: 12, background: '#f8fafc' }}>
+        <div className="nc-card nc-card--soft">
           <div className="nc-card-head">
             <div>
               <h2>Сухой прогон</h2>
@@ -551,9 +543,9 @@ const CustomAutomationNeuroshillingPage = () => {
                 const saved = await persist();
                 const payload = await customService.checkNeuroshillingModule(id, {
                   ...saved.settings,
-                  enabled,
-                  setup,
-                  reply,
+                  enabled: saved.enabled,
+                  setup: saved.setup,
+                  reply: saved.reply,
                 });
                 applyPayload(payload);
                 return payload;
@@ -562,10 +554,9 @@ const CustomAutomationNeuroshillingPage = () => {
               Проверить
             </button>
           </div>
-          <div className="nc-kpis nc-kpis--5">
+          <div className="nc-kpis nc-kpis--4">
             <div className="nc-kpi"><strong>{check?.accounts ?? selectedAccounts.size}</strong><span>Аккаунты</span></div>
             <div className="nc-kpi"><strong>{(check ? check.groups + check.channels : chosenGroups.length + chosenChannels.length) || 'все'}</strong><span>Цели</span></div>
-            <div className="nc-kpi"><strong>{check?.roles ?? 2}</strong><span>Роли</span></div>
             <div className="nc-kpi"><strong>{check?.replies ?? (scenarioReady ? 2 : 0)}</strong><span>Реплик</span></div>
             <div className="nc-kpi"><strong>{delayLabel}</strong><span>Диалог займёт</span></div>
           </div>
@@ -578,6 +569,7 @@ const CustomAutomationNeuroshillingPage = () => {
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>
+        <UbtUnsaved dirty={dirty} />
         <div className="nc-launch" style={{ marginTop: 12 }}>
           <div className="nc-status">
             <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
@@ -591,10 +583,15 @@ const CustomAutomationNeuroshillingPage = () => {
             <button
               type="button"
               className="acc-btn acc-btn--primary"
-              disabled={busy}
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
               onClick={() => runSafe(async () => {
-                await persist();
-                await customService.runNeuroshillingModule(id, { ...settings, enabled, setup, reply });
+                const saved = assertCanRun(await persist());
+                await customService.runNeuroshillingModule(id, {
+                  ...saved.settings,
+                  enabled: saved.enabled,
+                  setup: saved.setup,
+                  reply: saved.reply,
+                });
                 await load();
               }, 'Запуск поставлен в очередь')}
             >

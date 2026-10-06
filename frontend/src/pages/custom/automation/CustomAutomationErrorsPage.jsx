@@ -6,6 +6,7 @@ import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const ACTION_FILTERS = [
   { value: '', label: 'Все блоки' },
@@ -20,9 +21,10 @@ const ACTION_FILTERS = [
   { value: 'discussion', label: 'Цифровой след' },
   { value: 'masslooking', label: 'Масслукинг' },
   { value: 'chat_broadcast', label: 'Чат-рассылки' },
+  { value: 'dm_broadcast', label: 'ЛС-рассылки' },
   { value: 'account_warmup', label: 'Прогрев аккаунтов' },
   { value: 'masspriming', label: 'Масспрайминг' },
-  { value: 'parser', label: 'Парсер' },
+  { value: 'parser', label: 'Парсер юзеров' },
 ];
 
 const PAGE_SIZE = 50;
@@ -77,8 +79,10 @@ const CustomAutomationErrorsPage = () => {
   return (
     <div className="settings-page">
       <div className="settings-header">
-        <h2>Баги и ошибки</h2>
-        <p className="settings-subtitle">Один блок — одна ошибка: что делали, что пошло не так, технический контекст.</p>
+        <div>
+          <h2>Баги и ошибки</h2>
+          <p className="settings-subtitle">Один блок — одна ошибка: что делали, что пошло не так, технический контекст.</p>
+        </div>
       </div>
 
       <div className="activity-filters">
@@ -131,7 +135,7 @@ const CustomAutomationErrorsPage = () => {
                 </button>
               </div>
               {expandedId === item.id ? (
-                <pre className="management-log-pre" style={{ marginTop: '0.75rem', whiteSpace: 'pre-wrap' }}>
+                <pre className="ubt-pre">
                   {JSON.stringify(item.context || {}, null, 2)}
                 </pre>
               ) : null}

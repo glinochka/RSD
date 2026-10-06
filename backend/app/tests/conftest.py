@@ -124,6 +124,8 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.services.custom.job_service.async_session_maker",
     "app.services.custom.telegram_notify_bot_service.async_session_maker",
     "app.services.custom.scheduler_manager.async_session_maker",
+    "app.services.custom.account_session_orchestrator.async_session_maker",
+    "app.services.custom.parser_service.async_session_maker",
 )
 
 
