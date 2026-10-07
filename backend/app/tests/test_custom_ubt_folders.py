@@ -332,3 +332,30 @@ class TestJoinScenarioBranches:
         await test_session.commit()
         assert first is not None and second is not None
         assert first.name != second.name
+
+    async def test_discovery_logs_completed_counts_found_chats(self):
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from app.services.custom.job_service import _discovery_logs, serialize_discovery
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        task = SimpleNamespace(
+            id=7,
+            query="SEO",
+            status="completed",
+            created_at=now,
+            updated_at=now,
+            completed_at=now,
+            found_chats=[{"title": "A"}, {"title": "B"}, "skip"],
+            max_chats=10,
+            relevance_threshold=0.5,
+            require_approval=False,
+            mode="monitoring",
+            joined_chats=0,
+            rejected_chats=0,
+        )
+        logs = _discovery_logs(task)
+        assert any(row["message"] == "Завершено: 2 чатов" for row in logs)
+        payload = serialize_discovery(task)
+        assert payload["result"]["Всего каналов"] == 2

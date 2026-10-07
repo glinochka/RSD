@@ -155,11 +155,12 @@ def _discovery_logs(task: ChatDiscoveryTask) -> list[dict[str, Any]]:
     if task.status == "awaiting_approval":
         logs.append({"ts": _iso(task.updated_at), "level": "info", "message": "Ожидает ручного одобрения"})
     elif task.status == "completed":
+        found_count = len([row for row in (task.found_chats or []) if isinstance(row, dict)])
         logs.append(
             {
                 "ts": _iso(task.completed_at or task.updated_at),
                 "level": "info",
-                "message": f"Завершено: {len(found)} чатов",
+                "message": f"Завершено: {found_count} чатов",
             }
         )
     elif task.status == "error":
