@@ -409,6 +409,7 @@ class AccountResponse(BaseModel):
     last_health_check_at: Optional[datetime] = None
     spamblock_checked_at: Optional[datetime] = None
     frozen_at: Optional[datetime] = None
+    flood_quarantined_until: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
 
@@ -1153,6 +1154,7 @@ class ChatBroadcastsSettings(BaseModel):
     first_mode: str = "template"
     skip_errors: bool = True
     skip_sent: bool = False
+    scenario: str = "loop"
     limit_rate: bool = True
     respect_night_hours: bool = True
     imitate_typing: bool = True

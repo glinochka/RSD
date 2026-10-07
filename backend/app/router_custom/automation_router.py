@@ -1530,6 +1530,7 @@ def _account_response(
         last_health_check_at=social_account.last_health_check_at,
         spamblock_checked_at=getattr(social_account, "spamblock_checked_at", None),
         frozen_at=getattr(social_account, "frozen_at", None),
+        flood_quarantined_until=getattr(social_account, "flood_quarantined_until", None),
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
     )
@@ -1574,7 +1575,13 @@ def _apply_account_query_filters(stmt, *, status: Optional[str] = None, search: 
     elif status == "in_work":
         stmt = stmt.where(SocialAccount.daily_messages_sent > 0, SocialAccount.is_active.is_(True))
     elif status == "quarantine":
-        stmt = stmt.where(PoolAccount.warmup_status.in_(["rest", "warming"]))
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        stmt = stmt.where(
+            or_(
+                PoolAccount.warmup_status.in_(["rest", "warming"]),
+                SocialAccount.flood_quarantined_until > now,
+            )
+        )
     elif status == "revoked":
         stmt = stmt.where(
             SocialAccount.session_file_path.isnot(None),
@@ -1730,10 +1737,16 @@ async def account_ban_stats(
                 SocialAccount.daily_messages_sent > 0,
             )
         )
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         quarantine = await session.scalar(
-            select(func.count(PoolAccount.id)).where(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
                 PoolAccount.account_pool_id == pool.id,
-                PoolAccount.warmup_status.in_(["rest", "warming"]),
+                or_(
+                    PoolAccount.warmup_status.in_(["rest", "warming"]),
+                    SocialAccount.flood_quarantined_until > now,
+                ),
             )
         )
         empty = await session.scalar(

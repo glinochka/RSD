@@ -368,6 +368,13 @@ async def _process_account(
                 payload=outcome if isinstance(outcome, dict) else {},
             )
             primed += 1
+            from .job_service import actor_label, log_active
+
+            await log_active(
+                automation.id,
+                "masspriming",
+                f"{actor_label(account)} пропраймил {_peer_label(entity, username)}",
+            )
             await asyncio.sleep(random.uniform(delay_min, delay_max))
     if primed:
         record_successful_humanization(account)

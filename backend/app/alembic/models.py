@@ -2380,6 +2380,7 @@ class SocialAccount(Base):
     # Target actions (neurocommenting, shilling, dm) use next_action_at (40-70 min).
     # Humanization uses next_humanization_at (15-30 min) and NEVER blocks target activity.
     next_humanization_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    flood_quarantined_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     encrypted_spare_session: Mapped[str | None] = mapped_column(Text, nullable=True)
     spare_session_file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     spare_authorization_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

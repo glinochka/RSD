@@ -195,6 +195,20 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             token = apply_work_mode(automation)
             accounts = await _load_accounts(session, automation_id)
             streams = _enabled_streams(automation)
+        from .job_service import JOIN_JOB_TYPES, STREAM_JOB_TYPES, list_active_job_types
+
+        active = await list_active_job_types(automation_id)
+        gated: list[tuple[str, StreamFn]] = []
+        for name, fn in streams:
+            if name == "join":
+                if active & JOIN_JOB_TYPES:
+                    gated.append((name, fn))
+                continue
+            mapped = STREAM_JOB_TYPES.get(name)
+            if mapped and mapped not in active:
+                continue
+            gated.append((name, fn))
+        streams = gated
         hub = _hubs.setdefault(automation_id, AccountSessionHub(automation_id))
         sync = await hub.sync(accounts)
         if not hub.clients:

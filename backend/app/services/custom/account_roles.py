@@ -44,6 +44,10 @@ def account_is_live(social: SocialAccount | None) -> bool:
         return False
     if not social.is_active or social.is_banned or getattr(social, "is_frozen", False):
         return False
+    from .account_pacing import account_is_flood_quarantined
+
+    if account_is_flood_quarantined(social):
+        return False
     if not (social.session_file_path or getattr(social, "encrypted_session", None)):
         return False
     return True

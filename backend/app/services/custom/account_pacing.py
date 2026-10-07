@@ -71,6 +71,8 @@ _SESSION_ACTION_BUDGET = {
 # ---------------------------------------------------------------------------
 ACCOUNT_RETRY_MIN_SECONDS = 3 * 60
 ACCOUNT_RETRY_MAX_SECONDS = 5 * 60
+FLOOD_QUARANTINE_MIN_SECONDS = 12 * 60 * 60
+FLOOD_QUARANTINE_MAX_SECONDS = 24 * 60 * 60
 
 # ---------------------------------------------------------------------------
 # Active-hours window (Moscow)
@@ -427,6 +429,52 @@ def account_is_resting(account: SocialAccount | None, *, now: datetime | None = 
     return nxt > current
 
 
+def account_is_flood_quarantined(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """True while a FloodWait / too-many-attempts quarantine is in force."""
+    if not account:
+        return False
+    until = getattr(account, "flood_quarantined_until", None)
+    if until is None:
+        return False
+    return until > (now or _utc_now())
+
+
+def schedule_flood_quarantine(account: SocialAccount, *, now: datetime | None = None) -> datetime:
+    """Park the account globally for 12–24 hours. Does not shorten an existing quarantine."""
+    current = now or _utc_now()
+    delay = random.uniform(FLOOD_QUARANTINE_MIN_SECONDS, FLOOD_QUARANTINE_MAX_SECONDS)
+    until = current + timedelta(seconds=delay)
+    existing = getattr(account, "flood_quarantined_until", None)
+    if existing is not None and existing > until:
+        until = existing
+    account.flood_quarantined_until = until
+    if getattr(account, "next_action_at", None) is None or account.next_action_at < until:
+        account.next_action_at = until
+    if getattr(account, "next_humanization_at", None) is None or account.next_humanization_at < until:
+        account.next_humanization_at = until
+    account.updated_at = current
+    return until
+
+
+def looks_like_flood_quarantine(exc: BaseException | None) -> bool:
+    """FloodWait and Telegram's 'too many attempts, try later' — not a one-chat slow mode."""
+    if exc is None:
+        return False
+    text = str(exc).lower()
+    name = type(exc).__name__.lower()
+    if "too many attempts" in text:
+        return True
+    if "try later" in text and ("too many" in text or "attempt" in text or "flood" in text):
+        return True
+    if "floodwait" in name or "flooderror" in name or "flood" in name:
+        seconds = getattr(exc, "seconds", None)
+        try:
+            return int(seconds or 0) > 20 or seconds is None
+        except (TypeError, ValueError):
+            return True
+    return "floodwait" in text
+
+
 def account_should_idle(
     account: SocialAccount | None,
     *,
@@ -436,6 +484,8 @@ def account_should_idle(
     """True when the account must not send a TARGET action."""
     from .work_mode import in_configured_work_hours, in_daily_idle_gap
 
+    if account_is_flood_quarantined(account, now=now):
+        return True
     if account_in_target_rest_day(account, now=now):
         # Weekends still rest unless the global work_mode includes that weekday.
         from .work_mode import current_work_mode
@@ -464,9 +514,11 @@ def account_membership_should_idle(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Join/leave hygiene: respect the global work window, not weekend or write rest."""
+    """Join/leave hygiene: respect flood quarantine and the global work window."""
     from .work_mode import in_configured_work_hours
 
+    if account_is_flood_quarantined(account, now=now):
+        return True
     return not in_configured_work_hours(now, account_id=getattr(account, "id", None))
 
 
@@ -515,6 +567,8 @@ def account_humanization_should_idle(
     """True when the account should not send a HUMANIZATION action."""
     from .work_mode import in_configured_work_hours, in_daily_idle_gap
 
+    if account_is_flood_quarantined(account, now=now):
+        return True
     if in_daily_idle_gap(getattr(account, "id", None), now=now):
         return True
     if account_humanization_is_resting(account, now=now):

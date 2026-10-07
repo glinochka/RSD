@@ -105,6 +105,9 @@ const constraintMeta = (account) => {
   if (account.is_frozen) {
     return { label: 'Frozen', chip: 'info' };
   }
+  if (account.flood_quarantined_until && new Date(account.flood_quarantined_until) > new Date()) {
+    return { label: 'Карантин FloodWait', chip: 'warn' };
+  }
   if (account.warmup_status === 'rest' || account.warmup_status === 'warming') {
     return { label: WARMUP_STATUS_LABELS[account.warmup_status] || 'Карантин', chip: 'warn' };
   }

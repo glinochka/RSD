@@ -619,5 +619,13 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
             folder = await snapshot_parser_users(session, automation_id)
             if folder:
                 await session.commit()
+            from .job_service import log_active
+
+            await log_active(
+                automation_id,
+                "parser",
+                f"Парсер собрал {total} юзеров из {chats_used} чатов"
+                + (f", папка «{folder.name}»" if folder is not None else ""),
+            )
             return {"status": "ok", "users": total, "chats": chats_used, "user_folder_id": getattr(folder, "id", None)}
     return {"status": "ok", "users": total, "chats": chats_used}

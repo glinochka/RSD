@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
@@ -43,6 +43,68 @@ ADDLIST_CHATS_PREMIUM = 200
 ADDLIST_FOLDERS_DEFAULT = 2
 ADDLIST_FOLDERS_PREMIUM = 20
 TASK_JOINS_KEY = "_task_joins"
+HOST_BOOTSTRAP_JOINS_PER_TICK = 1
+
+
+def join_account_is_parked(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """True while Telegram FloodWait / retry still holds this account."""
+    from .account_pacing import account_is_flood_quarantined, account_is_resting
+
+    return account_is_flood_quarantined(account, now=now) or account_is_resting(account, now=now)
+
+
+async def _skip_join_for_flood(session: AsyncSession, account: SocialAccount | None) -> bool:
+    if not account:
+        return True
+    if join_account_is_parked(account):
+        return True
+    now = _utc_now()
+    nxt = await session.scalar(
+        select(func.max(AccountChatMembership.next_join_attempt_at)).where(
+            AccountChatMembership.social_account_id == account.id,
+            AccountChatMembership.next_join_attempt_at.is_not(None),
+        )
+    )
+    return nxt is not None and nxt > now
+
+
+def _flood_seconds(raw: Any, default: int = 300) -> int:
+    seconds = getattr(raw, "seconds", None)
+    if seconds:
+        try:
+            return max(1, int(seconds))
+        except (TypeError, ValueError):
+            pass
+    text = str(raw or "")
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if digits:
+        try:
+            return max(1, int(digits[:6]))
+        except ValueError:
+            pass
+    return default
+
+
+def _is_flood_error(exc: BaseException) -> bool:
+    return "flood" in type(exc).__name__.lower() or "floodwait" in str(exc).lower()
+
+
+def _park_join_flood(account: SocialAccount, raw: Any = None) -> None:
+    from .account_pacing import schedule_flood_quarantine
+
+    del raw
+    schedule_flood_quarantine(account)
+
+
+def _log_job_type(task_key: str) -> str:
+    return {
+        "neurocommenting": "neurocommenting",
+        "neurochatting": "discussion",
+        "neuroshilling": "shilling",
+        "chat_broadcasts": "chat_broadcast",
+        "parser": "parser",
+        "masslooking": "masslooking",
+    }.get(task_key, "join")
 
 _ADDLIST_RE = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/addlist/([A-Za-z0-9_-]{8,64})",
@@ -66,6 +128,24 @@ def parse_addlist_slug(raw: str | None) -> str | None:
 
 def addlist_url(slug: str) -> str:
     return f"https://t.me/addlist/{slug}"
+
+
+def chat_addlist_slug(chat: ChatTarget | None) -> str | None:
+    if chat is None:
+        return None
+    blob = chat.monitoring_config if isinstance(getattr(chat, "monitoring_config", None), dict) else {}
+    slug = parse_addlist_slug(blob.get("addlist_slug") if isinstance(blob, dict) else None)
+    if slug:
+        return slug
+    return parse_addlist_slug(getattr(chat, "invite_link", None))
+
+
+def set_chat_addlist_slug(chat: ChatTarget, slug: str) -> None:
+    blob = dict(chat.monitoring_config or {}) if isinstance(chat.monitoring_config, dict) else {}
+    blob["addlist_slug"] = slug
+    chat.monitoring_config = blob
+    if not parse_addlist_slug(chat.invite_link):
+        chat.invite_link = addlist_url(slug)
 
 
 def addlist_capacity(*, premium: bool = False) -> tuple[int, int]:
@@ -330,6 +410,7 @@ async def import_addlist_chats(
             session, automation_id, invite_link=invite, external_chat_id=external, title=chat_title
         )
         if existing:
+            set_chat_addlist_slug(existing, slug)
             added.append(existing.id)
             continue
         chat = ChatTarget(
@@ -348,6 +429,7 @@ async def import_addlist_chats(
         )
         session.add(chat)
         await session.flush()
+        set_chat_addlist_slug(chat, slug)
         added.append(chat.id)
     await session.commit()
     return list(dict.fromkeys(added)), []
@@ -390,6 +472,7 @@ async def ensure_task_join_plan(
     account_ids: list[int],
     chat_ids: list[int],
 ) -> dict[str, Any]:
+    """Split the attached folder into per-account pools, export an addlist per pool, join via addlist."""
     alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
     workers = [aid for aid in account_ids if aid in alive]
     chats = (
@@ -418,69 +501,110 @@ async def ensure_task_join_plan(
         pending = [cid for cid in assigned if not await account_is_joined(session, cid, account_id)]
         pending_by_account[account_id] = pending
         union_pending.extend(pending)
-    host = await _pick_host(session, alive, workers, list(dict.fromkeys(union_pending)) or list(chat_map.keys()))
-    if host:
-        from .chat_join_service import _try_join_chat
-
-        for chat_id in dict.fromkeys(union_pending):
-            chat = chat_map.get(chat_id)
-            if not chat or await account_is_joined(session, chat_id, host.id):
-                continue
-            try:
-                result = await _try_join_chat(session, chat, host)
-                if result.get("status") == "joined":
-                    host_membership = await get_membership(session, chat_id, host.id)
-                    if host_membership:
-                        host_membership.join_status = ChatJoinStatus.JOINED.value
-                        host_membership.joined_at = _utc_now()
-                        host_membership.updated_at = _utc_now()
-            except Exception as exc:
-                logger.debug("Host bootstrap join skipped chat=%s: %s", chat_id, exc)
-    folders: dict[str, list[dict[str, Any]]] = {}
+    folder_slugs = {
+        chat_id: chat_addlist_slug(chat)
+        for chat_id, chat in chat_map.items()
+        if chat_addlist_slug(chat)
+    }
+    ready_workers = [
+        aid for aid in workers if not await _skip_join_for_flood(session, alive.get(aid))
+    ]
+    host = await _pick_host(
+        session,
+        alive,
+        ready_workers or workers,
+        list(dict.fromkeys(union_pending)) or list(chat_map.keys()),
+    )
+    if host and await _skip_join_for_flood(session, host):
+        host = None
+    job_type = _log_job_type(task_key)
     joined = 0
     created_folders = 0
+    if host:
+        joined += await _bootstrap_host_for_export(
+            session,
+            host=host,
+            chat_map=chat_map,
+            needed_ids=list(dict.fromkeys(union_pending)),
+            folder_slugs=folder_slugs,
+            job_type=job_type,
+            automation_id=automation.id,
+        )
+    folders: dict[str, list[dict[str, Any]]] = {}
     for account_id, assigned in assignment.items():
         account = alive.get(account_id)
-        pending = pending_by_account.get(account_id) or []
+        pending = list(pending_by_account.get(account_id) or [])
         previous_folders = list((stored_folders or {}).get(str(account_id)) or [])
         if not account or not assigned:
             folders[str(account_id)] = []
             continue
         reusable, covered = _reusable_folders(previous_folders, assigned)
-        fresh = [cid for cid in pending if cid not in covered]
         if not pending:
             folders[str(account_id)] = reusable or previous_folders
             continue
+        if await _skip_join_for_flood(session, account):
+            folders[str(account_id)] = reusable or previous_folders
+            continue
         try:
-            if reusable:
-                from .telegram_account_client import TelegramAccountClient
+            from .telegram_account_client import TelegramAccountClient
+            from .job_service import actor_label, log_active
 
+            own_slugs = list(dict.fromkeys(
+                str(row.get("slug") or "") for row in reusable if row.get("slug")
+            ))
+            if own_slugs:
                 async with TelegramAccountClient.for_account(account) as client:
-                    for row in reusable:
-                        slug = str(row.get("slug") or "")
-                        if slug:
-                            await _join_addlist(client, slug)
-                joined += await _mark_joined(session, account_id, [cid for cid in pending if cid in covered])
-            exported: list[dict[str, Any]] = list(reusable)
-            if fresh:
-                cached = premium_cache.get(str(account_id))
-                premium = bool(cached) if cached is not None else await _account_is_premium(account)
-                premium_cache[str(account_id)] = premium
-                per_folder, _folder_cap = addlist_capacity(premium=premium)
-                batches = chunk_ids(fresh, per_folder)
-                new_rows = await _export_and_join_batches(
-                    host=host,
-                    worker=account,
-                    chats=[chat_map[cid] for cid in fresh if cid in chat_map],
-                    batches=batches,
-                )
-                exported.extend(new_rows)
-                created_folders += len(new_rows)
+                    for slug in own_slugs:
+                        await _join_addlist(client, slug)
+                        await log_active(
+                            automation.id,
+                            job_type,
+                            f"{actor_label(account)} вступил по своему addlist t.me/addlist/{slug} "
+                            f"({len(covered)} чатов пула одним запросом)",
+                        )
                 joined += await _mark_joined(
-                    session, account_id, [cid for row in new_rows for cid in _int_list(row.get("chat_ids"))]
+                    session, account_id, [cid for cid in pending if cid in covered]
                 )
-            folders[str(account_id)] = exported
+                pending = [cid for cid in pending if cid not in covered]
+            if not pending:
+                folders[str(account_id)] = reusable
+                continue
+            if not host:
+                folders[str(account_id)] = reusable
+                continue
+            exportable = [
+                cid for cid in pending if await account_is_joined(session, cid, host.id)
+            ]
+            if not exportable:
+                folders[str(account_id)] = reusable
+                continue
+            cached = premium_cache.get(str(account_id))
+            premium = bool(cached) if cached is not None else await _account_is_premium(account)
+            premium_cache[str(account_id)] = premium
+            per_folder, _folder_cap = addlist_capacity(premium=premium)
+            batches = chunk_ids(exportable, per_folder)
+            new_rows = await _export_and_join_batches(
+                host=host,
+                worker=account,
+                chats=[chat_map[cid] for cid in exportable if cid in chat_map],
+                batches=batches,
+            )
+            created_folders += len(new_rows)
+            exported_ids = [cid for row in new_rows for cid in _int_list(row.get("chat_ids"))]
+            joined += await _mark_joined(session, account_id, exported_ids)
+            if new_rows:
+                slugs = [str(row.get("slug") or "") for row in new_rows if row.get("slug")]
+                await log_active(
+                    automation.id,
+                    job_type,
+                    f"{actor_label(account)} вступил в свой пул через addlist "
+                    f"({len(exported_ids)} чатов): "
+                    + ", ".join(f"t.me/addlist/{slug}" for slug in slugs),
+                )
+            folders[str(account_id)] = reusable + new_rows
         except Exception as exc:
+            if _is_flood_error(exc):
+                _park_join_flood(account, exc)
             logger.warning("Addlist join failed task=%s account=%s: %s", task_key, account_id, exc)
             folders[str(account_id)] = reusable
     plans[task_key] = {
@@ -493,6 +617,91 @@ async def ensure_task_join_plan(
     _store_plans(automation, plans)
     await session.commit()
     return {"joined": joined, "folders": created_folders, "assignment": assignment}
+
+
+async def _bootstrap_host_for_export(
+    session: AsyncSession,
+    *,
+    host: SocialAccount,
+    chat_map: dict[int, ChatTarget],
+    needed_ids: list[int],
+    folder_slugs: dict[int, str],
+    job_type: str,
+    automation_id: int,
+) -> int:
+    """Host must already sit in chats to ExportChatlistInvite. Workers never JoinChannel here.
+
+    Prefer the original folder addlist (one request). Sequential JoinChannel is host-only
+    and only for chats that have no folder addlist yet (Excel links).
+    """
+    from .telegram_account_client import TelegramAccountClient
+    from .job_service import actor_label, chat_label, log_active
+
+    if await _skip_join_for_flood(session, host):
+        return 0
+    marked = 0
+    missing = [cid for cid in needed_ids if not await account_is_joined(session, cid, host.id)]
+    if not missing:
+        return 0
+    slugs = list(dict.fromkeys(folder_slugs[cid] for cid in missing if folder_slugs.get(cid)))
+    if slugs:
+        try:
+            async with TelegramAccountClient.for_account(host) as client:
+                for slug in slugs:
+                    await _join_addlist(client, slug)
+                    covered = [cid for cid, value in folder_slugs.items() if value == slug]
+                    marked += await _mark_joined(
+                        session, host.id, covered, automation_id=automation_id
+                    )
+                    await log_active(
+                        automation_id,
+                        job_type,
+                        f"{actor_label(host)} вступил в исходную папку t.me/addlist/{slug} "
+                        f"(хост, чтобы раздать пулы)",
+                    )
+        except Exception as exc:
+            if _is_flood_error(exc):
+                _park_join_flood(host, exc)
+                return marked
+            logger.warning("Host folder addlist join failed account=%s: %s", host.id, exc)
+    remaining = [
+        cid
+        for cid in missing
+        if not folder_slugs.get(cid) and not await account_is_joined(session, cid, host.id)
+    ]
+    if not remaining:
+        return marked
+    from .chat_join_service import _try_join_chat
+
+    joined_now = 0
+    for chat_id in remaining:
+        if joined_now >= HOST_BOOTSTRAP_JOINS_PER_TICK:
+            break
+        chat = chat_map.get(chat_id)
+        if not chat:
+            continue
+        try:
+            result = await _try_join_chat(session, chat, host)
+            if result.get("status") == "rate_limited":
+                _park_join_flood(host, result.get("error"))
+                break
+            if result.get("status") != "joined":
+                continue
+            marked += await _mark_joined(
+                session, host.id, [chat_id], automation_id=automation_id
+            )
+            joined_now += 1
+            await log_active(
+                automation_id,
+                job_type,
+                f"{actor_label(host)} вступил в {chat_label(chat)} (хост для экспорта addlist пула)",
+            )
+        except Exception as exc:
+            if _is_flood_error(exc):
+                _park_join_flood(host, exc)
+                break
+            logger.debug("Host bootstrap join skipped chat=%s: %s", chat_id, exc)
+    return marked
 
 
 async def _upsert_actor_memberships(
@@ -544,12 +753,36 @@ def _reusable_folders(
     return reusable, covered
 
 
-async def _mark_joined(session: AsyncSession, account_id: int, chat_ids: list[int]) -> int:
+async def _mark_joined(
+    session: AsyncSession,
+    account_id: int,
+    chat_ids: list[int],
+    *,
+    automation_id: int | None = None,
+    purpose: str = ACTOR_PURPOSE,
+) -> int:
     marked = 0
     now = _utc_now()
     for chat_id in dict.fromkeys(chat_ids):
         membership = await get_membership(session, chat_id, account_id)
         if not membership:
+            if not automation_id:
+                continue
+            session.add(
+                AccountChatMembership(
+                    custom_automation_id=automation_id,
+                    social_account_id=account_id,
+                    chat_target_id=chat_id,
+                    join_status=ChatJoinStatus.JOINED.value,
+                    purpose=purpose,
+                    priority=ACTION_JOIN_PRIORITY if purpose == ACTOR_PURPOSE else 0,
+                    join_attempts=0,
+                    joined_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            marked += 1
             continue
         if membership.join_status != ChatJoinStatus.JOINED.value:
             membership.join_status = ChatJoinStatus.JOINED.value
@@ -558,6 +791,7 @@ async def _mark_joined(session: AsyncSession, account_id: int, chat_ids: list[in
             membership.next_join_attempt_at = None
             membership.updated_at = now
             marked += 1
+    await session.flush()
     return marked
 
 
@@ -727,6 +961,8 @@ async def join_pending_addlists(session: AsyncSession, automation_id: int) -> di
             account = alive.get(int(account_key))
             if not account or not rows:
                 continue
+            if await _skip_join_for_flood(session, account):
+                continue
             try:
                 async with TelegramAccountClient.for_account(account) as client:
                     for row in rows:
@@ -744,6 +980,8 @@ async def join_pending_addlists(session: AsyncSession, automation_id: int) -> di
                                 membership.updated_at = _utc_now()
                                 joined += 1
             except Exception as exc:
+                if _is_flood_error(exc):
+                    _park_join_flood(account, exc)
                 logger.warning("Pending addlist join failed account=%s: %s", account.id, exc)
     if joined:
         await session.commit()

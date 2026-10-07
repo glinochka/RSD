@@ -337,6 +337,13 @@ async def _send_reply(
         return False
 
     record_successful_send(account)
+    from .job_service import actor_label, chat_label, clip_text, log_active
+
+    await log_active(
+        automation_id,
+        "discussion",
+        f"{actor_label(account)} ответил в {chat_label(chat_target)}: «{clip_text(text)}»",
+    )
 
     sender = getattr(message, "sender", None)
     source_author = " ".join(

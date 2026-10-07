@@ -372,6 +372,13 @@ async def _send_comment(
     )
     session.add(log)
     await session.commit()
+    from .job_service import actor_label, chat_label, clip_text, log_active
+
+    await log_active(
+        automation_id,
+        "neurocommenting",
+        f"{actor_label(account)} прокомментировал {chat_label(chat_target)}: «{clip_text(text)}»",
+    )
     return True
 
 
@@ -617,9 +624,13 @@ async def process_chat_target(
                     if pending:
                         pending.next_attempt_at = delay_until
                         await session.commit()
-                        logger.debug(
-                            "Neurocomment deferred for post %s in chat %s (post age %.0fs < %.0fs delay)",
-                            post.id, chat_target.id, post_age, min_delay,
+                        from .job_service import actor_label, chat_label, log_active
+
+                        await log_active(
+                            automation_id,
+                            "neurocommenting",
+                            f"{actor_label(actor)} отложил комментарий в {chat_label(chat_target)} "
+                            f"на {int(min_delay)}с (антибот-пауза)",
                         )
                     continue
         # ────────────────────────────────────────────────────────────────────
@@ -707,6 +718,14 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                     total_sent += int(res["sent"])
             except Exception as exc:
                 logger.exception("Neurocommenting failed for chat %s: %s", chat_target.id, exc)
+                from .job_service import chat_label, log_active
+
+                await log_active(
+                    automation_id,
+                    "neurocommenting",
+                    f"Ошибка в {chat_label(chat_target)}: {exc}",
+                    level="error",
+                )
 
     return {"chats_processed": chat_count, "comments_sent": total_sent}
 

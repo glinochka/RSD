@@ -34,6 +34,7 @@ DEFAULT_BC_SETTINGS: dict[str, Any] = {
     "first_mode": "template",
     "skip_errors": True,
     "skip_sent": False,
+    "scenario": "loop",
     "limit_rate": True,
     "respect_night_hours": True,
     "imitate_typing": True,
@@ -104,7 +105,17 @@ def normalize_bc_settings(raw: Any) -> dict[str, Any]:
     mode = str(incoming.get("first_mode") or "template").strip().lower()
     data["first_mode"] = mode if mode in {"template", "ai"} else "template"
     data["skip_errors"] = bool(incoming.get("skip_errors", True))
-    data["skip_sent"] = bool(incoming.get("skip_sent"))
+    scenario = str(incoming.get("scenario") or "").strip().lower()
+    if scenario in {"once", "loop"}:
+        data["scenario"] = scenario
+        data["skip_sent"] = scenario == "once" if incoming.get("skip_sent") is None else bool(incoming.get("skip_sent"))
+        if scenario == "once":
+            data["skip_sent"] = True
+        if scenario == "loop" and incoming.get("skip_sent") is None:
+            data["skip_sent"] = False
+    else:
+        data["skip_sent"] = bool(incoming.get("skip_sent"))
+        data["scenario"] = "once" if data["skip_sent"] else "loop"
     data["limit_rate"] = bool(incoming.get("limit_rate", True))
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     data["imitate_typing"] = bool(incoming.get("imitate_typing", True))

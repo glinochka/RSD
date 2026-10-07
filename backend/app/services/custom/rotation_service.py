@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
-from .account_pacing import account_should_idle, effective_daily_target_max
+from .account_pacing import account_is_flood_quarantined, account_should_idle, effective_daily_target_max
 from .account_roles import account_matches_action
 
 logger = getLogger(__name__)
@@ -119,6 +119,8 @@ def _filter_eligible(
             continue
         if getattr(social_account, "is_frozen", False):
             continue
+        if account_is_flood_quarantined(social_account):
+            continue
         if action_type not in _DM_ACTIONS | {"lead_warmup"} and getattr(social_account, "is_channel_banned", False):
             continue
         if not ignore_rest and account_should_idle(social_account):
@@ -192,6 +194,8 @@ async def list_alive_session_accounts(
         if exclude_banned and social.is_banned:
             continue
         if getattr(social, "is_frozen", False):
+            continue
+        if account_is_flood_quarantined(social):
             continue
         if not social.session_file_path and not getattr(social, "encrypted_session", None):
             continue
@@ -304,6 +308,7 @@ async def select_account_for_action(
                 and not (exclude_banned and assigned.is_banned)
                 and not getattr(assigned, "is_frozen", False)
                 and not (exclude_spamblocked and assigned.is_spamblocked)
+                and not account_is_flood_quarantined(assigned)
                 and (ignore_rest or not account_should_idle(assigned))
                 and account_matches_action(assigned_pool, assigned, action_type)
                 and (

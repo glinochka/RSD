@@ -264,6 +264,13 @@ async def _process_account(
                     source="feed",
                 )
                 viewed += 1
+                from .job_service import actor_label, log_active
+
+                await log_active(
+                    automation.id,
+                    "masslooking",
+                    f"{actor_label(account)} посмотрел сторис в ленте",
+                )
                 await asyncio.sleep(random.uniform(delay_min, delay_max))
         for username in targets:
             if remaining is not None and viewed >= remaining:
@@ -288,6 +295,13 @@ async def _process_account(
             )
             if added:
                 viewed += 1
+                from .job_service import actor_label, log_active
+
+                await log_active(
+                    automation.id,
+                    "masslooking",
+                    f"{actor_label(account)} посмотрел сторис {username}",
+                )
                 await asyncio.sleep(random.uniform(delay_min, delay_max))
     if viewed:
         record_successful_humanization(account)

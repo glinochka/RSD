@@ -448,11 +448,14 @@ async def _try_join_chat(
             "joined_by_account_id": account.id,
         }
     except FloodWaitError as exc:
-        wait_seconds = exc.seconds or random.randint(120, 300)
+        from .account_pacing import schedule_flood_quarantine
+
+        until = schedule_flood_quarantine(account)
+        wait_seconds = max(int(exc.seconds or 0), int((until - _utc_now()).total_seconds()))
         return {
             "status": "rate_limited",
             "error": f"FloodWait: {wait_seconds}s",
-            "next_join_attempt_at": _utc_now() + timedelta(seconds=wait_seconds),
+            "next_join_attempt_at": until,
         }
     except ChannelsTooMuchError:
         return {"status": "failed", "error": "account_channels_full", "slots_full": True}
@@ -661,8 +664,10 @@ async def preview_chat_entity(
                 entity = await _resolve_entity(client, parsed)
             break
         except FloodWaitError as exc:
-            wait_seconds = exc.seconds or 60
-            raise ValueError(f"Telegram просит подождать {wait_seconds} сек.") from exc
+            from .account_pacing import schedule_flood_quarantine
+
+            schedule_flood_quarantine(account)
+            continue
         except SessionInvalidError as exc:
             last_session_error = exc
             logger.warning("Preview chat %s skipped account %s: %s", parsed.canonical, account.id, exc)
@@ -780,6 +785,15 @@ async def join_next_membership(
         return {"status": "skipped", "reason": "missing_entities"}
     if account_membership_should_idle(account):
         return {"status": "skipped", "reason": "account_idle"}
+    from .chat_addlist_service import chat_addlist_slug
+
+    if (membership.purpose or "") == ACTOR_PURPOSE or chat_addlist_slug(chat_target):
+        return {
+            "status": "skipped",
+            "reason": "addlist",
+            "account_id": account.id,
+            "chat_target_id": chat_target.id,
+        }
 
     membership.join_status = ChatJoinStatus.JOINING.value
     membership.updated_at = _utc_now()
@@ -1095,9 +1109,26 @@ async def join_pending_chats(
     from .pending_action_service import process_due_pending_actions
     from .chat_addlist_service import ensure_task_joins_for_automation, join_pending_addlists
 
-    await ensure_memberships_for_automation(session, automation_id)
-    await ensure_task_joins_for_automation(session, automation_id)
-    await join_pending_addlists(session, automation_id)
+    from .job_service import JOIN_JOB_TYPES, list_active_job_types
+
+    active = await list_active_job_types(automation_id)
+    need_task_joins = bool(active & JOIN_JOB_TYPES)
+    if need_task_joins:
+        await ensure_task_joins_for_automation(session, automation_id)
+        await join_pending_addlists(session, automation_id)
+        return []
+    else:
+        await recover_stale_joining_memberships(session, automation_id)
+        await process_due_pending_actions(session, automation_id)
+        automation = await session.get(CustomAutomation, automation_id)
+        warmup = ((automation.module_settings or {}).get("warmup") or {}) if automation else {}
+        if not (
+            automation
+            and getattr(automation, "account_warmup_enabled", False)
+            and warmup.get("do_joins") is not False
+        ):
+            return []
+        await ensure_memberships_for_automation(session, automation_id)
     await recover_stale_joining_memberships(session, automation_id)
     await process_due_pending_actions(session, automation_id)
     if rate_limit and not farm_overlap_active_hours():
@@ -1173,6 +1204,9 @@ async def leave_chat_for_account(
                 return {"status": "failed", "error": "unsupported chat type"}
         return {"status": "left"}
     except FloodWaitError as exc:
+        from .account_pacing import schedule_flood_quarantine
+
+        schedule_flood_quarantine(account)
         return {"status": "rate_limited", "error": f"FloodWait: {exc.seconds or 60}s"}
     except Exception as exc:
         from .telegram_error_handler import _classify_telegram_error, update_account_after_telegram_error

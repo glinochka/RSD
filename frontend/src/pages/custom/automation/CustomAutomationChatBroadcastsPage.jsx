@@ -346,7 +346,7 @@ const CustomAutomationChatBroadcastsPage = () => {
                 <button type="button" className="acc-btn acc-btn--primary" disabled={busy} onClick={() => runSafe(() => customService.addChatBroadcastsGroups(id, links).then((payload) => { applyPayload(payload); setLinks(''); return payload; }), 'Группы добавлены')}>+ Добавить</button>
                 <span className="nc-muted">Строк: {links.split(/[\s,]+/).filter((item) => item.trim()).length}</span>
               </div>
-              <p className="nc-hint">Можно вставить t.me/addlist/... — чаты из папки попадут в пул, а воркеры вступят пачкой по этой ссылке.</p>
+              <p className="nc-hint">Можно вставить t.me/addlist/... — папка попадёт в задачу, разобьётся на пулы по аккаунтам, и каждый вступит через свой addlist.</p>
             </div>
           ) : null}
           {chatTab === 'delivered' ? (
@@ -481,8 +481,17 @@ const CustomAutomationChatBroadcastsPage = () => {
               <input type="range" min="1" max="500" value={settings.max_messages || 100} onChange={(event) => patch({ max_messages: Number(event.target.value) })} />
             </div>
           )}
+          <div className="nc-mode" style={{ marginTop: 14 }}>
+            <button type="button" className={(settings.scenario || (settings.skip_sent ? 'once' : 'loop')) !== 'once' ? 'is-on' : ''} onClick={() => patch({ scenario: 'loop', skip_sent: false })}>Круговой</button>
+            <button type="button" className={(settings.scenario || (settings.skip_sent ? 'once' : 'loop')) === 'once' ? 'is-on' : ''} onClick={() => patch({ scenario: 'once', skip_sent: true })}>Единичный</button>
+          </div>
+          <p className="nc-hint" style={{ marginTop: 8 }}>
+            {(settings.scenario || (settings.skip_sent ? 'once' : 'loop')) === 'once'
+              ? 'Один проход по всем чатам — задача завершится сама.'
+              : 'Круговой сценарий: задача не завершается, пока не нажмёте «Остановить». Например, каждый час снова в те же чаты.'}
+          </p>
           <div style={{ marginTop: 14 }}>
-            <FeatureToggle compact title="Пропускать чаты, куда уже отправляли" description="Учитывается история всех ваших аккаунтов, а не только этой задачи." checked={Boolean(settings.skip_sent)} onChange={(value) => persistFlag({ skip_sent: value })} />
+            <FeatureToggle compact title="Пропускать чаты, куда уже отправляли" description="Учитывается история всех ваших аккаунтов, а не только этой задачи." checked={Boolean(settings.skip_sent)} onChange={(value) => persistFlag({ skip_sent: value, scenario: value ? 'once' : 'loop' })} />
           </div>
           <div style={{ marginTop: 8 }}>
             <FeatureToggle compact title="Ограничивать темп на аккаунт" description="После группы аккаунт уходит на целевой отдых, чтобы не писать пачкой." checked={Boolean(settings.limit_rate)} onChange={(value) => persistFlag({ limit_rate: value })} />

@@ -9,15 +9,45 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import ChatDiscoveryTask, ChatImportJob, CustomJob
+from ...alembic.models import ChatDiscoveryTask, ChatImportJob, CustomAutomation, CustomJob
 from .account_prepare_service import get_prepare_status
 from .chat_inspect_service import get_inspect_status
 
 logger = logging.getLogger(__name__)
 
 LOG_TTL = timedelta(hours=24)
+MAX_JOB_LOGS = 2000
 ACTIVE_STATUSES = {"pending", "running", "processing", "awaiting_approval"}
 HISTORY_STATUSES = {"completed", "error", "cancelled", "skipped"}
+PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling"}
+STREAM_JOB_TYPES = {
+    "neurocommenting": "neurocommenting",
+    "neurochatting": "discussion",
+    "shilling": "shilling",
+    "chat_broadcast": "chat_broadcast",
+    "dm_broadcast": "dm_broadcast",
+    "masslooking": "masslooking",
+    "masspriming": "masspriming",
+}
+JOIN_JOB_TYPES = {
+    "neurocommenting",
+    "discussion",
+    "shilling",
+    "chat_broadcast",
+    "parser",
+    "masslooking",
+    "join",
+}
+MODULE_BINDINGS = {
+    "neurocommenting": ("neurocommenting", "is_neurocommenting_enabled"),
+    "discussion": ("neurochatting", "is_digital_footprint_enabled"),
+    "chat_broadcast": ("chat_broadcasts", None),
+    "dm_broadcast": ("dm_broadcasts", None),
+    "masslooking": ("masslooking", None),
+    "masspriming": ("masspriming", None),
+    "parser": ("parser", None),
+    "shilling": ("neuroshilling", "is_shilling_enabled"),
+}
 
 JOB_META = {
     "discovery": {"category": "module", "title": "Поиск чатов", "badge": "ПП"},
@@ -47,6 +77,58 @@ def _iso(value: datetime | None) -> str | None:
     if not value:
         return None
     return value.isoformat()
+
+
+def clip_text(value: Any, limit: int = 160) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)] + "…"
+
+
+def actor_label(account: Any) -> str:
+    name = str(getattr(account, "display_name", None) or getattr(account, "username", None) or "").strip()
+    if name.startswith("@"):
+        name = name[1:]
+    phone = str(getattr(account, "phone_number", None) or "").strip()
+    if name and phone:
+        return f"{name} ({phone})"
+    return name or phone or f"аккаунт #{getattr(account, 'id', '?')}"
+
+
+def chat_label(chat: Any) -> str:
+    title = str(getattr(chat, "title", None) or "").strip()
+    link = str(getattr(chat, "invite_link", None) or "").strip()
+    if title and link:
+        return f"«{title}» ({link})"
+    return title or link or f"чат #{getattr(chat, 'id', '?')}"
+
+
+def is_persistent_job(job_type: str, params: dict[str, Any] | None = None) -> bool:
+    if job_type in PERSISTENT_JOB_TYPES:
+        return True
+    if job_type == "chat_broadcast":
+        data = params or {}
+        scenario = str(data.get("scenario") or "").strip().lower()
+        if scenario == "loop":
+            return True
+        if scenario == "once":
+            return False
+        return not bool(data.get("skip_sent"))
+    return False
+
+
+def apply_module_enabled(automation: CustomAutomation, job_type: str, enabled: bool) -> None:
+    key, flag = MODULE_BINDINGS.get(job_type, (None, None))
+    blob = dict(automation.module_settings or {})
+    if key:
+        nested = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
+        nested["enabled"] = enabled
+        blob[key] = nested
+        automation.module_settings = blob
+    if flag:
+        setattr(automation, flag, enabled)
+    automation.updated_at = _utc_now()
 
 
 def _duration_seconds(started: datetime | None, ended: datetime | None, status: str) -> int:
@@ -417,15 +499,58 @@ async def _load_job(session: AsyncSession, job_id: int) -> CustomJob | None:
 
 
 async def append_log(job_id: int, message: str, *, level: str = "info") -> None:
+    text = str(message or "").strip()
+    if not text:
+        return
     async with async_session_maker() as session:
         job = await _load_job(session, job_id)
         if not job:
             return
         logs = list(job.logs or [])
-        logs.append({"ts": _iso(_utc_now()), "level": level, "message": message})
-        job.logs = logs[-200:]
+        logs.append({"ts": _iso(_utc_now()), "level": level, "message": text[:2000]})
+        job.logs = logs[-MAX_JOB_LOGS:]
         job.updated_at = _utc_now()
         await session.commit()
+
+
+async def find_active_job_id(automation_id: int, job_type: str) -> int | None:
+    async with async_session_maker() as session:
+        job_id = await session.scalar(
+            select(CustomJob.id)
+            .where(
+                CustomJob.custom_automation_id == automation_id,
+                CustomJob.job_type == job_type,
+                CustomJob.status.in_(tuple(ACTIVE_STATUSES)),
+            )
+            .order_by(CustomJob.id.desc())
+            .limit(1)
+        )
+        return int(job_id) if job_id else None
+
+
+async def list_active_job_types(automation_id: int) -> set[str]:
+    async with async_session_maker() as session:
+        rows = (
+            await session.execute(
+                select(CustomJob.job_type).where(
+                    CustomJob.custom_automation_id == automation_id,
+                    CustomJob.status.in_(tuple(ACTIVE_STATUSES)),
+                )
+            )
+        ).scalars().all()
+        return {str(item) for item in rows if item}
+
+
+async def log_active(automation_id: int, job_type: str, message: str, *, level: str = "info") -> None:
+    job_id = await find_active_job_id(automation_id, job_type)
+    if job_id:
+        await append_log(job_id, message, level=level)
+
+
+async def job_is_cancelled(job_id: int) -> bool:
+    async with async_session_maker() as session:
+        job = await _load_job(session, job_id)
+        return job is None or job.status == "cancelled"
 
 
 async def mark_running(job_id: int) -> None:
@@ -457,13 +582,63 @@ async def finish_job(
             job.result = result
         if error:
             job.error = error[:500]
-        job.completed_at = _utc_now()
+        if status not in ACTIVE_STATUSES:
+            job.completed_at = _utc_now()
         job.updated_at = _utc_now()
+        await session.commit()
+
+
+async def _disable_module_for_job(job_id: int) -> None:
+    async with async_session_maker() as session:
+        job = await _load_job(session, job_id)
+        if job is None:
+            return
+        automation = await session.get(CustomAutomation, job.custom_automation_id)
+        if automation is None:
+            return
+        apply_module_enabled(automation, job.job_type, False)
+        await session.commit()
+
+
+async def _cancel_sibling_jobs(automation_id: int, job_type: str, keep_id: int) -> None:
+    async with async_session_maker() as session:
+        rows = (
+            await session.execute(
+                select(CustomJob).where(
+                    CustomJob.custom_automation_id == automation_id,
+                    CustomJob.job_type == job_type,
+                    CustomJob.status.in_(tuple(ACTIVE_STATUSES)),
+                    CustomJob.id != keep_id,
+                )
+            )
+        ).scalars().all()
+        now = _utc_now()
+        for job in rows:
+            job.status = "cancelled"
+            job.completed_at = now
+            job.updated_at = now
+            logs = list(job.logs or [])
+            logs.append({"ts": _iso(now), "level": "info", "message": "Заменён новым запуском"})
+            job.logs = logs[-MAX_JOB_LOGS:]
+        if rows:
+            await session.commit()
+
+
+async def _enable_module_for_job(automation_id: int, job_type: str) -> None:
+    if job_type not in MODULE_BINDINGS:
+        return
+    async with async_session_maker() as session:
+        automation = await session.get(CustomAutomation, automation_id)
+        if automation is None:
+            return
+        apply_module_enabled(automation, job_type, True)
         await session.commit()
 
 
 async def queue_tracked(background_tasks, automation_id: int, job_type: str, fn: Callable[..., Awaitable[Any]], *args: Any, params: dict[str, Any] | None = None) -> int:
     job_id = await spawn_job(automation_id, job_type, params=params)
+    await _cancel_sibling_jobs(automation_id, job_type, job_id)
+    await _enable_module_for_job(automation_id, job_type)
     bound_args = args
     if args and isinstance(args[-1], dict):
         bound_args = (*args[:-1], {**args[-1], "_job_id": job_id})
@@ -471,14 +646,47 @@ async def queue_tracked(background_tasks, automation_id: int, job_type: str, fn:
     return job_id
 
 
+def _finite_should_complete(payload: dict[str, Any], job_type: str) -> bool:
+    status = str(payload.get("status") or "ok").strip().lower()
+    if status in {"error"}:
+        return True
+    if status == "skipped" and payload.get("reason") in {"night", "schedule"}:
+        return job_type not in set(STREAM_JOB_TYPES.values())
+    remaining = payload.get("remaining")
+    if remaining is not None:
+        try:
+            return int(remaining) <= 0
+        except (TypeError, ValueError):
+            return True
+    return status in {"ok", "completed", "done", "stopped", "skipped"}
+
+
 async def run_spawned(job_id: int, fn: Callable[..., Awaitable[Any]], *args: Any) -> None:
     await mark_running(job_id)
     await append_log(job_id, "Задача запущена")
+    job_type = ""
+    params: dict[str, Any] = {}
+    async with async_session_maker() as session:
+        job = await _load_job(session, job_id)
+        if job is not None:
+            job_type = job.job_type
+            params = dict(job.params or {})
+    persistent = is_persistent_job(job_type, params)
     try:
         result = await fn(*args)
         payload = result if isinstance(result, dict) else {"value": result}
-        await finish_job(job_id, "completed", result=payload)
-        await append_log(job_id, "Задача завершена")
+        if await job_is_cancelled(job_id):
+            return
+        if persistent:
+            await finish_job(job_id, "running", result=payload)
+            await append_log(job_id, "Цикл работает. Остановлю только по кнопке.")
+            return
+        if _finite_should_complete(payload, job_type):
+            await finish_job(job_id, "completed", result=payload)
+            await append_log(job_id, "Задача завершена: обработаны целевые объекты")
+            await _disable_module_for_job(job_id)
+            return
+        await finish_job(job_id, "running", result=payload)
     except Exception as exc:
         logger.exception("Tracked job %s failed: %s", job_id, exc)
         await finish_job(job_id, "error", error=str(exc))
@@ -530,8 +738,11 @@ async def cancel_job(session: AsyncSession, automation_id: int, job_id: str) -> 
         job.completed_at = now
         job.updated_at = now
         logs = list(job.logs or [])
-        logs.append({"ts": _iso(now), "level": "info", "message": "Отменено пользователем"})
-        job.logs = logs
+        logs.append({"ts": _iso(now), "level": "info", "message": "Остановлено. Модуль выключен, вступления по этой задаче больше не идут."})
+        job.logs = logs[-MAX_JOB_LOGS:]
+        automation = await session.get(CustomAutomation, automation_id)
+        if automation is not None:
+            apply_module_enabled(automation, job.job_type, False)
         await session.commit()
         await session.refresh(job)
         return serialize_custom(job)

@@ -14,6 +14,8 @@ from .account_pacing import (
     schedule_account_target_rest,
     schedule_account_humanization_rest,
     schedule_account_retry,
+    schedule_flood_quarantine,
+    looks_like_flood_quarantine,
     # Legacy alias kept for external callers
     action_uses_write_rest,
 )
@@ -98,6 +100,13 @@ try:
     from telethon.errors import FloodWaitError
 
     FLOOD_ERRORS.add(FloodWaitError)
+except Exception:
+    pass
+
+try:
+    from telethon.errors import FloodError
+
+    FLOOD_ERRORS.add(FloodError)
 except Exception:
     pass
 
@@ -291,6 +300,9 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "frozen"}
     if _looks_like_invite_error(exc):
         return {"kind": "invite_invalid"}
+    if looks_like_flood_quarantine(exc) and "too many attempts" in str(exc).lower():
+        seconds = getattr(exc, "seconds", None) or (12 * 60 * 60)
+        return {"kind": "flood", "seconds": seconds}
     if FLOOD_ERRORS and isinstance(exc, tuple(FLOOD_ERRORS)):
         seconds = getattr(exc, "seconds", 60)
         return {"kind": "flood", "seconds": seconds}
@@ -309,7 +321,7 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
     name = type(exc).__name__
     lowered = str(exc).lower()
     compact = f"{name} {lowered}".lower().replace("_", "").replace(" ", "")
-    if "flood" in lowered or "wait of" in lowered:
+    if looks_like_flood_quarantine(exc) or "flood" in lowered or "wait of" in lowered:
         return {"kind": "flood", "seconds": getattr(exc, "seconds", 60) or 60}
     if "peerflood" in compact or "too many requests" in lowered:
         return {"kind": "spamblock"}
@@ -415,6 +427,10 @@ def account_is_usable(account: SocialAccount | None) -> bool:
     if not account or not account.is_active or account.is_banned:
         return False
     if getattr(account, "is_frozen", False):
+        return False
+    from .account_pacing import account_is_flood_quarantined
+
+    if account_is_flood_quarantined(account):
         return False
     return True
 
@@ -658,12 +674,31 @@ async def execute_with_telegram_retry(
                 raise
             if kind == "flood":
                 wait_seconds = int(classification.get("seconds") or 60)
-                if wait_seconds <= 20 and attempt < attempts - 1:
+                if wait_seconds <= 20 and attempt < attempts - 1 and not looks_like_flood_quarantine(exc):
                     logger.info("FloodWait for account %s: sleeping %s seconds", account.id, wait_seconds)
                     await asyncio.sleep(wait_seconds)
                     continue
-                extra = max(0, wait_seconds - 20)
-                schedule_account_retry(account, extra_seconds=extra)
+                until = schedule_flood_quarantine(account)
+                logger.warning(
+                    "Flood quarantine for account %s until %s",
+                    account.id,
+                    until.isoformat(),
+                )
+                if automation_id:
+                    try:
+                        from .job_service import STREAM_JOB_TYPES, actor_label, list_active_job_types, log_active
+
+                        hours = max(1, int((until - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() // 3600))
+                        message = (
+                            f"{actor_label(account)} карантин {hours} ч "
+                            "(FloodWait / too many attempts)"
+                        )
+                        active = await list_active_job_types(automation_id)
+                        for job_type in active or set(STREAM_JOB_TYPES.values()):
+                            await log_active(automation_id, job_type, message, level="warning")
+                    except Exception:
+                        logger.debug("Flood quarantine log skipped", exc_info=True)
+                await session.commit()
                 break
             schedule_account_retry(account)
             break
@@ -707,6 +742,10 @@ async def update_account_after_telegram_error(
         mark_session_invalid(account)
         await session.commit()
         return "session_invalid"
+    if kind == "flood":
+        schedule_flood_quarantine(account)
+        await session.commit()
+        return "flood"
     if kind == "session_busy":
         return "session_busy"
     if kind == "proxy":

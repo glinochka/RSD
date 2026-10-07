@@ -409,3 +409,115 @@ class TestJoinScenarioBranches:
         assert any(row["message"] == "Завершено: 2 чатов" for row in logs)
         payload = serialize_discovery(task)
         assert payload["result"]["Всего каналов"] == 2
+
+
+class TestJobLifecycle:
+    def test_persistent_vs_finite(self):
+        from app.services.custom.job_service import is_persistent_job
+
+        assert is_persistent_job("neurocommenting") is True
+        assert is_persistent_job("discussion") is True
+        assert is_persistent_job("shilling") is True
+        assert is_persistent_job("chat_broadcast", {"scenario": "loop"}) is True
+        assert is_persistent_job("chat_broadcast", {"scenario": "once"}) is False
+        assert is_persistent_job("chat_broadcast", {"skip_sent": True}) is False
+        assert is_persistent_job("parser") is False
+        assert is_persistent_job("masspriming") is False
+        assert is_persistent_job("dm_broadcast") is False
+        assert is_persistent_job("masslooking") is False
+
+    def test_folder_splits_into_unique_account_pools(self):
+        from app.services.custom.chat_addlist_service import _reusable_folders, even_redistribute
+
+        assignment = even_redistribute([10, 20, 30], list(range(1, 10)))
+        pooled = [cid for ids in assignment.values() for cid in ids]
+        assert len(pooled) == len(set(pooled))
+        assert set(pooled) == set(range(1, 10))
+        sizes = [len(ids) for ids in assignment.values()]
+        assert max(sizes) - min(sizes) <= 1
+        reusable, covered = _reusable_folders(
+            [{"slug": "poolA", "chat_ids": [1, 2, 3]}, {"slug": "other", "chat_ids": [1, 9]}],
+            [1, 2, 3],
+        )
+        assert reusable == [{"slug": "poolA", "chat_ids": [1, 2, 3]}]
+        assert covered == {1, 2, 3}
+
+    def test_floodwait_parks_old_joiners(self):
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_addlist_service import join_account_is_parked
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        idle = SimpleNamespace(next_action_at=now + timedelta(minutes=40), flood_quarantined_until=None)
+        ready = SimpleNamespace(next_action_at=None, flood_quarantined_until=None)
+        assert join_account_is_parked(idle, now=now) is True
+        assert join_account_is_parked(ready, now=now) is False
+
+    def test_flood_quarantine_is_global_12_to_24h(self):
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        from app.services.custom.account_pacing import (
+            account_is_flood_quarantined,
+            account_should_idle,
+            looks_like_flood_quarantine,
+            schedule_flood_quarantine,
+        )
+        from app.services.custom.account_roles import account_is_live
+
+        class TooMany(Exception):
+            pass
+
+        class FakeFlood(Exception):
+            seconds = 90
+
+            def __init__(self):
+                super().__init__("A wait of 90 seconds is required")
+
+        FakeFlood.__name__ = "FloodWaitError"
+        assert looks_like_flood_quarantine(TooMany("Too many attempts, try later")) is True
+        assert looks_like_flood_quarantine(FakeFlood()) is True
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        account = SimpleNamespace(
+            id=7,
+            is_active=True,
+            is_banned=False,
+            is_frozen=False,
+            session_file_path="/tmp/x.session",
+            encrypted_session="x",
+            next_action_at=None,
+            next_humanization_at=None,
+            flood_quarantined_until=None,
+            updated_at=now,
+        )
+        until = schedule_flood_quarantine(account, now=now)
+        wait = (until - now).total_seconds()
+        assert 12 * 3600 <= wait <= 24 * 3600
+        assert account_is_flood_quarantined(account, now=now) is True
+        assert account_should_idle(account, now=now, ignore_hours=True) is True
+        assert account_is_live(account) is False
+        account.flood_quarantined_until = now - timedelta(minutes=1)
+        account.next_action_at = None
+        account.next_humanization_at = None
+        assert account_is_flood_quarantined(account, now=now) is False
+        assert account_is_live(account) is True
+
+    def test_addlist_slug_on_chat(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_addlist_service import chat_addlist_slug, set_chat_addlist_slug
+
+        chat = SimpleNamespace(invite_link="https://t.me/channel", monitoring_config={})
+        set_chat_addlist_slug(chat, "AbCdEfGhIj")
+        assert chat_addlist_slug(chat) == "AbCdEfGhIj"
+        assert "addlist/AbCdEfGhIj" in (chat.invite_link or "")
+
+    def test_finite_complete_rules(self):
+        from app.services.custom.job_service import _finite_should_complete
+
+        assert _finite_should_complete({"status": "ok"}, "parser") is True
+        assert _finite_should_complete({"status": "skipped", "reason": "night"}, "parser") is True
+        assert _finite_should_complete({"status": "skipped", "reason": "night"}, "masspriming") is False
+        assert _finite_should_complete({"status": "ok", "remaining": 4}, "dm_broadcast") is False
+        assert _finite_should_complete({"status": "ok", "remaining": 0}, "dm_broadcast") is True

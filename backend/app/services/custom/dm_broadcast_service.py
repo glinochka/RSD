@@ -210,6 +210,13 @@ async def _send_line(
         )
     )
     await session.commit()
+    from .job_service import actor_label, clip_text, log_active
+
+    await log_active(
+        automation_id,
+        "dm_broadcast",
+        f"{actor_label(account)} написал {recipient}: «{clip_text(body)}»",
+    )
     return True
 
 
