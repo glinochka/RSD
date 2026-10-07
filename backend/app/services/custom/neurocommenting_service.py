@@ -457,6 +457,11 @@ async def process_chat_target(
         if allowed_accounts and account.id not in allowed_accounts:
             tried.add(account.id)
             continue
+        from .task_dedup import account_owns_chat
+
+        if not account_owns_chat(automation, "neurocommenting", account.id, chat_target.id):
+            tried.add(account.id)
+            continue
         pool = await session.scalar(
             select(PoolAccount).where(
                 PoolAccount.social_account_id == account.id,
@@ -704,6 +709,10 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                 )
                 if is_broadcast_channel(chat) or not chat.chat_type
             ]
+        from .task_dedup import persist_unique_chats
+
+        persist_unique_chats(automation, "neurocommenting", _as_int_list(cfg.get("account_ids")), [chat.id for chat in chats])
+        await session.commit()
         for chat_target in chats:
             try:
                 res = await process_chat_target(

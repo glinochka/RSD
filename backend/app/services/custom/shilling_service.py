@@ -269,6 +269,7 @@ async def _pick_speaker_pair(
     exclude_account_ids: set[int] | None = None,
     *,
     prefer_account: SocialAccount | None = None,
+    chat_target: ChatTarget | None = None,
 ) -> tuple[SocialAccount, SocialAccount] | None:
     excluded = set(exclude_account_ids or set())
     cfg = _module_cfg(automation)
@@ -276,6 +277,7 @@ async def _pick_speaker_pair(
     blocked = set(_as_int_list(cfg.get("blacklisted_account_ids")))
     from .account_roles import account_matches_action
     from .account_pacing import STAGE_CAUTIOUS, account_humanization_stage
+    from .task_dedup import chat_owner_ids
     from ...alembic.models import PoolAccount
 
     pool_rows = (
@@ -295,8 +297,17 @@ async def _pick_speaker_pair(
         if bool(cfg.get("skip_fresh")) and account_humanization_stage(account) == STAGE_CAUTIOUS:
             excluded.add(account.id)
 
+    owners = chat_owner_ids(automation, "neuroshilling", chat_target.id) if chat_target else None
+    excluded_a = set(excluded)
+    if owners is not None:
+        for account, _pool in pool_rows:
+            if account.id not in owners:
+                excluded_a.add(account.id)
+        if prefer_account and prefer_account.id not in owners:
+            prefer_account = None
+
     account_a = None
-    if prefer_account and prefer_account.id not in excluded:
+    if prefer_account and prefer_account.id not in excluded_a:
         pool = await session.scalar(
             select(PoolAccount).where(
                 PoolAccount.social_account_id == prefer_account.id,
@@ -310,7 +321,7 @@ async def _pick_speaker_pair(
             session,
             automation,
             "shilling_question",
-            exclude_account_ids=excluded,
+            exclude_account_ids=excluded_a,
         )
     if account_a is None:
         return None
@@ -543,6 +554,7 @@ async def perform_shilling_dialogue(
         session,
         automation,
         prefer_account=await get_reader_account(session, chat_target),
+        chat_target=chat_target,
     )
     if not pair:
         return {"status": "skipped", "reason": "need_two_accounts"}
@@ -1002,7 +1014,7 @@ async def process_shilling_chat(
         await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "chat_daily_target_limit"}
 
-    pair = await _pick_speaker_pair(session, automation)
+    pair = await _pick_speaker_pair(session, automation, chat_target=chat_target)
     if not pair:
         await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "need_two_accounts"}
@@ -1093,6 +1105,15 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
             )
             if is_group_chat(chat) and (not allowed_chats or chat.id in allowed_chats)
         ]
+        from .task_dedup import persist_unique_chats
+
+        persist_unique_chats(
+            automation,
+            "neuroshilling",
+            _as_int_list(cfg.get("account_ids")),
+            [chat.id for chat in chats],
+        )
+        await session.commit()
         for chat_target in chats:
             try:
                 res = await process_shilling_chat(session, automation, chat_target)

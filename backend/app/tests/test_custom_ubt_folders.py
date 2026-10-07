@@ -521,3 +521,46 @@ class TestJobLifecycle:
         assert _finite_should_complete({"status": "skipped", "reason": "night"}, "masspriming") is False
         assert _finite_should_complete({"status": "ok", "remaining": 4}, "dm_broadcast") is False
         assert _finite_should_complete({"status": "ok", "remaining": 0}, "dm_broadcast") is True
+
+    def test_unique_assign_covers_all_targets_once(self):
+        from app.services.custom.parser_service import user_passes_filters
+        from app.services.custom.task_dedup import bio_has_link, looks_like_userbot, unique_assign
+
+        targets = ["@a", "@b", "@c", "@d", "@e"]
+        assigned = unique_assign([11, 22], targets)
+        pooled = [item for items in assigned.values() for item in items]
+        assert sorted(pooled) == targets
+        assert len(pooled) == len(set(pooled))
+        assert assigned[11] and assigned[22]
+        again = unique_assign([11, 22], targets, assigned)
+        assert again == assigned
+        grown = unique_assign([11, 22, 33], targets, assigned)
+        pooled_grown = [item for items in grown.values() for item in items]
+        assert sorted(pooled_grown) == targets
+        assert len(pooled_grown) == len(set(pooled_grown))
+
+        from types import SimpleNamespace
+
+        from app.services.custom.task_dedup import account_owns_chat, persist_unique_chats
+
+        auto = SimpleNamespace(module_settings={})
+        persist_unique_chats(auto, "neurocommenting", [11, 22], [101, 102, 103])
+        owners = [
+            aid
+            for aid in (11, 22)
+            if account_owns_chat(auto, "neurocommenting", aid, 101)
+        ]
+        assert len(owners) == 1
+
+        assert bio_has_link("https://t.me/shop") is True
+        assert bio_has_link("Пиши t.me/help") is True
+        assert bio_has_link("www.example.com") is True
+        assert bio_has_link("site.io/x") is True
+        assert bio_has_link("просто текст без ссылки") is False
+        assert bio_has_link("@only_mention") is False
+        assert looks_like_userbot(about="реклама https://t.me/x") is True
+        userbot = {"telegram_user_id": 9, "is_bot": False, "is_self": False, "has_bio_link": True}
+        person = {"telegram_user_id": 8, "is_bot": False, "is_self": False, "has_bio_link": False}
+        assert user_passes_filters(userbot, skip_bots=True) is False
+        assert user_passes_filters(person, skip_bots=True) is True
+        assert user_passes_filters(userbot, skip_bots=False) is True

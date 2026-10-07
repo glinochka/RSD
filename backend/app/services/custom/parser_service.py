@@ -131,9 +131,13 @@ def user_passes_filters(
     only_admins: bool = False,
     only_active_stories: bool = False,
 ) -> bool:
+    from .task_dedup import bio_has_link
+
     if not row.get("telegram_user_id") or row.get("is_self"):
         return False
-    if skip_bots and row.get("is_bot"):
+    if skip_bots and (
+        row.get("is_bot") or row.get("has_bio_link") or bio_has_link(row.get("about"))
+    ):
         return False
     if skip_deleted and row.get("is_deleted"):
         return False
@@ -415,6 +419,7 @@ async def _process_entity(
         member_limit=max(1, min(member_limit, 10000)),
         admin_ids=admin_ids or None,
     )
+    skip_bots = bool(cfg.get("skip_bots", True))
     if cfg.get("only_active_stories"):
         for row in raw:
             try:
@@ -427,7 +432,7 @@ async def _process_entity(
         for row in raw
         if user_passes_filters(
             row,
-            skip_bots=bool(cfg.get("skip_bots", True)),
+            skip_bots=skip_bots,
             skip_deleted=bool(cfg.get("skip_deleted", True)),
             skip_scam=bool(cfg.get("skip_scam")),
             only_username=bool(cfg.get("only_username")),
@@ -437,6 +442,20 @@ async def _process_entity(
             only_active_stories=bool(cfg.get("only_active_stories")),
         )
     ]
+    if skip_bots:
+        from .task_dedup import bio_has_link, fetch_user_about
+
+        filtered = []
+        for row in kept:
+            try:
+                peer = await telethon.get_entity(row["telegram_user_id"])
+                about = await fetch_user_about(client, peer)
+            except Exception:
+                about = ""
+            if bio_has_link(about):
+                continue
+            filtered.append(row)
+        kept = filtered
     saved = await _save_users(session, automation.id, kept, source_mode=mode, chat=chat, extra_title=title)
     await _log_parse(
         session,
@@ -517,97 +536,113 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
             delay_user = float(cfg.get("delay_user") if cfg.get("delay_user") is not None else 0.5)
         except (TypeError, ValueError):
             delay_chat, delay_user = 5, 0.5
-        account_index = 0
-        for chat in chats:
-            account, _pool = accounts[account_index % len(accounts)]
-            account_index += 1
-            try:
-                async with TelegramAccountClient.for_account(account) as client:
-                    telethon = getattr(client, "client", client)
+        from .task_dedup import load_unique_assign, store_unique_assign, unique_assign
 
-                    async def _work(chat=chat, account=account, telethon=telethon, client=client):
-                        entity = None
-                        for ident in (chat.invite_link, chat.external_chat_id, chat.title):
-                            if not ident:
-                                continue
-                            try:
-                                entity = await client.get_entity(ident)
-                                break
-                            except Exception:
-                                continue
-                        if entity is None:
-                            raise RuntimeError("chat not resolved")
-                        return await _process_entity(
+        worker_ids = [account.id for account, _pool in accounts]
+        by_id = {account.id: (account, pool) for account, pool in accounts}
+        chat_by_id = {chat.id: chat for chat in chats}
+        chat_assignment = unique_assign(worker_ids, [chat.id for chat in chats], load_unique_assign(automation, "parser"))
+        extra_assignment = unique_assign(
+            worker_ids, extra_targets, load_unique_assign(automation, "parser_targets")
+        )
+        store_unique_assign(automation, "parser", chat_assignment)
+        store_unique_assign(automation, "parser_targets", extra_assignment)
+        await session.commit()
+        for account_id, assigned_ids in chat_assignment.items():
+            account, _pool = by_id[account_id]
+            for chat_id in assigned_ids:
+                chat = chat_by_id.get(int(chat_id))
+                if not chat:
+                    continue
+                added = 0
+                try:
+                    async with TelegramAccountClient.for_account(account) as client:
+                        telethon = getattr(client, "client", client)
+
+                        async def _work(chat=chat, account=account, telethon=telethon, client=client):
+                            entity = None
+                            for ident in (chat.invite_link, chat.external_chat_id, chat.title):
+                                if not ident:
+                                    continue
+                                try:
+                                    entity = await client.get_entity(ident)
+                                    break
+                                except Exception:
+                                    continue
+                            if entity is None:
+                                raise RuntimeError("chat not resolved")
+                            return await _process_entity(
+                                session,
+                                automation,
+                                account,
+                                cfg,
+                                telethon,
+                                client,
+                                entity,
+                                chat=chat,
+                                title=chat.title or _chat_ref(chat),
+                                target_id=str(chat.id),
+                            )
+
+                        added = await execute_with_telegram_retry(
                             session,
-                            automation,
                             account,
-                            cfg,
-                            telethon,
-                            client,
-                            entity,
-                            chat=chat,
-                            title=chat.title or _chat_ref(chat),
+                            _work,
+                            action_type=ACTION_TYPE,
                             target_id=str(chat.id),
+                            target_type="chat",
+                            payload={"title": chat.title or _chat_ref(chat)},
+                            automation_id=automation.id,
+                            pace=False,
                         )
+                except Exception as exc:
+                    logger.warning("Parser chat %s failed: %s", chat.id, exc)
+                    continue
+                if added:
+                    chats_used += 1
+                    total += int(added)
+                await asyncio.sleep(max(delay_chat, delay_user))
+        for account_id, assigned_targets in extra_assignment.items():
+            account, _pool = by_id[account_id]
+            for target in assigned_targets:
+                added = 0
+                try:
+                    async with TelegramAccountClient.for_account(account) as client:
+                        telethon = getattr(client, "client", client)
 
-                    added = await execute_with_telegram_retry(
-                        session,
-                        account,
-                        _work,
-                        action_type=ACTION_TYPE,
-                        target_id=str(chat.id),
-                        target_type="chat",
-                        payload={"title": chat.title or _chat_ref(chat)},
-                        automation_id=automation.id,
-                        pace=False,
-                    )
-            except Exception as exc:
-                logger.warning("Parser chat %s failed: %s", chat.id, exc)
-                continue
-            if added:
-                chats_used += 1
-                total += int(added)
-            await asyncio.sleep(max(delay_chat, delay_user))
-        for target in extra_targets:
-            account, _pool = accounts[account_index % len(accounts)]
-            account_index += 1
-            try:
-                async with TelegramAccountClient.for_account(account) as client:
-                    telethon = getattr(client, "client", client)
+                        async def _extra(target=target, account=account, telethon=telethon, client=client):
+                            entity = await client.get_entity(target)
+                            return await _process_entity(
+                                session,
+                                automation,
+                                account,
+                                cfg,
+                                telethon,
+                                client,
+                                entity,
+                                chat=None,
+                                title=target,
+                                target_id=target,
+                            )
 
-                    async def _extra(target=target, account=account, telethon=telethon, client=client):
-                        entity = await client.get_entity(target)
-                        return await _process_entity(
+                        added = await execute_with_telegram_retry(
                             session,
-                            automation,
                             account,
-                            cfg,
-                            telethon,
-                            client,
-                            entity,
-                            chat=None,
-                            title=target,
+                            _extra,
+                            action_type=ACTION_TYPE,
                             target_id=target,
+                            target_type="chat",
+                            payload={"title": target},
+                            automation_id=automation.id,
+                            pace=False,
                         )
-
-                    added = await execute_with_telegram_retry(
-                        session,
-                        account,
-                        _extra,
-                        action_type=ACTION_TYPE,
-                        target_id=target,
-                        target_type="chat",
-                        payload={"title": target},
-                        automation_id=automation.id,
-                        pace=False,
-                    )
-            except Exception as exc:
-                logger.warning("Parser target %s failed: %s", target, exc)
-                continue
-            if added:
-                chats_used += 1
-                total += int(added)
-            await asyncio.sleep(max(delay_chat, delay_user))
+                except Exception as exc:
+                    logger.warning("Parser target %s failed: %s", target, exc)
+                    continue
+                if added:
+                    chats_used += 1
+                    total += int(added)
+                await asyncio.sleep(max(delay_chat, delay_user))
         if total:
             for account, _pool in accounts[:chats_used or 1]:
                 record_successful_humanization(account)

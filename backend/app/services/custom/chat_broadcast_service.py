@@ -364,59 +364,69 @@ async def run_chat_broadcast_pass(automation_id: int, run_config: dict[str, Any]
         m_lo, m_hi = _delay_bounds(cfg, "delay_msg_min", "delay_msg_max", 3, 8)
         warmup_slow = 2 if bool(cfg.get("warmup_slow", True)) else 1
         consecutive_errors = 0
-        rr = 0
-        for chat in chats:
-            if sent >= max_messages:
-                break
-            if skip_sent and await _already_sent(session, automation_id, chat.id):
-                continue
-            picked = None
-            for offset in range(len(accounts)):
-                candidate = accounts[(rr + offset) % len(accounts)]
-                if await account_is_joined(session, chat.id, candidate.id):
-                    picked = candidate
-                    rr += offset + 1
-                    break
-            if picked is None:
-                continue
-            factor = warmup_slow if account_humanization_stage(picked) == STAGE_CAUTIOUS else 1
-            chain = list(messages)
-            if first_mode == "ai":
-                hint = chain[0]["text"] if chain else ""
-                generated = await _generate_ai_line(chat.title or "", hint)
-                if generated:
-                    chain = [{"text": generated}, *chain[1:]]
-                elif not chain:
-                    consecutive_errors += 1
-                    if consecutive_errors >= errors_until_stop:
-                        break
-                    continue
-            ok_chat = False
-            for index, item in enumerate(chain):
+        from .task_dedup import load_unique_assign, store_unique_assign, unique_assign
+
+        by_id = {account.id: account for account in accounts}
+        chat_by_id = {chat.id: chat for chat in chats}
+        assignment = unique_assign(
+            [account.id for account in accounts],
+            [chat.id for chat in chats],
+            load_unique_assign(automation, "chat_broadcasts"),
+        )
+        store_unique_assign(automation, "chat_broadcasts", assignment)
+        await session.commit()
+        for account_id, assigned_ids in assignment.items():
+            picked = by_id[account_id]
+            for chat_id in assigned_ids:
                 if sent >= max_messages:
                     break
-                text = fill_broadcast_vars(apply_spintax(item["text"]), chat=chat, account=picked)
-                success = await _send_line(
-                    session, automation_id, picked, chat, text, imitate_typing=imitate
-                )
-                if success:
-                    sent += 1
-                    ok_chat = True
-                    consecutive_errors = 0
-                    if index < len(chain) - 1:
-                        await asyncio.sleep(random.uniform(m_lo, m_hi) * factor)
-                else:
-                    consecutive_errors += 1
-                    if not skip_errors or consecutive_errors >= errors_until_stop:
-                        if bool(cfg.get("limit_rate", True)):
-                            schedule_account_target_rest(picked)
-                            await session.commit()
-                        return {"status": "stopped", "reason": "errors", "sent": sent, "chats": chats_ok}
-                    break
-            if ok_chat:
-                chats_ok += 1
-                if bool(cfg.get("limit_rate", True)):
-                    schedule_account_target_rest(picked)
-                    await session.commit()
-                await asyncio.sleep(random.uniform(g_lo, g_hi) * factor)
+                chat = chat_by_id.get(int(chat_id))
+                if not chat:
+                    continue
+                if skip_sent and await _already_sent(session, automation_id, chat.id):
+                    continue
+                if not await account_is_joined(session, chat.id, picked.id):
+                    continue
+                factor = warmup_slow if account_humanization_stage(picked) == STAGE_CAUTIOUS else 1
+                chain = list(messages)
+                if first_mode == "ai":
+                    hint = chain[0]["text"] if chain else ""
+                    generated = await _generate_ai_line(chat.title or "", hint)
+                    if generated:
+                        chain = [{"text": generated}, *chain[1:]]
+                    elif not chain:
+                        consecutive_errors += 1
+                        if consecutive_errors >= errors_until_stop:
+                            break
+                        continue
+                ok_chat = False
+                for index, item in enumerate(chain):
+                    if sent >= max_messages:
+                        break
+                    text = fill_broadcast_vars(apply_spintax(item["text"]), chat=chat, account=picked)
+                    success = await _send_line(
+                        session, automation_id, picked, chat, text, imitate_typing=imitate
+                    )
+                    if success:
+                        sent += 1
+                        ok_chat = True
+                        consecutive_errors = 0
+                        if index < len(chain) - 1:
+                            await asyncio.sleep(random.uniform(m_lo, m_hi) * factor)
+                    else:
+                        consecutive_errors += 1
+                        if not skip_errors or consecutive_errors >= errors_until_stop:
+                            if bool(cfg.get("limit_rate", True)):
+                                schedule_account_target_rest(picked)
+                                await session.commit()
+                            return {"status": "stopped", "reason": "errors", "sent": sent, "chats": chats_ok}
+                        break
+                if ok_chat:
+                    chats_ok += 1
+                    if bool(cfg.get("limit_rate", True)):
+                        schedule_account_target_rest(picked)
+                        await session.commit()
+                    await asyncio.sleep(random.uniform(g_lo, g_hi) * factor)
+            if sent >= max_messages:
+                break
     return {"status": "ok", "sent": sent, "chats": chats_ok}

@@ -130,24 +130,20 @@ async def _counts_since(session: AsyncSession, automation_id: int, account_id: i
 async def _seen_recently(
     session: AsyncSession,
     automation_id: int,
-    account_id: int,
     target_id: str,
     *,
     hours: int,
 ) -> bool:
+    filters = [
+        AutomationActionLog.custom_automation_id == automation_id,
+        AutomationActionLog.action_type == ACTION_TYPE,
+        AutomationActionLog.result == "success",
+        AutomationActionLog.target_id == target_id,
+    ]
     if hours <= 0:
         return False
-    since = _utc_now() - timedelta(hours=hours)
-    row = await session.scalar(
-        select(AutomationActionLog.id).where(
-            AutomationActionLog.custom_automation_id == automation_id,
-            AutomationActionLog.social_account_id == account_id,
-            AutomationActionLog.action_type == ACTION_TYPE,
-            AutomationActionLog.result == "success",
-            AutomationActionLog.target_id == target_id,
-            AutomationActionLog.created_at >= since,
-        )
-    )
+    filters.append(AutomationActionLog.created_at >= _utc_now() - timedelta(hours=hours))
+    row = await session.scalar(select(AutomationActionLog.id).where(*filters))
     return row is not None
 
 
@@ -320,7 +316,7 @@ async def _process_account(
             key = username.lower()
             if key in own_usernames:
                 continue
-            if await _seen_recently(session, automation.id, account.id, key, hours=skip_hours):
+            if await _seen_recently(session, automation.id, key, hours=skip_hours):
                 continue
             try:
                 entity = await client.get_entity(username)
@@ -337,6 +333,10 @@ async def _process_account(
                 )
                 continue
             if not is_primeable_user(entity):
+                continue
+            from .task_dedup import entity_is_bot_or_userbot
+
+            if bool(cfg.get("skip_bots", True)) and await entity_is_bot_or_userbot(client, entity):
                 continue
             try:
                 outcome = await execute_with_telegram_retry(
@@ -421,6 +421,8 @@ async def run_masspriming_pass(automation_id: int, run_config: dict[str, Any] | 
             for account, _pool in pairs
             if (account.username or "").strip()
         }
+        workers: list[int] = []
+        by_id: dict[int, tuple[SocialAccount, PoolAccount | None]] = {}
         for account, pool in pairs:
             if allowed and account.id not in allowed:
                 continue
@@ -428,8 +430,23 @@ async def run_masspriming_pass(automation_id: int, run_config: dict[str, Any] | 
                 continue
             if not account.is_active or account.is_banned or account.is_frozen or getattr(account, "is_spamblocked", False):
                 continue
+            if skip_account_for_module(cfg, account, pool):
+                continue
+            if not account.session_file_path:
+                continue
+            workers.append(account.id)
+            by_id[account.id] = (account, pool)
+        if not workers:
+            return {"status": "skipped", "reason": "no_accounts", "primed": 0}
+        from .task_dedup import load_unique_assign, store_unique_assign, unique_assign
+
+        assignment = unique_assign(workers, targets, load_unique_assign(automation, "masspriming"))
+        store_unique_assign(automation, "masspriming", assignment)
+        await session.commit()
+        for account_id, slice_targets in assignment.items():
+            account, pool = by_id[account_id]
             try:
-                added = await _process_account(session, automation, account, pool, cfg, targets, own)
+                added = await _process_account(session, automation, account, pool, cfg, slice_targets, own)
             except Exception as exc:
                 logger.exception("Masspriming failed for account %s: %s", account.id, exc)
                 continue

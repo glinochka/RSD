@@ -416,7 +416,7 @@ const CustomAutomationParserPage = () => {
           <div className="nc-setting">
             <div className="nc-setting-copy">
               <strong>Базовые фильтры</strong>
-              <span>Отсекаем служебные и мёртвые аккаунты Telegram</span>
+              <span>Отсекаем Telegram-ботов, юзерботов со ссылкой в био и мёртвые аккаунты</span>
             </div>
             <div className="nc-checks">
               <UbtCheck checked={Boolean(settings.skip_bots)} onChange={(value) => persistFlag({ skip_bots: value })}>Пропустить ботов</UbtCheck>

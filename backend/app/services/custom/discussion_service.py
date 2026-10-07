@@ -38,7 +38,15 @@ from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from .telegram_invite import chat_entity_key
-from ...alembic.models import AutomationActionLog, ChatTarget, CustomPrompt, PoolAccount, PromptType, SocialAccount
+from ...alembic.models import (
+    AutomationActionLog,
+    ChatTarget,
+    CustomAutomation,
+    CustomPrompt,
+    PoolAccount,
+    PromptType,
+    SocialAccount,
+)
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -435,6 +443,7 @@ async def process_chat_target(
     delay_min, delay_max = _delay_bounds(cfg)
     allowed_accounts = set(_as_int_list(cfg.get("account_ids")))
     blocked_accounts = set(_as_int_list(cfg.get("blacklisted_account_ids")))
+    automation = await session.get(CustomAutomation, automation_id)
 
     tried: set[int] = set()
     messages = []
@@ -449,6 +458,10 @@ async def process_chat_target(
         if allowed_accounts and reader.id not in allowed_accounts:
             continue
         if reader.id in blocked_accounts:
+            continue
+        from .task_dedup import account_owns_chat
+
+        if automation and not account_owns_chat(automation, "neurochatting", reader.id, chat_target.id):
             continue
         pool = await session.scalar(
             select(PoolAccount).where(
@@ -612,6 +625,15 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
                 )
                 if is_group_chat(chat)
             ]
+        from .task_dedup import persist_unique_chats
+
+        persist_unique_chats(
+            automation,
+            "neurochatting",
+            _as_int_list(cfg.get("account_ids")),
+            [chat.id for chat in chats],
+        )
+        await session.commit()
         for chat_target in chats:
             try:
                 res = await process_chat_target(session, automation_id, chat_target, max_daily, run_config=cfg)

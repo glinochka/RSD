@@ -164,7 +164,7 @@ async def _send_line(
     account: SocialAccount,
     recipient: str,
     text: str,
-) -> bool:
+) -> bool | str:
     if not account.session_file_path:
         return False
     session_path = _media_root() / account.session_file_path
@@ -174,10 +174,17 @@ async def _send_line(
     if len(body) < 2:
         return False
     peer = _recipient_entity_key(recipient)
+    skip_peer = False
 
     async def _do_send():
+        nonlocal skip_peer
         async with TelegramAccountClient.for_account(account) as client:
             entity = await client.get_entity(peer)
+            from .task_dedup import entity_is_bot_or_userbot
+
+            if await entity_is_bot_or_userbot(client, entity):
+                skip_peer = True
+                return None
             await inspect_peer_profile(client, entity)
             return await human_send_reply(client, entity, body, skip_read=True, lab_mode=False)
 
@@ -196,6 +203,8 @@ async def _send_line(
     except Exception as exc:
         logger.warning("DM broadcast send failed peer=%s account=%s: %s", recipient, account.id, exc)
         return False
+    if skip_peer:
+        return "skip"
     record_successful_send(account)
     session.add(
         AutomationActionLog(
@@ -275,48 +284,59 @@ async def run_dm_broadcast_pass(automation_id: int, run_config: dict[str, Any] |
         p_lo, p_hi = _delay_bounds(cfg, "delay_peer_min", "delay_peer_max", 30, 90)
         m_lo, m_hi = _delay_bounds(cfg, "delay_msg_min", "delay_msg_max", 3, 8)
         consecutive_errors = 0
-        rr = 0
-        for recipient in recipients:
-            if sent >= max_messages:
-                break
-            if skip_sent and await _already_sent(session, automation_id, recipient):
-                continue
-            if not accounts:
-                break
-            picked = accounts[rr % len(accounts)]
-            rr += 1
-            if account_should_idle(picked):
-                continue
-            factor = 2 if account_humanization_stage(picked) == STAGE_CAUTIOUS else 1
-            chain = list(messages)
-            if first_mode == "ai":
-                hint = chain[0]["text"] if chain else ""
-                generated = await _generate_ai_line(hint)
-                if generated:
-                    chain = [{"text": generated}, *chain[1:]]
-                elif not chain:
-                    consecutive_errors += 1
-                    if consecutive_errors >= errors_until_stop:
-                        break
-                    continue
-            ok_peer = False
-            for index, item in enumerate(chain):
+        from .task_dedup import load_unique_assign, store_unique_assign, unique_assign
+
+        by_id = {account.id: account for account in accounts}
+        assignment = unique_assign(
+            [account.id for account in accounts],
+            recipients,
+            load_unique_assign(automation, "dm_broadcast"),
+        )
+        store_unique_assign(automation, "dm_broadcast", assignment)
+        await session.commit()
+        for account_id, slice_recipients in assignment.items():
+            picked = by_id[account_id]
+            for recipient in slice_recipients:
                 if sent >= max_messages:
                     break
-                text = fill_dm_vars(apply_spintax(item["text"]), recipient=recipient, account=picked)
-                success = await _send_line(session, automation_id, picked, recipient, text)
-                if success:
-                    sent += 1
-                    ok_peer = True
-                    consecutive_errors = 0
-                    if index < len(chain) - 1:
-                        await asyncio.sleep(random.uniform(m_lo, m_hi) * factor)
-                else:
-                    consecutive_errors += 1
-                    if not skip_errors or consecutive_errors >= errors_until_stop:
-                        return {"status": "stopped", "reason": "errors", "sent": sent, "peers": peers_ok}
-                    break
-            if ok_peer:
-                peers_ok += 1
-                await asyncio.sleep(random.uniform(p_lo, p_hi) * factor)
+                if skip_sent and await _already_sent(session, automation_id, recipient):
+                    continue
+                if account_should_idle(picked):
+                    continue
+                factor = 2 if account_humanization_stage(picked) == STAGE_CAUTIOUS else 1
+                chain = list(messages)
+                if first_mode == "ai":
+                    hint = chain[0]["text"] if chain else ""
+                    generated = await _generate_ai_line(hint)
+                    if generated:
+                        chain = [{"text": generated}, *chain[1:]]
+                    elif not chain:
+                        consecutive_errors += 1
+                        if consecutive_errors >= errors_until_stop:
+                            break
+                        continue
+                ok_peer = False
+                for index, item in enumerate(chain):
+                    if sent >= max_messages:
+                        break
+                    text = fill_dm_vars(apply_spintax(item["text"]), recipient=recipient, account=picked)
+                    success = await _send_line(session, automation_id, picked, recipient, text)
+                    if success == "skip":
+                        break
+                    if success:
+                        sent += 1
+                        ok_peer = True
+                        consecutive_errors = 0
+                        if index < len(chain) - 1:
+                            await asyncio.sleep(random.uniform(m_lo, m_hi) * factor)
+                    else:
+                        consecutive_errors += 1
+                        if not skip_errors or consecutive_errors >= errors_until_stop:
+                            return {"status": "stopped", "reason": "errors", "sent": sent, "peers": peers_ok}
+                        break
+                if ok_peer:
+                    peers_ok += 1
+                    await asyncio.sleep(random.uniform(p_lo, p_hi) * factor)
+            if sent >= max_messages:
+                break
     return {"status": "ok", "sent": sent, "peers": peers_ok}

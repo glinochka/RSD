@@ -108,24 +108,23 @@ async def _views_today(session: AsyncSession, automation_id: int, account_id: in
 async def _seen_recently(
     session: AsyncSession,
     automation_id: int,
-    account_id: int,
     target_id: str,
     *,
     hours: int,
+    account_id: int | None = None,
 ) -> bool:
+    filters = [
+        AutomationActionLog.custom_automation_id == automation_id,
+        AutomationActionLog.action_type == "masslooking",
+        AutomationActionLog.result == "success",
+        AutomationActionLog.target_id == target_id,
+    ]
     if hours <= 0:
         return False
-    since = _utc_now() - timedelta(hours=hours)
-    row = await session.scalar(
-        select(AutomationActionLog.id).where(
-            AutomationActionLog.custom_automation_id == automation_id,
-            AutomationActionLog.social_account_id == account_id,
-            AutomationActionLog.action_type == "masslooking",
-            AutomationActionLog.result == "success",
-            AutomationActionLog.target_id == target_id,
-            AutomationActionLog.created_at >= since,
-        )
-    )
+    if account_id is not None:
+        filters.append(AutomationActionLog.social_account_id == account_id)
+    filters.append(AutomationActionLog.created_at >= _utc_now() - timedelta(hours=hours))
+    row = await session.scalar(select(AutomationActionLog.id).where(*filters))
     return row is not None
 
 
@@ -165,7 +164,7 @@ async def _view_entity(
     source: str,
     skip_hours: int,
 ) -> int:
-    if await _seen_recently(session, automation_id, account.id, target_id, hours=skip_hours):
+    if await _seen_recently(session, automation_id, target_id, hours=skip_hours):
         return 0
     await inspect_peer_profile(client, entity)
     peer, stories = await load_peer_stories(client, entity)
@@ -248,7 +247,9 @@ async def _process_account(
                 stories = list(getattr(packed, "stories", None) or [])
                 peer = getattr(packed, "peer", None)
                 peer_key = f"feed:{getattr(peer, 'user_id', None) or getattr(peer, 'channel_id', None) or viewed}"
-                if await _seen_recently(session, automation.id, account.id, peer_key, hours=skip_hours):
+                if await _seen_recently(
+                    session, automation.id, peer_key, hours=skip_hours, account_id=account.id
+                ):
                     continue
                 await inspect_peer_profile(client, peer)
                 counted = await mark_peer_stories_read(client, peer, stories, lab_mode=False)
@@ -282,6 +283,10 @@ async def _process_account(
                 entity = await telethon.get_entity(username)
             except Exception as exc:
                 logger.debug("Masslooking resolve %s failed: %s", username, exc)
+                continue
+            from .task_dedup import entity_is_bot_or_userbot
+
+            if bool(cfg.get("skip_bots", True)) and await entity_is_bot_or_userbot(client, entity):
                 continue
             added = await _view_entity(
                 session,
@@ -353,6 +358,8 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
                 .where(PoolAccount.custom_automation_id == automation_id)
             )
         ).all()
+        workers: list[int] = []
+        by_id: dict[int, tuple[SocialAccount, PoolAccount | None]] = {}
         for account, _pool in pairs:
             if allowed and account.id not in allowed:
                 continue
@@ -360,8 +367,23 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
                 continue
             if not account.is_active or account.is_banned or account.is_frozen:
                 continue
+            if skip_account_for_module(cfg, account, _pool):
+                continue
+            if not account.session_file_path:
+                continue
+            workers.append(account.id)
+            by_id[account.id] = (account, _pool)
+        if not workers:
+            return {"status": "skipped", "reason": "no_accounts", "views": 0}
+        from .task_dedup import load_unique_assign, store_unique_assign, unique_assign
+
+        assignment = unique_assign(workers, targets, load_unique_assign(automation, "masslooking"))
+        store_unique_assign(automation, "masslooking", assignment)
+        await session.commit()
+        for account_id, slice_targets in assignment.items():
+            account, pool = by_id[account_id]
             try:
-                added = await _process_account(session, automation, account, cfg, targets, _pool)
+                added = await _process_account(session, automation, account, cfg, slice_targets, pool)
             except Exception as exc:
                 logger.exception("Masslooking failed for account %s: %s", account.id, exc)
                 continue
