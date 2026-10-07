@@ -50,9 +50,9 @@ if [[ ! -f docker-compose.yml ]]; then
   exit 1
 fi
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "STOP: dirty working tree on the server. Commit/stash locally, do not mix with prod pull." >&2
-  git status -sb
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "STOP: tracked files are dirty on the server. Commit/stash locally, do not mix with prod pull." >&2
+  git status -sb --untracked-files=no
   exit 1
 fi
 
