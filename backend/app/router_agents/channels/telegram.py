@@ -475,6 +475,8 @@ async def userbot_qr_verify_2fa(
     qr_state = await get_qr_status(auth_id=str(token_data["auth_id"]))
     if qr_state.get("session_string"):
         pending_session = str(qr_state["session_string"])
+    elif qr_state.get("pending_session_string"):
+        pending_session = str(qr_state["pending_session_string"])
 
     try:
         result = await complete_qr_2fa(
@@ -482,6 +484,7 @@ async def userbot_qr_verify_2fa(
             api_hash=api_hash,
             session_string=pending_session,
             password=payload.password,
+            auth_id=str(token_data["auth_id"]),
         )
     except TelegramUserbotAuthError as exc:
         raise _userbot_auth_http_error(exc) from exc

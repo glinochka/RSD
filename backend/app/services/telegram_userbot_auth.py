@@ -90,6 +90,7 @@ class _QrAuthState:
     api_hash: str = ""
     error: str = ""
     me: dict[str, Any] | None = None
+    client: Any = field(default=None, repr=False)
     updated_at: float = field(default_factory=time.time)
 
 
@@ -300,12 +301,27 @@ def _success_payload(*, session_string: str, api_id: int, api_hash: str, me: Any
     }
 
 
+async def _disconnect_qr_client(client: Any) -> None:
+    if client is None:
+        return
+    try:
+        await client.disconnect()
+    except Exception:
+        pass
+
+
 async def _purge_stale_qr_states() -> None:
     now = time.time()
+    stale_clients: list[Any] = []
     async with _qr_lock:
         stale = [k for k, v in _qr_states.items() if now - v.updated_at > _QR_TTL_SECONDS]
         for key in stale:
-            _qr_states.pop(key, None)
+            state = _qr_states.pop(key, None)
+            if state is not None and state.client is not None:
+                stale_clients.append(state.client)
+                state.client = None
+    for client in stale_clients:
+        await _disconnect_qr_client(client)
 
 
 async def _set_qr_state(auth_id: str, **kwargs: Any) -> None:
@@ -329,6 +345,7 @@ async def _run_qr_wait(
 ) -> None:
     from telethon.errors import SessionPasswordNeededError
 
+    keep_client = False
     try:
         await qr_login.wait(timeout=QR_WAIT_TIMEOUT_SECONDS)
         if await client.is_user_authorized():
@@ -342,10 +359,12 @@ async def _run_qr_wait(
                 api_hash=api_hash,
                 me=_profile_from_me(me) if me else None,
                 error="",
+                client=None,
             )
         else:
-            await _set_qr_state(auth_id, status="error", error="Сессия не авторизована после сканирования QR")
+            await _set_qr_state(auth_id, status="error", error="Сессия не авторизована после сканирования QR", client=None)
     except SessionPasswordNeededError:
+        # 2FA must be signed on THIS live connection. Disconnecting unregisters the QR auth key.
         await _set_qr_state(
             auth_id,
             status="need_2fa",
@@ -353,17 +372,17 @@ async def _run_qr_wait(
             api_id=api_id,
             api_hash=api_hash,
             error="",
+            client=client,
         )
+        keep_client = True
     except asyncio.TimeoutError:
-        await _set_qr_state(auth_id, status="expired", error="Время ожидания сканирования QR истекло")
+        await _set_qr_state(auth_id, status="expired", error="Время ожидания сканирования QR истекло", client=None)
     except Exception as exc:
         logger.warning("telegram userbot QR wait failed auth_id=%s: %s", auth_id, exc, exc_info=True)
-        await _set_qr_state(auth_id, status="error", error=str(exc))
+        await _set_qr_state(auth_id, status="error", error=str(exc), client=None)
     finally:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
+        if not keep_client:
+            await _disconnect_qr_client(client)
 
 
 async def start_qr_login(
@@ -461,6 +480,7 @@ async def get_qr_status(*, auth_id: str) -> dict[str, Any]:
             }
         )
     elif state.status == "need_2fa" and state.session_string:
+        payload["session_string"] = state.session_string
         payload["pending_session_string"] = state.session_string
     return payload
 
@@ -472,37 +492,86 @@ async def complete_qr_2fa(
     session_string: str,
     password: str,
     proxy: dict | None = None,
+    auth_id: str | None = None,
 ) -> dict[str, Any]:
-    from telethon.errors import PasswordHashInvalidError
+    from telethon.errors import AuthKeyUnregisteredError, PasswordHashInvalidError
+
+    try:
+        from telethon.errors import AuthKeyInvalidError
+    except Exception:
+        AuthKeyInvalidError = type("AuthKeyInvalidError", (Exception,), {})
 
     pwd = (password or "").strip()
     if not pwd:
         raise TelegramUserbotAuthError("Укажите пароль 2FA", status_code=422)
 
-    client, resolved_id, resolved_hash = create_telegram_client(
-        api_id=api_id,
-        api_hash=api_hash,
-        session_string=session_string,
-        proxy=proxy,
-    )
-    try:
+    live_client = None
+    if auth_id:
+        async with _qr_lock:
+            state = _qr_states.get(auth_id)
+            if state is not None:
+                live_client = state.client
+                if state.api_id:
+                    api_id = int(state.api_id)
+                if state.api_hash:
+                    api_hash = str(state.api_hash)
+
+    owns_client = live_client is None
+    if live_client is not None:
+        client = live_client
+        resolved_id, resolved_hash = int(api_id), str(api_hash)
+    else:
+        client, resolved_id, resolved_hash = create_telegram_client(
+            api_id=api_id,
+            api_hash=api_hash,
+            session_string=session_string,
+            proxy=proxy,
+        )
         await client.connect()
+
+    keep_alive = False
+    try:
         try:
             await client.sign_in(password=pwd)
         except PasswordHashInvalidError:
+            keep_alive = not owns_client
             raise TelegramUserbotAuthError("Неверный пароль 2FA", status_code=422) from None
+        except (AuthKeyUnregisteredError, AuthKeyInvalidError):
+            raise TelegramUserbotAuthError(
+                "QR-сессия истекла. Покажите новый QR-код и сразу введите пароль 2FA.",
+                status_code=422,
+            ) from None
         if not await client.is_user_authorized():
             raise TelegramUserbotAuthError("Не удалось авторизовать сессию с паролем 2FA")
         me = await client.get_me()
         final_session = client.session.save()
+        if auth_id:
+            await _set_qr_state(
+                auth_id,
+                status="success",
+                session_string=final_session,
+                me=_profile_from_me(me) if me else None,
+                error="",
+                client=None,
+            )
         return _success_payload(
             session_string=final_session,
             api_id=resolved_id,
             api_hash=resolved_hash,
             me=me,
         )
+    except TelegramUserbotAuthError:
+        raise
+    except Exception as exc:
+        raise TelegramUserbotAuthError(f"Не удалось подтвердить 2FA Telegram: {exc}", status_code=422) from exc
     finally:
-        await client.disconnect()
+        if not keep_alive:
+            await _disconnect_qr_client(client)
+            if auth_id:
+                async with _qr_lock:
+                    state = _qr_states.get(auth_id)
+                    if state is not None and state.client is client:
+                        state.client = None
 
 
 def _find_tdata_dir(root: Path) -> Path | None:

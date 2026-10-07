@@ -16,7 +16,7 @@ import '../../../styles/customSolutionNav.css';
 const PAGE_SIZES = [25, 50, 100];
 const ACCEPT = '.zip,.csv,.session';
 const PROXY_COUNTRY_OPTIONS = [
-  { value: '', label: 'Авто (из строки или IP)' },
+          { value: '', label: 'Авто (страна из строки)' },
   { value: 'FI', label: 'Финляндия' },
   { value: 'DE', label: 'Германия' },
   { value: 'NL', label: 'Нидерланды' },
@@ -973,7 +973,7 @@ const CustomAutomationAccountsPage = () => {
                   <p className="form-hint">
                     В пуле сейчас: {poolProxies.length || 'пусто'}. Можно socks5/http, IPv4/IPv6.
                     Если поставщик пишет HTTP-порт 1xxxx для SOCKS5 — первую цифру поднимаем сами, когда без этого порт мёртвый.
-                    Автоподстановка берёт прокси той же страны или региона (Европа, СА, ЮА, Африка, Азия).
+                    Автоподстановка берёт ближайшее гео по номеру аккаунта (для РФ — Финляндия, а не Индия).
                   </p>
                   {proxyMessage ? <p className="form-hint">{proxyMessage}</p> : null}
                   <div className="form-group">

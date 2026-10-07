@@ -232,6 +232,9 @@ class AccountHealthWorker:
             social_account.current_bio = info.get("bio") or social_account.current_bio
             social_account.friends_count = info.get("dialogs_count")
             social_account.activity_score = self._activity_score(info)
+            from .proxy_service import rebind_account_proxy_if_far
+
+            await rebind_account_proxy_if_far(session, pool_account, social_account)
 
         if spam_state is not None:
             self._apply_spam_state(social_account, spam_state)

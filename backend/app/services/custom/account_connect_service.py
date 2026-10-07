@@ -67,6 +67,7 @@ def _create_qr_token(
     auth_id: str,
     pending_session: str,
     proxy_id: int | None = None,
+    proxy_locked: bool = False,
 ) -> str:
     return custom_account_qr_auth_token.create(
         automation_id=int(automation_id),
@@ -75,6 +76,7 @@ def _create_qr_token(
         auth_id=str(auth_id),
         encrypted_pending_session=encrypt_token(pending_session or ""),
         proxy_id=int(proxy_id) if proxy_id else 0,
+        proxy_locked=1 if proxy_locked else 0,
     )
 
 
@@ -96,6 +98,7 @@ def _create_sms_token(
     pending_session: str,
     proxy_id: int | None = None,
     password_pending: bool = False,
+    proxy_locked: bool = False,
 ) -> str:
     return custom_account_sms_auth_token.create(
         automation_id=int(automation_id),
@@ -106,6 +109,7 @@ def _create_sms_token(
         encrypted_pending_session=encrypt_token(pending_session or ""),
         proxy_id=int(proxy_id) if proxy_id else 0,
         password_pending=1 if password_pending else 0,
+        proxy_locked=1 if proxy_locked else 0,
     )
 
 
@@ -142,6 +146,7 @@ async def persist_authorized_session(
     session_string: str,
     me: dict[str, Any] | None = None,
     preferred_proxy_id: int | None = None,
+    lock_preferred: bool = True,
 ) -> tuple[PoolAccount, SocialAccount, bool]:
     async with _persist_lock:
         existing = await _load_persisted(session, auth_id, automation_id)
@@ -157,6 +162,7 @@ async def persist_authorized_session(
                 display_name=_display_name(me),
                 telegram_id=_telegram_id(me),
                 preferred_proxy_id=preferred_proxy_id,
+                lock_preferred=lock_preferred,
             )
         except ValueError as exc:
             raise TelegramUserbotAuthError(str(exc)) from exc
@@ -189,6 +195,14 @@ def _token_proxy_id(token_data: dict[str, Any]) -> int | None:
     return value or None
 
 
+def _token_proxy_locked(token_data: dict[str, Any]) -> bool:
+    raw = token_data.get("proxy_locked")
+    try:
+        return bool(int(raw or 0))
+    except (TypeError, ValueError):
+        return False
+
+
 async def start_account_qr(
     session: AsyncSession,
     automation_id: int,
@@ -198,6 +212,7 @@ async def start_account_qr(
 ) -> dict[str, Any]:
     from .proxy_service import resolve_connect_proxy
 
+    proxy_locked = bool((proxy_line or "").strip() or proxy_id)
     proxy_id, proxy = await resolve_connect_proxy(
         session, automation_id, proxy_id=proxy_id, proxy_line=proxy_line
     )
@@ -220,6 +235,7 @@ async def start_account_qr(
         auth_id=auth_id,
         pending_session=pending,
         proxy_id=proxy_id,
+        proxy_locked=proxy_locked,
     )
     payload: dict[str, Any] = {
         "auth_token": auth_token,
@@ -240,6 +256,7 @@ async def start_account_qr(
             session_string=pending,
             me=me,
             preferred_proxy_id=proxy_id,
+            lock_preferred=proxy_locked,
         )
         payload["pool_account"] = pool_account
         payload["social_account"] = social_account
@@ -282,6 +299,7 @@ async def poll_account_qr(
             session_string=session_string,
             me=me,
             preferred_proxy_id=_token_proxy_id(token_data),
+            lock_preferred=_token_proxy_locked(token_data),
         )
         payload["pool_account"] = pool_account
         payload["social_account"] = social_account
@@ -305,6 +323,8 @@ async def verify_account_qr_2fa(
     qr_state = await get_qr_status(auth_id=auth_id)
     if qr_state.get("session_string"):
         pending_session = str(qr_state["session_string"])
+    elif qr_state.get("pending_session_string"):
+        pending_session = str(qr_state["pending_session_string"])
     from .proxy_service import load_telethon_proxy
 
     proxy_id, proxy = await load_telethon_proxy(
@@ -318,6 +338,7 @@ async def verify_account_qr_2fa(
         session_string=pending_session,
         password=password,
         proxy=proxy,
+        auth_id=auth_id,
     )
     session_string = str(result.get("session_string") or "").strip()
     if not session_string:
@@ -330,6 +351,7 @@ async def verify_account_qr_2fa(
         session_string=session_string,
         me=me,
         preferred_proxy_id=proxy_id,
+        lock_preferred=_token_proxy_locked(token_data),
     )
     return pool_account, social_account
 
@@ -352,8 +374,13 @@ async def request_account_sms(
     except Exception as exc:
         raise TelegramUserbotAuthError(f"Telethon не установлен на сервере: {exc}") from exc
 
+    proxy_locked = bool((proxy_line or "").strip() or proxy_id)
     proxy_id, proxy = await resolve_connect_proxy(
-        session, automation_id, proxy_id=proxy_id, proxy_line=proxy_line
+        session,
+        automation_id,
+        proxy_id=proxy_id,
+        proxy_line=proxy_line,
+        phone=phone_number.strip(),
     )
     await session.commit()
     client, api_id, api_hash = create_telegram_client(prefer_desktop=True, proxy=proxy)
@@ -387,6 +414,7 @@ async def request_account_sms(
         phone_code_hash=str(phone_code_hash),
         pending_session=pending_session_string,
         proxy_id=proxy_id,
+        proxy_locked=proxy_locked,
     )
     return {"auth_token": auth_token}
 
@@ -414,6 +442,7 @@ async def verify_account_sms(
 
     try:
         from telethon.errors import (
+            PasswordHashInvalidError,
             PhoneCodeExpiredError,
             PhoneCodeInvalidError,
             SessionPasswordNeededError,
@@ -436,6 +465,8 @@ async def verify_account_sms(
         proxy=proxy,
     )
 
+    proxy_locked = _token_proxy_locked(token_data)
+
     def _twofa_needed(pending: str) -> TelegramUserbotAuthError:
         next_token = _create_sms_token(
             automation_id=automation_id,
@@ -446,10 +477,29 @@ async def verify_account_sms(
             pending_session=pending,
             proxy_id=proxy_id,
             password_pending=True,
+            proxy_locked=proxy_locked,
         )
         return TelegramUserbotAuthError(
             "Для этого аккаунта включен пароль 2FA. Введите пароль и подтвердите ещё раз.",
             status_code=409,
+            extra={"need_2fa": True, "auth_token": next_token},
+        )
+
+    def _wrong_2fa(pending: str) -> TelegramUserbotAuthError:
+        next_token = _create_sms_token(
+            automation_id=automation_id,
+            api_id=api_id,
+            api_hash=api_hash,
+            phone_number=phone_number,
+            phone_code_hash=phone_code_hash,
+            pending_session=pending,
+            proxy_id=proxy_id,
+            password_pending=True,
+            proxy_locked=proxy_locked,
+        )
+        return TelegramUserbotAuthError(
+            "Неверный пароль 2FA. Это облачный пароль Telegram, не код из SMS.",
+            status_code=422,
             extra={"need_2fa": True, "auth_token": next_token},
         )
 
@@ -465,7 +515,12 @@ async def verify_account_sms(
         except SessionPasswordNeededError:
             if not pwd:
                 raise _twofa_needed(client.session.save()) from None
-            await client.sign_in(password=pwd)
+            try:
+                await client.sign_in(password=pwd)
+            except PasswordHashInvalidError:
+                raise _wrong_2fa(client.session.save()) from None
+        except PasswordHashInvalidError:
+            raise _wrong_2fa(client.session.save()) from None
         except PhoneCodeInvalidError:
             raise TelegramUserbotAuthError("Неверный код подтверждения Telegram") from None
         except PhoneCodeExpiredError:
@@ -496,5 +551,6 @@ async def verify_account_sms(
         session_string=session_string,
         me=profile,
         preferred_proxy_id=proxy_id,
+        lock_preferred=proxy_locked,
     )
     return pool_account, social_account

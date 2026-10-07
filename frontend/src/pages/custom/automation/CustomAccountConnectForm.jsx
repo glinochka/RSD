@@ -209,7 +209,7 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
       }
       if (err.status === 409 || err.detail?.need_2fa || /2FA/i.test(err.message || '')) {
         setSmsNeeds2fa(true);
-        setError('Введите пароль 2FA и подтвердите ещё раз');
+        setError(err.message || 'Введите пароль 2FA и подтвердите ещё раз');
       } else {
         setError(err.message || 'Не удалось подтвердить код');
       }

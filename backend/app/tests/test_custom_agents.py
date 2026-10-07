@@ -4256,6 +4256,80 @@ class TestAccountQrConnect:
         assert saved is not None
         assert saved.session_file_path
 
+    async def test_qr_2fa_uses_live_client_and_maps_unregistered_key(self):
+        from types import SimpleNamespace
+
+        from app.services import telegram_userbot_auth as tua
+        from app.services.telegram_userbot_auth import TelegramUserbotAuthError
+
+        class LiveClient:
+            def __init__(self):
+                self.disconnected = False
+                self.password = None
+
+            async def sign_in(self, password):
+                self.password = password
+
+            async def is_user_authorized(self):
+                return True
+
+            async def get_me(self):
+                return SimpleNamespace(id=9, username="qr2fa", first_name="Q", last_name="", phone="+1")
+
+            async def disconnect(self):
+                self.disconnected = True
+
+            class session:
+                @staticmethod
+                def save():
+                    return "1Alivedone"
+
+        live = LiveClient()
+        tua._qr_states["live-2fa"] = tua._QrAuthState(
+            status="need_2fa",
+            session_string="1Apend",
+            api_id=2040,
+            api_hash="hash",
+            client=live,
+        )
+        result = await tua.complete_qr_2fa(
+            auth_id="live-2fa",
+            api_id=2040,
+            api_hash="hash",
+            session_string="1Apend",
+            password="cloud-pass",
+        )
+        assert result["username"] == "qr2fa"
+        assert result["session_string"] == "1Alivedone"
+        assert live.password == "cloud-pass"
+        assert live.disconnected is True
+        assert tua._qr_states["live-2fa"].client is None
+
+        class DeadClient:
+            async def connect(self):
+                return None
+
+            async def sign_in(self, password):
+                from telethon.errors import AuthKeyUnregisteredError
+
+                raise AuthKeyUnregisteredError(request=None)
+
+            async def disconnect(self):
+                return None
+
+        with patch(
+            "app.services.telegram_userbot_auth.create_telegram_client",
+            return_value=(DeadClient(), 2040, "hash"),
+        ):
+            with pytest.raises(TelegramUserbotAuthError, match="QR-сессия истекла") as caught:
+                await tua.complete_qr_2fa(
+                    api_id=2040,
+                    api_hash="hash",
+                    session_string="1Astale",
+                    password="x",
+                )
+        assert caught.value.status_code == 422
+
 
 class TestAccountSmsConnect:
     async def test_sms_verify_without_2fa_password_is_409_not_500(
@@ -4328,6 +4402,62 @@ class TestAccountSmsConnect:
         assert detail["need_2fa"] is True
         assert "2FA" in detail["message"]
         assert detail["auth_token"]
+
+    async def test_sms_verify_wrong_2fa_password_is_422(self, monkeypatch, custom_automation: CustomAutomation):
+        from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
+        from app.services.custom import account_connect_service
+        from app.services.telegram_userbot_auth import TelegramUserbotAuthError
+
+        token = account_connect_service._create_sms_token(
+            automation_id=custom_automation.id,
+            api_id=2040,
+            api_hash="hash",
+            phone_number="+79990001122",
+            phone_code_hash="abc",
+            pending_session="1Apending",
+        )
+
+        class FakeSession:
+            def save(self):
+                return "1Aafter2fa"
+
+        class FakeClient:
+            def __init__(self):
+                self.session = FakeSession()
+
+            async def connect(self):
+                return None
+
+            async def disconnect(self):
+                return None
+
+            async def sign_in(self, **kwargs):
+                if kwargs.get("password"):
+                    raise PasswordHashInvalidError(request=None)
+                raise SessionPasswordNeededError(request=None)
+
+        monkeypatch.setattr(
+            account_connect_service,
+            "create_telegram_client",
+            lambda **kwargs: (FakeClient(), 2040, "hash"),
+        )
+        monkeypatch.setattr(
+            "app.services.custom.proxy_service.load_telethon_proxy",
+            AsyncMock(return_value=(None, None)),
+        )
+
+        with pytest.raises(TelegramUserbotAuthError) as caught:
+            await account_connect_service.verify_account_sms(
+                None,
+                custom_automation.id,
+                auth_token=token,
+                code="12345",
+                password="wrong-cloud",
+            )
+        assert caught.value.status_code == 422
+        assert "облачный пароль" in str(caught.value)
+        assert caught.value.extra.get("need_2fa") is True
+        assert caught.value.extra.get("auth_token")
 
     async def test_join_pending_has_custom_automation_symbol(self):
         from app.services.custom import chat_join_service
@@ -5941,6 +6071,10 @@ class TestAccountProxies:
         assert colon_country["country_code"] == "DE"
         assert colon_country["password"] == "secret"
 
+        named_country = parse_proxy_line("11.0.0.2:1080:login:secret:Finland")
+        assert named_country["country_code"] == "FI"
+        assert named_country["password"] == "secret"
+
         v6 = parse_proxy_line("socks5://u:p@[2001:db8::1]:1080")
         assert v6["host"] == "2001:db8::1"
         assert v6["ip_version"] == 6
@@ -5979,12 +6113,18 @@ class TestAccountProxies:
         assert http_kept["scheme"] == "http"
         assert http_kept["port"] == 11625
 
+        from app.services.custom.proxy_geo import geo_distance_km, proxy_fit_key
+
         assert country_from_phone("+358401234567") == "FI"
         assert country_from_phone("+79991234567") == "RU"
+        assert country_from_phone("89161234567") == "RU"
         assert country_from_phone("+12025551234") == "US"
         assert proxy_fit_score("RU", "FI") == 1
         assert proxy_fit_score("RU", "US") == 3
         assert proxy_fit_score("US", "US") == 0
+        assert proxy_fit_key("RU", "FI") < proxy_fit_key("RU", "IN")
+        assert proxy_fit_key("RU", None) < proxy_fit_key("RU", "IN")
+        assert geo_distance_km("RU", "FI") < geo_distance_km("RU", "IN")
 
     async def test_geo_prefers_same_country_then_region(
         self,
@@ -6024,6 +6164,100 @@ class TestAccountProxies:
         )
         assert tagged.country_code == "FI"
         assert tagged.region == "europe"
+
+    async def test_auto_picks_finland_not_idle_india_for_ru(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from unittest.mock import AsyncMock
+
+        from app.alembic.models import CustomProxy, PoolAccount
+        from app.services.custom import proxy_service as ps
+        from app.services.custom.proxy_service import (
+            assign_proxy_to_new_account,
+            pick_least_loaded_proxy,
+            rebind_account_proxy_if_far,
+            replace_proxy_list,
+            resolve_connect_proxy,
+        )
+
+        monkeypatch.setattr(ps, "probe_proxy_tcp", AsyncMock(return_value=True))
+        monkeypatch.setattr(ps, "_drop_live_session", AsyncMock())
+
+        ru = await self._add_account(
+            test_session, custom_automation, username="geo_load_ru", phone="+79991112233"
+        )
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.9.9.1:1080 IN\n10.9.9.2:1080 FI",
+        )
+        await test_session.commit()
+        by_country = {
+            row.country_code: row
+            for row in (
+                await test_session.execute(
+                    select(CustomProxy).where(CustomProxy.custom_automation_id == custom_automation.id)
+                )
+            ).scalars().all()
+        }
+        ru_pool = await test_session.scalar(select(PoolAccount).where(PoolAccount.social_account_id == ru.id))
+        assert ru_pool.proxy_id == by_country["FI"].id
+
+        _proxy_id, payload = await resolve_connect_proxy(
+            test_session, custom_automation.id, phone="+79994445566"
+        )
+        assert payload["addr"] == "10.9.9.2"
+
+        dominant = await pick_least_loaded_proxy(test_session, custom_automation.id)
+        assert dominant.country_code == "FI"
+
+        extra = await self._add_account(
+            test_session, custom_automation, username="geo_unlocked", phone="+79997778899"
+        )
+        extra_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == extra.id)
+        )
+        chosen = await assign_proxy_to_new_account(
+            test_session,
+            extra_pool,
+            extra,
+            preferred_proxy_id=by_country["IN"].id,
+            lock_preferred=False,
+        )
+        assert chosen.country_code == "FI"
+
+        from app.services.custom.proxy_service import bind_account_proxy
+
+        bind_account_proxy(ru_pool, ru, by_country["IN"])
+        await test_session.flush()
+        moved = await rebind_account_proxy_if_far(test_session, ru_pool, ru)
+        assert moved is not None
+        assert moved.country_code == "FI"
+
+    async def test_untagged_proxy_beats_far_india_for_ru(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomProxy, PoolAccount
+        from app.services.custom.proxy_service import replace_proxy_list
+
+        ru = await self._add_account(
+            test_session, custom_automation, username="geo_untagged_ru", phone="+79991110000"
+        )
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.11.11.1:1080 IN\n10.11.11.2:1080",
+        )
+        await test_session.commit()
+        ru_pool = await test_session.scalar(select(PoolAccount).where(PoolAccount.social_account_id == ru.id))
+        chosen = await test_session.get(CustomProxy, ru_pool.proxy_id)
+        assert chosen.host == "10.11.11.2"
+        assert chosen.country_code is None
 
     async def test_settings_roundtrip_even_distribution(
         self,

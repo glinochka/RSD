@@ -124,6 +124,7 @@ async def _create_social_account(
     encrypted_session: str,
     session_file_path: str | None,
     preferred_proxy_id: int | None = None,
+    lock_preferred: bool = True,
 ) -> SocialAccount:
     social_account = SocialAccount(
         provider=provider,
@@ -157,6 +158,7 @@ async def _create_social_account(
         pool_account,
         social_account,
         preferred_proxy_id=preferred_proxy_id,
+        lock_preferred=lock_preferred,
     )
     from .custom.chat_membership_service import ensure_memberships_for_account
 
@@ -175,6 +177,7 @@ async def _save_session_file(
     username: str | None = None,
     display_name: str | None = None,
     preferred_proxy_id: int | None = None,
+    lock_preferred: bool = True,
 ) -> SocialAccount:
     sessions_dir = _automation_sessions_dir(automation_id)
     safe_name = _safe_filename(archive_name)
@@ -194,6 +197,7 @@ async def _save_session_file(
         encrypted_session=encrypted,
         session_file_path=relative_path,
         preferred_proxy_id=preferred_proxy_id,
+        lock_preferred=lock_preferred,
     )
 
 
@@ -269,6 +273,7 @@ async def add_account_from_session_string(
     display_name: str | None = None,
     telegram_id: int | None = None,
     preferred_proxy_id: int | None = None,
+    lock_preferred: bool = True,
 ) -> tuple[PoolAccount, SocialAccount]:
     """Persist an authorized StringSession as a pool .session account."""
     data = await asyncio.to_thread(string_session_to_sqlite_bytes, session_string)
@@ -295,7 +300,7 @@ async def add_account_from_session_string(
         social.display_name = display_name or social.display_name
         social.is_active = True
         social.updated_at = _utc_now()
-        if not pool_account.proxy_id:
+        if not pool_account.proxy_id or not lock_preferred:
             from .custom.proxy_service import assign_proxy_to_new_account
 
             await assign_proxy_to_new_account(
@@ -303,6 +308,7 @@ async def add_account_from_session_string(
                 pool_account,
                 social,
                 preferred_proxy_id=preferred_proxy_id,
+                lock_preferred=lock_preferred,
             )
         await session.flush()
         await session.commit()
@@ -321,6 +327,7 @@ async def add_account_from_session_string(
         username=username,
         display_name=display_name,
         preferred_proxy_id=preferred_proxy_id,
+        lock_preferred=lock_preferred,
     )
     pool_account = await session.scalar(
         select(PoolAccount).where(

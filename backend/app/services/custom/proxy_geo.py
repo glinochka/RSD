@@ -1,6 +1,7 @@
 """Country / region matching for UBT proxy assignment."""
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -48,6 +49,54 @@ COUNTRY_REGION: dict[str, str] = {
     "UZ": REGION_ASIA, "VN": REGION_ASIA, "YE": REGION_ASIA,
     "AU": REGION_ASIA, "NZ": REGION_ASIA, "PG": REGION_ASIA, "FJ": REGION_ASIA,
 }
+
+# Approximate country centroids (capital / geographic middle) for nearest-proxy ranking.
+_COUNTRY_CENTROIDS: dict[str, tuple[float, float]] = {
+    "AD": (42.51, 1.52), "AE": (24.45, 54.38), "AF": (34.53, 69.17), "AL": (41.33, 19.82),
+    "AM": (40.18, 44.51), "AO": (-8.84, 13.23), "AR": (-34.60, -58.38), "AT": (48.21, 16.37),
+    "AU": (-35.28, 149.13), "AZ": (40.41, 49.87), "BA": (43.86, 18.41), "BD": (23.81, 90.41),
+    "BE": (50.85, 4.35), "BG": (42.70, 23.32), "BH": (26.23, 50.59), "BO": (-16.50, -68.15),
+    "BR": (-15.79, -47.88), "BY": (53.90, 27.57), "CA": (45.42, -75.70), "CH": (46.95, 7.45),
+    "CI": (6.83, -5.27), "CL": (-33.45, -70.67), "CM": (3.87, 11.52), "CN": (39.90, 116.41),
+    "CO": (4.71, -74.07), "CR": (9.93, -84.09), "CU": (23.11, -82.37), "CY": (35.19, 33.38),
+    "CZ": (50.08, 14.44), "DE": (52.52, 13.41), "DK": (55.68, 12.57), "DO": (18.49, -69.93),
+    "DZ": (36.75, 3.06), "EC": (-0.18, -78.47), "EE": (59.44, 24.75), "EG": (30.04, 31.24),
+    "ES": (40.42, -3.70), "ET": (9.03, 38.74), "FI": (60.17, 24.94), "FJ": (-18.14, 178.44),
+    "FR": (48.86, 2.35), "GB": (51.51, -0.13), "GE": (41.72, 44.78), "GH": (5.56, -0.20),
+    "GR": (37.98, 23.73), "GT": (14.63, -90.51), "GY": (6.80, -58.16), "HK": (22.32, 114.17),
+    "HN": (14.07, -87.19), "HR": (45.81, 15.98), "HT": (18.54, -72.34), "HU": (47.50, 19.04),
+    "ID": (-6.21, 106.85), "IE": (53.35, -6.26), "IL": (31.77, 35.21), "IN": (28.61, 77.21),
+    "IQ": (33.32, 44.37), "IR": (35.69, 51.39), "IS": (64.15, -21.94), "IT": (41.90, 12.50),
+    "JM": (18.02, -76.79), "JO": (31.95, 35.93), "JP": (35.68, 139.69), "KE": (-1.29, 36.82),
+    "KG": (42.87, 74.59), "KH": (11.56, 104.93), "KR": (37.57, 126.98), "KW": (29.38, 47.99),
+    "KZ": (51.17, 71.43), "LA": (17.98, 102.63), "LB": (33.89, 35.50), "LI": (47.14, 9.52),
+    "LK": (6.93, 79.85), "LT": (54.69, 25.28), "LU": (49.61, 6.13), "LV": (56.95, 24.11),
+    "LY": (32.89, 13.19), "MA": (34.02, -6.84), "MC": (43.74, 7.42), "MD": (47.01, 28.86),
+    "ME": (42.44, 19.26), "MK": (41.99, 21.43), "MM": (19.76, 96.08), "MN": (47.92, 106.92),
+    "MT": (35.90, 14.51), "MX": (19.43, -99.13), "MY": (3.14, 101.69), "NG": (9.08, 7.40),
+    "NI": (12.14, -86.25), "NL": (52.37, 4.90), "NO": (59.91, 10.75), "NP": (27.72, 85.32),
+    "NZ": (-41.29, 174.78), "OM": (23.59, 58.38), "PA": (8.98, -79.52), "PE": (-12.05, -77.04),
+    "PG": (-9.44, 147.18), "PH": (14.60, 120.98), "PK": (33.68, 73.04), "PL": (52.23, 21.01),
+    "PR": (18.47, -66.11), "PS": (31.90, 35.20), "PT": (38.72, -9.14), "PY": (-25.26, -57.58),
+    "QA": (25.29, 51.53), "RO": (44.43, 26.10), "RS": (44.82, 20.46), "RU": (55.76, 37.62),
+    "SA": (24.71, 46.68), "SE": (59.33, 18.07), "SG": (1.35, 103.82), "SI": (46.05, 14.51),
+    "SK": (48.15, 17.11), "SM": (43.94, 12.45), "SN": (14.69, -17.45), "SR": (5.85, -55.20),
+    "SV": (13.69, -89.19), "SY": (33.51, 36.29), "TH": (13.76, 100.50), "TJ": (38.56, 68.77),
+    "TM": (37.95, 58.38), "TN": (36.81, 10.18), "TR": (39.93, 32.86), "TT": (10.66, -61.51),
+    "TW": (25.03, 121.57), "TZ": (-6.16, 35.75), "UA": (50.45, 30.52), "UG": (0.35, 32.58),
+    "UK": (51.51, -0.13), "US": (38.91, -77.04), "UY": (-34.90, -56.19), "UZ": (41.30, 69.24),
+    "VA": (41.90, 12.45), "VE": (10.48, -66.90), "VN": (21.03, 105.85), "XK": (42.66, 21.17),
+    "YE": (15.37, 44.19), "ZA": (-25.75, 28.19), "ZW": (-17.83, 31.05),
+}
+
+# Same country → nearby (FI for RU) → rest of the same region → untagged → other regions.
+_NEARBY_KM = 2500.0
+_FIT_SAME = 0
+_FIT_NEAR = 1
+_FIT_REGION = 2
+_FIT_UNKNOWN_PROXY = 3
+_FIT_OTHER = 4
+_FIT_UNKNOWN_ACCOUNT = 5
 
 _NAME_TO_ISO: dict[str, str] = {
     "finland": "FI", "финляндия": "FI", "suomi": "FI",
@@ -176,10 +225,19 @@ def normalize_country(raw: Any) -> str | None:
     return _NAME_TO_ISO.get(compact)
 
 
-def region_for_country(code: str | None) -> str | None:
-    if not code:
+def _iso_country(code: str | None) -> str | None:
+    text = (code or "").strip().upper()
+    if not text:
         return None
-    key = "GB" if code.upper() == "UK" else code.upper()
+    if text == "UK":
+        text = "GB"
+    return text
+
+
+def region_for_country(code: str | None) -> str | None:
+    key = _iso_country(code)
+    if not key:
+        return None
     return COUNTRY_REGION.get(key)
 
 
@@ -187,6 +245,9 @@ def country_from_phone(raw: Any) -> str | None:
     digits = re.sub(r"\D+", "", str(raw or ""))
     if digits.startswith("00"):
         digits = digits[2:]
+    # Domestic 8XXXXXXXXXX used in RU/KZ. Mobiles 89… stay RU; 76/77 prefixes still win as KZ.
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
     if not digits:
         return None
     for prefix, iso in _CALLING_CODES:
@@ -205,20 +266,47 @@ def split_country_tail(line: str) -> tuple[str, str | None]:
     return (line or "")[: match.start()].strip(), code
 
 
-def proxy_fit_score(account_country: str | None, proxy_country: str | None) -> int:
-    """Lower is better: same country, same region, unknown proxy, other region."""
-    want = (account_country or "").upper() or None
-    have = (proxy_country or "").upper() or None
-    if have == "UK":
-        have = "GB"
-    if want == "UK":
-        want = "GB"
+def geo_distance_km(account_country: str | None, proxy_country: str | None) -> float | None:
+    left = _COUNTRY_CENTROIDS.get(_iso_country(account_country) or "")
+    right = _COUNTRY_CENTROIDS.get(_iso_country(proxy_country) or "")
+    if not left or not right:
+        return None
+    lat1, lon1 = (math.radians(left[0]), math.radians(left[1]))
+    lat2, lon2 = (math.radians(right[0]), math.radians(right[1]))
+    delta_lat = lat2 - lat1
+    delta_lon = lon2 - lon1
+    hav = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(hav)))
+
+
+def proxy_fit_key(account_country: str | None, proxy_country: str | None) -> tuple[int, int]:
+    """Sort key: lower is closer. Distance km is the tie-breaker inside a rank."""
+    want = _iso_country(account_country)
+    have = _iso_country(proxy_country)
+    if not want:
+        return (_FIT_UNKNOWN_ACCOUNT, 0)
+    if not have:
+        return (_FIT_UNKNOWN_PROXY, 50_000)
+    if want == have:
+        return (_FIT_SAME, 0)
+    distance = geo_distance_km(want, have)
+    distance_km = int(distance) if distance is not None else 30_000
+    if distance is not None and distance <= _NEARBY_KM:
+        return (_FIT_NEAR, distance_km)
     want_region = region_for_country(want)
     have_region = region_for_country(have)
-    if want and have and want == have:
-        return 0
     if want_region and have_region and want_region == have_region:
+        return (_FIT_REGION, distance_km)
+    return (_FIT_OTHER, distance_km)
+
+
+def proxy_fit_score(account_country: str | None, proxy_country: str | None) -> int:
+    """Lower is better: same country, nearby/same region, unknown proxy, other region."""
+    rank, _distance = proxy_fit_key(account_country, proxy_country)
+    if rank == _FIT_SAME:
+        return 0
+    if rank in {_FIT_NEAR, _FIT_REGION}:
         return 1
-    if not have:
+    if rank in {_FIT_UNKNOWN_PROXY, _FIT_UNKNOWN_ACCOUNT}:
         return 2
     return 3

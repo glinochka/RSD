@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .proxy_geo import (
     country_from_phone,
     normalize_country,
-    proxy_fit_score,
+    proxy_fit_key,
     region_for_country,
     split_country_tail,
 )
@@ -34,7 +34,6 @@ _last_rotate_at: dict[int, datetime] = {}
 _rotate_locks: dict[int, asyncio.Lock] = {}
 _rotate_locks_guard = asyncio.Lock()
 _ALLOWED_SCHEMES = {"socks5": "socks5", "socks4": "socks4", "http": "http", "https": "http", "socks5h": "socks5"}
-_ISO_FIELD_RE = re.compile(r"^[A-Za-z]{2}$")
 _URL_LINE_RE = re.compile(
     r"^(?P<scheme>https?|socks5h?|socks4)://(?P<body>.+)$",
     re.IGNORECASE,
@@ -119,8 +118,11 @@ def proxy_fingerprint(scheme: str, host: str, port: int, username: str | None) -
 def _split_country_field(parts: list[str]) -> tuple[list[str], str | None]:
     if len(parts) < 5:
         return parts, None
-    code = normalize_country(parts[-1])
-    if not code or not _ISO_FIELD_RE.match(parts[-1].strip()):
+    last = parts[-1].strip()
+    code = normalize_country(last)
+    if not code:
+        return parts, None
+    if len(last) > 2 and not last.isalpha():
         return parts, None
     return parts[:-1], code
 
@@ -518,6 +520,8 @@ async def resolve_account_proxy_choice(
     *,
     proxy_id: int | None = None,
     proxy_line: str | None = None,
+    phone: str | None = None,
+    account: SocialAccount | None = None,
 ) -> CustomProxy | None:
     line = (proxy_line or "").strip()
     if line:
@@ -531,7 +535,12 @@ async def resolve_account_proxy_choice(
         if proxy is None or not proxy.is_active or int(proxy.custom_automation_id) != int(automation_id):
             raise ProxyChoiceError("Прокси не найден в пуле этой автоматизации")
         return proxy
-    return await pick_least_loaded_proxy(session, automation_id)
+    return await pick_least_loaded_proxy(
+        session,
+        automation_id,
+        account=account,
+        phone=phone,
+    )
 
 
 def bind_account_proxy(
@@ -593,16 +602,55 @@ async def rebalance_proxies(
     return {"proxy_count": len(shared), "assigned": assigned}
 
 
+async def _dominant_account_country(session: AsyncSession, automation_id: int) -> str | None:
+    result = await session.execute(
+        select(SocialAccount.phone_number)
+        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            PoolAccount.removed_at.is_(None),
+        )
+    )
+    counts: dict[str, int] = {}
+    for phone in result.scalars().all():
+        code = country_from_phone(phone)
+        if not code:
+            continue
+        counts[code] = counts.get(code, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+
+
+async def _account_country_for_pick(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    account: SocialAccount | None = None,
+    phone: str | None = None,
+    account_country: str | None = None,
+) -> str | None:
+    country = normalize_country(account_country) or country_from_phone(
+        phone or getattr(account, "phone_number", None)
+    )
+    if country:
+        return country
+    return await _dominant_account_country(session, automation_id)
+
+
 def _best_proxy_for_account(
     rows: list[CustomProxy],
     account: SocialAccount | None,
     loads: dict[int, int],
+    *,
+    country: str | None = None,
 ) -> CustomProxy:
-    country = country_from_phone(getattr(account, "phone_number", None))
+    if country is None:
+        country = country_from_phone(getattr(account, "phone_number", None))
     return min(
         rows,
         key=lambda row: (
-            proxy_fit_score(country, getattr(row, "country_code", None)),
+            *proxy_fit_key(country, getattr(row, "country_code", None)),
             loads.get(row.id, 0),
             row.id,
         ),
@@ -615,6 +663,8 @@ async def pick_least_loaded_proxy(
     *,
     proxies: list[CustomProxy] | None = None,
     account: SocialAccount | None = None,
+    phone: str | None = None,
+    account_country: str | None = None,
 ) -> CustomProxy | None:
     source = proxies if proxies is not None else await list_active_proxies(session, automation_id)
     rows = [row for row in source if not _is_dedicated(row)]
@@ -633,7 +683,14 @@ async def pick_least_loaded_proxy(
     for proxy_id in result.scalars().all():
         if proxy_id in counts:
             counts[proxy_id] += 1
-    return _best_proxy_for_account(rows, account, counts)
+    country = await _account_country_for_pick(
+        session,
+        automation_id,
+        account=account,
+        phone=phone,
+        account_country=account_country,
+    )
+    return _best_proxy_for_account(rows, account, counts, country=country)
 
 
 async def assign_proxy_to_new_account(
@@ -642,10 +699,11 @@ async def assign_proxy_to_new_account(
     social_account: SocialAccount,
     *,
     preferred_proxy_id: int | None = None,
+    lock_preferred: bool = True,
 ) -> CustomProxy | None:
     proxies = await list_active_proxies(session, pool_account.custom_automation_id)
     chosen: CustomProxy | None = None
-    if preferred_proxy_id:
+    if lock_preferred and preferred_proxy_id:
         chosen = next((row for row in proxies if row.id == int(preferred_proxy_id)), None)
     if chosen is None:
         chosen = await pick_least_loaded_proxy(
@@ -707,6 +765,7 @@ async def resolve_connect_proxy(
     *,
     proxy_id: int | None = None,
     proxy_line: str | None = None,
+    phone: str | None = None,
 ) -> tuple[int | None, dict[str, Any] | None]:
     explicit = bool((proxy_line or "").strip() or proxy_id)
     proxy = await resolve_account_proxy_choice(
@@ -714,6 +773,7 @@ async def resolve_connect_proxy(
         automation_id,
         proxy_id=proxy_id,
         proxy_line=proxy_line,
+        phone=phone,
     )
     if proxy is None:
         return None, None
@@ -726,9 +786,14 @@ async def resolve_connect_proxy(
         for row in await list_pool_proxies(session, automation_id)
         if row.id != proxy.id
     ]
+    country = await _account_country_for_pick(session, automation_id, phone=phone)
     ranked = sorted(
         pool,
-        key=lambda row: (0 if is_proxy_healthy(row) else 1, row.id),
+        key=lambda row: (
+            0 if is_proxy_healthy(row) else 1,
+            *proxy_fit_key(country, getattr(row, "country_code", None)),
+            row.id,
+        ),
     )
     for row in ranked:
         if await probe_and_fix_proxy(row):
@@ -1000,7 +1065,7 @@ async def recover_dead_proxy(session: AsyncSession, account: SocialAccount) -> C
         ranked = sorted(
             living,
             key=lambda row: (
-                proxy_fit_score(country, getattr(row, "country_code", None)),
+                *proxy_fit_key(country, getattr(row, "country_code", None)),
                 0 if row.id > int(current_id or 0) else 1,
                 row.id,
             ),
@@ -1025,4 +1090,45 @@ async def recover_dead_proxy(session: AsyncSession, account: SocialAccount) -> C
             chosen.port,
         )
         return chosen
+
+
+async def rebind_account_proxy_if_far(
+    session: AsyncSession,
+    pool_account: PoolAccount | None,
+    social_account: SocialAccount,
+) -> CustomProxy | None:
+    """Move auto-assigned accounts off a far proxy once the phone country is known."""
+    if pool_account is None:
+        return None
+    current = await session.get(CustomProxy, int(pool_account.proxy_id)) if pool_account.proxy_id else None
+    if _is_dedicated(current):
+        return None
+    country = country_from_phone(getattr(social_account, "phone_number", None))
+    if not country:
+        return None
+    rows = [
+        row
+        for row in await list_pool_proxies(session, pool_account.custom_automation_id)
+        if is_proxy_healthy(row)
+    ]
+    if not rows:
+        return None
+    best = _best_proxy_for_account(rows, social_account, {row.id: 0 for row in rows}, country=country)
+    current_rank = proxy_fit_key(country, getattr(current, "country_code", None) if current else None)[0]
+    best_rank = proxy_fit_key(country, getattr(best, "country_code", None))[0]
+    if current is not None and current.id == best.id:
+        return None
+    if current is not None and current_rank <= best_rank:
+        return None
+    await _drop_live_session(social_account)
+    bind_account_proxy(pool_account, social_account, best)
+    logger.info(
+        "Rebound account %s proxy %s -> %s (%s) for country %s",
+        social_account.id,
+        getattr(current, "id", None),
+        best.id,
+        best.country_code,
+        country,
+    )
+    return best
 
