@@ -46,7 +46,16 @@ from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry, is_chat_read_lost, log_action_error
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref, _looks_like_invite_hash, _invite_ref
-from ...alembic.models import AccountChatMembership, ChatFolder, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
+from ...alembic.models import (
+    AccountChatMembership,
+    ChatFolder,
+    ChatJoinStatus,
+    ChatMode,
+    ChatSource,
+    ChatTarget,
+    CustomAutomation,
+    SocialAccount,
+)
 
 logger = logging.getLogger(__name__)
 

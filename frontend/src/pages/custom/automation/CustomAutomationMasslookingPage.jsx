@@ -9,6 +9,7 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { DELAY_MAX_SECONDS } from './delayLimits';
 import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -357,9 +358,9 @@ const CustomAutomationMasslookingPage = () => {
               <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.min) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.min)}>Мин</button>
               <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.rec) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.rec)}>Рек.</button>
               <button type="button" className={`nc-chip ${matchesPreset(settings, DELAY_PRESETS.max) ? 'is-on' : ''}`} onClick={() => patch(DELAY_PRESETS.max)}>Макс</button>
-              <Stepper value={settings.delay_min} min={0} max={120} onChange={(value) => patch({ delay_min: value, delay_max: Math.max(value, settings.delay_max) })} />
+              <Stepper value={settings.delay_min} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_min: value, delay_max: Math.max(value, settings.delay_max) })} />
               <span className="nc-muted">до</span>
-              <Stepper value={settings.delay_max} min={settings.delay_min} max={180} onChange={(value) => patch({ delay_max: value })} />
+              <Stepper value={settings.delay_max} min={settings.delay_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_max: value })} />
               <span className="nc-muted">сек</span>
             </div>
           </div>

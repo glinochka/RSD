@@ -9,6 +9,7 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { toggleNumericId, ubtModulePath } from './customNav';
+import { DELAY_MAX_SECONDS } from './delayLimits';
 import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -450,12 +451,12 @@ const CustomAutomationParserPage = () => {
             </div>
             <div className="nc-row">
               <span className="nc-muted">чаты</span>
-              <Stepper value={settings.delay_chat} min={0} max={120} onChange={(value) => patch({ delay_chat: value })} />
+              <Stepper value={settings.delay_chat} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_chat: value })} />
               <span className="nc-muted">с</span>
             </div>
             <div className="nc-row">
               <span className="nc-muted">люди</span>
-              <Stepper value={settings.delay_user} min={0} max={30} onChange={(value) => patch({ delay_user: value })} />
+              <Stepper value={settings.delay_user} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_user: value })} />
               <span className="nc-muted">с</span>
             </div>
           </div>

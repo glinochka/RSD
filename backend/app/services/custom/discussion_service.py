@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .module_delays import DELAY_MAX_SECONDS
 from .chat_scope import (
     apply_entity_metadata,
     commit_chat_scan,
@@ -136,8 +137,8 @@ def _delay_bounds(run_config: dict[str, Any] | None) -> tuple[float, float]:
         high = int(cfg.get("delay_before_max") if cfg.get("delay_before_max") is not None else 60)
     except (TypeError, ValueError):
         high = 60
-    low = max(0, min(low, 3600))
-    high = max(low, min(high, 3600))
+    low = max(0, min(low, DELAY_MAX_SECONDS))
+    high = max(low, min(high, DELAY_MAX_SECONDS))
     return float(low), float(high)
 
 

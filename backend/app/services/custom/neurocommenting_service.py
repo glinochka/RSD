@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .account_roles import account_matches_action
 from .account_pacing import farm_overlap_active_hours
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .chat_inspect_service import probe_comments_readonly
 from .chat_membership_service import (
     account_is_joined,
@@ -236,8 +237,8 @@ def _delay_bounds(run_config: dict[str, Any] | None) -> tuple[float, float]:
         high = int(cfg.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)
     except (TypeError, ValueError):
         high = POST_COMMENT_DELAY_MAX_SECONDS
-    low = max(0, min(low, 3600))
-    high = max(low, min(high, 3600))
+    low = max(0, min(low, DELAY_MAX_SECONDS))
+    high = max(low, min(high, DELAY_MAX_SECONDS))
     return float(low), float(high)
 
 

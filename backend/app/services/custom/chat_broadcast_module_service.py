@@ -20,6 +20,7 @@ from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
 from .job_service import list_jobs
+from .module_delays import DELAY_MAX_SECONDS
 from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
@@ -123,10 +124,10 @@ def normalize_bc_settings(raw: Any) -> dict[str, Any]:
     work_mode = str(incoming.get("work_mode") or "count").strip().lower()
     data["work_mode"] = work_mode if work_mode in {"count", "time"} else "count"
     data["max_messages"] = _clamp_int(incoming.get("max_messages") or 100, 100, lo=1, hi=500)
-    data["delay_group_min"] = _clamp_int(incoming.get("delay_group_min") if incoming.get("delay_group_min") is not None else 30, 30, lo=0, hi=3600)
-    data["delay_group_max"] = max(data["delay_group_min"], _clamp_int(incoming.get("delay_group_max") if incoming.get("delay_group_max") is not None else 90, 90, lo=0, hi=3600))
-    data["delay_msg_min"] = _clamp_int(incoming.get("delay_msg_min") if incoming.get("delay_msg_min") is not None else 3, 3, lo=0, hi=600)
-    data["delay_msg_max"] = max(data["delay_msg_min"], _clamp_int(incoming.get("delay_msg_max") if incoming.get("delay_msg_max") is not None else 8, 8, lo=0, hi=600))
+    data["delay_group_min"] = _clamp_int(incoming.get("delay_group_min") if incoming.get("delay_group_min") is not None else 30, 30, lo=0, hi=DELAY_MAX_SECONDS)
+    data["delay_group_max"] = max(data["delay_group_min"], _clamp_int(incoming.get("delay_group_max") if incoming.get("delay_group_max") is not None else 90, 90, lo=0, hi=DELAY_MAX_SECONDS))
+    data["delay_msg_min"] = _clamp_int(incoming.get("delay_msg_min") if incoming.get("delay_msg_min") is not None else 3, 3, lo=0, hi=DELAY_MAX_SECONDS)
+    data["delay_msg_max"] = max(data["delay_msg_min"], _clamp_int(incoming.get("delay_msg_max") if incoming.get("delay_msg_max") is not None else 8, 8, lo=0, hi=DELAY_MAX_SECONDS))
     data["errors_until_stop"] = _clamp_int(incoming.get("errors_until_stop") or 10, 10, lo=1, hi=50)
     days: list[int] = []
     for item in incoming.get("weekdays") or []:

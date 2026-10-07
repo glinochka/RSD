@@ -7,6 +7,7 @@ import UbtUnsaved from '../../../components/custom/UbtUnsaved';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { toggleNumericId, ubtModulePath } from './customNav';
+import { DELAY_MAX_SECONDS } from './delayLimits';
 import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -344,15 +345,15 @@ const CustomAutomationDmBroadcastsPage = () => {
         )}
         <div className="nc-row" style={{ marginTop: 12 }}>
           <span className="nc-muted">Пауза между получателями, сек</span>
-          <input className="nc-input" type="number" min="0" value={settings.delay_peer_min} onChange={(event) => patch({ delay_peer_min: Number(event.target.value) })} />
+          <input className="nc-input" type="number" min="0" max={DELAY_MAX_SECONDS} value={settings.delay_peer_min} onChange={(event) => patch({ delay_peer_min: Number(event.target.value) })} />
           <span>—</span>
-          <input className="nc-input" type="number" min="0" value={settings.delay_peer_max} onChange={(event) => patch({ delay_peer_max: Number(event.target.value) })} />
+          <input className="nc-input" type="number" min="0" max={DELAY_MAX_SECONDS} value={settings.delay_peer_max} onChange={(event) => patch({ delay_peer_max: Number(event.target.value) })} />
         </div>
         <div className="nc-row" style={{ marginTop: 8 }}>
           <span className="nc-muted">Пауза в цепочке, сек</span>
-          <input className="nc-input" type="number" min="0" value={settings.delay_msg_min} onChange={(event) => patch({ delay_msg_min: Number(event.target.value) })} />
+          <input className="nc-input" type="number" min="0" max={DELAY_MAX_SECONDS} value={settings.delay_msg_min} onChange={(event) => patch({ delay_msg_min: Number(event.target.value) })} />
           <span>—</span>
-          <input className="nc-input" type="number" min="0" value={settings.delay_msg_max} onChange={(event) => patch({ delay_msg_max: Number(event.target.value) })} />
+          <input className="nc-input" type="number" min="0" max={DELAY_MAX_SECONDS} value={settings.delay_msg_max} onChange={(event) => patch({ delay_msg_max: Number(event.target.value) })} />
         </div>
         <div className="nc-row" style={{ marginTop: 8 }}>
           <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.min)}>Быстрее</button>

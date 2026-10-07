@@ -44,8 +44,10 @@ from .telegram_error_handler import (
     SessionInvalidError,
     _looks_like_session_busy_error,
     _looks_like_session_error,
+    is_spambot_appeal_button,
     looks_like_proxy_dead,
     parse_spambot_reply,
+    spambot_verdict_from_messages,
 )
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 from ..telegram_userbot_auth import create_telegram_client, iter_api_credential_candidates
@@ -883,9 +885,8 @@ class TelegramAccountClient:
                     texts.append(text)
             if not texts:
                 return None
-            blob = "\n".join(texts)
             return {
-                "spamblocked": parse_spambot_reply(blob),
+                "spamblocked": spambot_verdict_from_messages(texts),
                 "source": "spambot",
                 "raw": texts[0] if texts else "",
             }
@@ -905,8 +906,73 @@ class TelegramAccountClient:
             return {"spamblocked": None, "source": "error"}
 
         await asyncio.sleep(_SPAMBOT_WAIT_SECONDS + random.uniform(0.5, 2.5))
-        parsed = await _read_history()
-        return parsed or {"spamblocked": None, "source": "error"}
+        return await _read_history() or {"spamblocked": None, "source": "error"}
+
+    async def appeal_temporary_spamblock(self) -> dict[str, Any]:
+        """Click SpamBot's 'this is a mistake' on a temporary limit, then re-read."""
+        clicked = await self._click_spambot_appeal()
+        if not clicked:
+            try:
+                await asyncio.sleep(random.uniform(1.0, 2.5))
+                await self.client.send_message(_SPAMBOT, "/start")
+                await asyncio.sleep(_SPAMBOT_WAIT_SECONDS + random.uniform(0.8, 2.0))
+                clicked = await self._click_spambot_appeal()
+            except Exception as exc:
+                logger.warning("SpamBot appeal /start failed: %s", exc)
+        if not clicked:
+            for phrase in ("This is a mistake", "Это ошибка"):
+                try:
+                    await asyncio.sleep(random.uniform(0.6, 1.6))
+                    await self.client.send_message(_SPAMBOT, phrase)
+                    clicked = True
+                    break
+                except Exception as exc:
+                    logger.warning("SpamBot appeal text failed: %s", exc)
+        if clicked:
+            await asyncio.sleep(_SPAMBOT_WAIT_SECONDS + random.uniform(1.0, 3.0))
+        try:
+            messages = await self.client.get_messages(_SPAMBOT, limit=8)
+        except Exception as exc:
+            logger.warning("SpamBot appeal history failed: %s", exc)
+            return {"spamblocked": None, "source": "error", "appealed": clicked}
+        texts = [
+            str(getattr(message, "message", None) or getattr(message, "text", None) or "").strip()
+            for message in messages or []
+        ]
+        texts = [item for item in texts if item]
+        return {
+            "spamblocked": spambot_verdict_from_messages(texts),
+            "source": "spambot_appeal" if clicked else "spambot",
+            "appealed": clicked,
+            "raw": texts[0] if texts else "",
+        }
+
+    async def _click_spambot_appeal(self) -> bool:
+        try:
+            messages = await self.client.get_messages(_SPAMBOT, limit=10)
+        except Exception as exc:
+            logger.warning("SpamBot appeal buttons failed: %s", exc)
+            return False
+        for message in messages or []:
+            rows = getattr(message, "buttons", None) or []
+            for row in rows:
+                for button in row or []:
+                    label = str(getattr(button, "text", None) or "")
+                    if not is_spambot_appeal_button(label):
+                        continue
+                    try:
+                        await asyncio.sleep(random.uniform(0.8, 2.2))
+                        click = getattr(message, "click", None)
+                        if callable(click) and getattr(button, "data", None) is not None:
+                            await click(text=label)
+                        else:
+                            await self.client.send_message(_SPAMBOT, label)
+                        logger.info("Clicked SpamBot appeal: %s", label)
+                        return True
+                    except Exception as exc:
+                        logger.warning("SpamBot appeal click failed: %s", exc)
+                        return False
+        return False
 
     async def _get_dialogs_count(self, limit: int = 100) -> int:
         try:

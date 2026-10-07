@@ -45,9 +45,16 @@ const getAuthHeaders = () => {
 const handleResponse = async (response) => {
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    const message = typeof error.detail === 'string' ? error.detail : `HTTP ${response.status}`;
+    const detail = error.detail;
+    let message = `HTTP ${response.status}`;
+    if (typeof detail === 'string') {
+      message = detail;
+    } else if (detail && typeof detail.message === 'string') {
+      message = detail.message;
+    }
     const err = new Error(message);
     err.status = response.status;
+    err.detail = detail;
     throw err;
   }
   if (response.status === 204) {

@@ -21,6 +21,7 @@ from .account_pacing import (
     schedule_account_target_rest,
 )
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .chat_membership_service import account_is_joined
 from .chat_scope import is_group_chat, is_paused
 from .conversation_guard import sanitize_public_text
@@ -244,8 +245,8 @@ def _delay_bounds(cfg: dict[str, Any], key_min: str, key_max: str, default_min: 
         high = int(cfg.get(key_max) if cfg.get(key_max) is not None else default_max)
     except (TypeError, ValueError):
         high = default_max
-    low = max(0, min(low, 3600))
-    high = max(low, min(high, 3600))
+    low = max(0, min(low, DELAY_MAX_SECONDS))
+    high = max(low, min(high, DELAY_MAX_SECONDS))
     return float(low), float(high)
 
 

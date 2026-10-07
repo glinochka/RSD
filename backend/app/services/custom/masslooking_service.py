@@ -17,6 +17,7 @@ from .account_pacing import (
     schedule_account_humanization_rest,
 )
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .humanization_session import inspect_peer_profile, load_feed_peer_stories, load_peer_stories, mark_peer_stories_read
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
@@ -223,8 +224,8 @@ async def _process_account(
     except (TypeError, ValueError):
         skip_hours = 24 if cfg.get("skip_seen", True) else 0
     try:
-        delay_min = max(0, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 2))
-        delay_max = max(delay_min, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 6))
+        delay_min = max(0, min(DELAY_MAX_SECONDS, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 2)))
+        delay_max = max(delay_min, min(DELAY_MAX_SECONDS, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 6)))
     except (TypeError, ValueError):
         delay_min, delay_max = 2, 6
     remaining = None if max_per_account <= 0 else max(0, max_per_account - already)

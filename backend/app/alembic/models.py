@@ -2376,6 +2376,7 @@ class SocialAccount(Base):
     ban_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     spamblocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     spamblock_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    spamblock_appealed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_action_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

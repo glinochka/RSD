@@ -14,6 +14,7 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .account_roles import account_is_task_ready
+from .module_delays import DELAY_MAX_SECONDS
 from .chat_broadcast_service import normalize_broadcast_messages
 from .job_service import list_jobs
 from .proxy_service import proxy_label
@@ -116,18 +117,18 @@ def normalize_dm_settings(raw: Any) -> dict[str, Any]:
     data["work_mode"] = work_mode if work_mode in {"count", "time"} else "count"
     data["max_messages"] = _clamp_int(incoming.get("max_messages") or 100, 100, lo=1, hi=500)
     data["delay_peer_min"] = _clamp_int(
-        incoming.get("delay_peer_min") if incoming.get("delay_peer_min") is not None else 30, 30, lo=0, hi=3600
+        incoming.get("delay_peer_min") if incoming.get("delay_peer_min") is not None else 30, 30, lo=0, hi=DELAY_MAX_SECONDS
     )
     data["delay_peer_max"] = max(
         data["delay_peer_min"],
-        _clamp_int(incoming.get("delay_peer_max") if incoming.get("delay_peer_max") is not None else 90, 90, lo=0, hi=3600),
+        _clamp_int(incoming.get("delay_peer_max") if incoming.get("delay_peer_max") is not None else 90, 90, lo=0, hi=DELAY_MAX_SECONDS),
     )
     data["delay_msg_min"] = _clamp_int(
-        incoming.get("delay_msg_min") if incoming.get("delay_msg_min") is not None else 3, 3, lo=0, hi=600
+        incoming.get("delay_msg_min") if incoming.get("delay_msg_min") is not None else 3, 3, lo=0, hi=DELAY_MAX_SECONDS
     )
     data["delay_msg_max"] = max(
         data["delay_msg_min"],
-        _clamp_int(incoming.get("delay_msg_max") if incoming.get("delay_msg_max") is not None else 8, 8, lo=0, hi=600),
+        _clamp_int(incoming.get("delay_msg_max") if incoming.get("delay_msg_max") is not None else 8, 8, lo=0, hi=DELAY_MAX_SECONDS),
     )
     data["errors_until_stop"] = _clamp_int(incoming.get("errors_until_stop") or 10, 10, lo=1, hi=50)
     data["end_at"] = str(incoming.get("end_at") or "").strip()[:32]

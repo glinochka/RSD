@@ -203,7 +203,11 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
       setSmsNeeds2fa(false);
       await handleConnected(response.account);
     } catch (err) {
-      if (err.status === 409 || /2FA/i.test(err.message || '')) {
+      const nextToken = err.detail && err.detail.auth_token;
+      if (nextToken) {
+        setSmsAuthToken(nextToken);
+      }
+      if (err.status === 409 || err.detail?.need_2fa || /2FA/i.test(err.message || '')) {
         setSmsNeeds2fa(true);
         setError('Введите пароль 2FA и подтвердите ещё раз');
       } else {
@@ -316,18 +320,17 @@ const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false
                   placeholder="12345"
                 />
               </div>
-              {smsNeeds2fa ? (
-                <div className="form-group">
-                  <label htmlFor="connect-sms-2fa">Пароль 2FA</label>
-                  <input
-                    id="connect-sms-2fa"
-                    type="password"
-                    value={smsPassword}
-                    onChange={(e) => setSmsPassword(e.target.value)}
-                    placeholder="Пароль двухфакторной защиты"
-                  />
-                </div>
-              ) : null}
+              <div className="form-group">
+                <label htmlFor="connect-sms-2fa">Пароль 2FA{smsNeeds2fa ? ' (обязательно)' : ''}</label>
+                <input
+                  id="connect-sms-2fa"
+                  type="password"
+                  value={smsPassword}
+                  onChange={(e) => setSmsPassword(e.target.value)}
+                  placeholder={smsNeeds2fa ? 'Введите облачный пароль Telegram' : 'Если на аккаунте включена защита'}
+                  autoComplete="current-password"
+                />
+              </div>
               <div className="settings-actions">
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={handleSmsVerify} disabled={isVerifyingSms}>
                   {isVerifyingSms ? 'Проверка...' : 'Подтвердить'}

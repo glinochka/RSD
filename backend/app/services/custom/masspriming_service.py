@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_humanization_should_idle, farm_overlap_active_hours, schedule_account_humanization_rest
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .humanization_session import inspect_peer_profile
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
@@ -300,8 +301,8 @@ async def _process_account(
     except (TypeError, ValueError):
         skip_hours = 72 if cfg.get("skip_seen", True) else 0
     try:
-        delay_min = max(0, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 8))
-        delay_max = max(delay_min, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 25))
+        delay_min = max(0, min(DELAY_MAX_SECONDS, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 8)))
+        delay_max = max(delay_min, min(DELAY_MAX_SECONDS, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 25)))
     except (TypeError, ValueError):
         delay_min, delay_max = 8, 25
     remaining = None if max_per_account <= 0 else max(0, max_per_account - already)

@@ -4257,6 +4257,84 @@ class TestAccountQrConnect:
         assert saved.session_file_path
 
 
+class TestAccountSmsConnect:
+    async def test_sms_verify_without_2fa_password_is_409_not_500(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from telethon.errors import SessionPasswordNeededError
+        from app.services.custom import account_connect_service
+        from app.services.telegram_userbot_auth import TelegramUserbotAuthError
+
+        token = account_connect_service._create_sms_token(
+            automation_id=custom_automation.id,
+            api_id=2040,
+            api_hash="hash",
+            phone_number="+79990001122",
+            phone_code_hash="abc",
+            pending_session="1Apending",
+        )
+
+        class FakeSession:
+            def save(self):
+                return "1Aaftercode"
+
+        class FakeClient:
+            def __init__(self):
+                self.session = FakeSession()
+
+            async def connect(self):
+                return None
+
+            async def disconnect(self):
+                return None
+
+            async def sign_in(self, **kwargs):
+                if kwargs.get("password"):
+                    return True
+                raise SessionPasswordNeededError(request=None)
+
+        monkeypatch.setattr(
+            account_connect_service,
+            "create_telegram_client",
+            lambda **kwargs: (FakeClient(), 2040, "hash"),
+        )
+        monkeypatch.setattr(
+            "app.services.custom.proxy_service.load_telethon_proxy",
+            AsyncMock(return_value=(None, None)),
+        )
+
+        with pytest.raises(TelegramUserbotAuthError) as caught:
+            await account_connect_service.verify_account_sms(
+                None,
+                custom_automation.id,
+                auth_token=token,
+                code="12345",
+            )
+        assert caught.value.status_code == 409
+        assert caught.value.extra.get("need_2fa") is True
+        assert caught.value.extra.get("auth_token")
+
+        response = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/sms/verify",
+            headers={"Authorization": f"Bearer {client_token}"},
+            json={"auth_token": token, "code": "12345"},
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["need_2fa"] is True
+        assert "2FA" in detail["message"]
+        assert detail["auth_token"]
+
+    async def test_join_pending_has_custom_automation_symbol(self):
+        from app.services.custom import chat_join_service
+
+        assert chat_join_service.CustomAutomation is CustomAutomation
+
+
 class TestAccountHealthSpamblockAndDelete:
     async def test_spambot_parser(self):
         from app.services.custom.telegram_error_handler import parse_spambot_reply
@@ -4267,8 +4345,50 @@ class TestAccountHealthSpamblockAndDelete:
             "I'm afraid some Telegram users found your messages annoying and have reported them as spam. Your account is now limited."
         ) is True
         assert parse_spambot_reply("На ваш аккаунт наложены некоторые ограничения.") is True
+        assert parse_spambot_reply("Restrictions have been lifted from your account.") is False
+        assert parse_spambot_reply("Ограничения сняты.") is False
         assert parse_spambot_reply("") is None
         assert parse_spambot_reply("hello") is None
+
+    async def test_spambot_newest_first_and_appeal_buttons(self):
+        from app.services.custom.telegram_error_handler import (
+            is_spambot_appeal_button,
+            spambot_verdict_from_messages,
+        )
+        from app.services.custom.module_delays import DELAY_MAX_SECONDS
+
+        assert DELAY_MAX_SECONDS == 90 * 60
+        from app.services.custom.neurochatting_module_service import normalize_chat_settings
+        from app.services.custom.masspriming_module_service import normalize_prime_settings
+
+        chatting = normalize_chat_settings({"delay_before_min": 5400, "delay_before_max": 5400})
+        priming = normalize_prime_settings({"delay_min": 5400, "delay_max": 5400})
+        assert chatting["delay_before_min"] == DELAY_MAX_SECONDS
+        assert chatting["delay_before_max"] == DELAY_MAX_SECONDS
+        assert priming["delay_min"] == DELAY_MAX_SECONDS
+        assert priming["delay_max"] == DELAY_MAX_SECONDS
+        assert (
+            spambot_verdict_from_messages(
+                [
+                    "Good news, no limits are currently applied to your account.",
+                    "Your account is now limited.",
+                ]
+            )
+            is False
+        )
+        assert (
+            spambot_verdict_from_messages(
+                [
+                    "Your account is now limited.",
+                    "Good news, no limits are currently applied to your account.",
+                ]
+            )
+            is True
+        )
+        assert is_spambot_appeal_button("This is a mistake")
+        assert is_spambot_appeal_button("Это ошибка")
+        assert is_spambot_appeal_button("Submit a complaint")
+        assert not is_spambot_appeal_button("Cancel")
 
     async def test_channel_ban_does_not_mark_account_banned(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

@@ -95,6 +95,7 @@ def _create_sms_token(
     phone_code_hash: str,
     pending_session: str,
     proxy_id: int | None = None,
+    password_pending: bool = False,
 ) -> str:
     return custom_account_sms_auth_token.create(
         automation_id=int(automation_id),
@@ -104,6 +105,7 @@ def _create_sms_token(
         phone_code_hash=phone_code_hash,
         encrypted_pending_session=encrypt_token(pending_session or ""),
         proxy_id=int(proxy_id) if proxy_id else 0,
+        password_pending=1 if password_pending else 0,
     )
 
 
@@ -388,7 +390,9 @@ async def verify_account_sms(
     pending_enc = token_data.get("encrypted_pending_session")
     pending_session = decrypt_token(pending_enc) if pending_enc else ""
     digits = "".join(ch for ch in (code or "") if ch.isdigit())
-    if not digits:
+    password_pending = bool(int(token_data.get("password_pending") or 0))
+    pwd = (password or "").strip()
+    if not digits and not password_pending:
         raise TelegramUserbotAuthError("Введите код подтверждения (цифры из Telegram)")
 
     try:
@@ -414,14 +418,36 @@ async def verify_account_sms(
         prefer_desktop=True,
         proxy=proxy,
     )
+
+    def _twofa_needed(pending: str) -> TelegramUserbotAuthError:
+        next_token = _create_sms_token(
+            automation_id=automation_id,
+            api_id=api_id,
+            api_hash=api_hash,
+            phone_number=phone_number,
+            phone_code_hash=phone_code_hash,
+            pending_session=pending,
+            proxy_id=proxy_id,
+            password_pending=True,
+        )
+        return TelegramUserbotAuthError(
+            "Для этого аккаунта включен пароль 2FA. Введите пароль и подтвердите ещё раз.",
+            status_code=409,
+            extra={"need_2fa": True, "auth_token": next_token},
+        )
+
     try:
         await client.connect()
         try:
-            await client.sign_in(phone=phone_number, code=digits, phone_code_hash=phone_code_hash)
+            if password_pending:
+                if not pwd:
+                    raise _twofa_needed(pending_session)
+                await client.sign_in(password=pwd)
+            else:
+                await client.sign_in(phone=phone_number, code=digits, phone_code_hash=phone_code_hash)
         except SessionPasswordNeededError:
-            pwd = (password or "").strip()
             if not pwd:
-                raise TelegramUserbotAuthError("Для этого аккаунта включен пароль 2FA. Передайте поле password.")
+                raise _twofa_needed(client.session.save()) from None
             await client.sign_in(password=pwd)
         except PhoneCodeInvalidError:
             raise TelegramUserbotAuthError("Неверный код подтверждения Telegram") from None

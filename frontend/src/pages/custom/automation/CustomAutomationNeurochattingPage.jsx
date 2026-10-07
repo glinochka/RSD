@@ -9,6 +9,7 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { DELAY_MAX_SECONDS } from './delayLimits';
 import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -424,9 +425,9 @@ const CustomAutomationNeurochattingPage = () => {
         </div>
         <div className="nc-row">
           <span className="nc-muted">Задержка перед отправкой</span>
-          <Stepper value={settings.delay_before_min} min={0} max={3600} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
+          <Stepper value={settings.delay_before_min} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
           <span className="nc-muted">до</span>
-          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={3600} onChange={(value) => patch({ delay_before_max: value })} />
+          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_max: value })} />
           <span className="nc-muted">сек</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Не отвечаем на слишком свежие сообщения — антибот-пауза. FloodWait Telegram обрабатывается сам.</p>

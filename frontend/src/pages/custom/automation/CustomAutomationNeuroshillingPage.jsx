@@ -9,6 +9,7 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { DELAY_MAX_SECONDS } from './delayLimits';
 import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -396,9 +397,9 @@ const CustomAutomationNeuroshillingPage = () => {
         </div>
         <div className="nc-row" style={{ marginTop: 12 }}>
           <span className="nc-muted">Пауза между репликами</span>
-          <Stepper value={settings.delay_min} min={0} max={600} onChange={(value) => patch({ delay_min: value, delay_max: Math.max(value, settings.delay_max) })} />
+          <Stepper value={settings.delay_min} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_min: value, delay_max: Math.max(value, settings.delay_max) })} />
           <span className="nc-muted">до</span>
-          <Stepper value={settings.delay_max} min={settings.delay_min} max={600} onChange={(value) => patch({ delay_max: value })} />
+          <Stepper value={settings.delay_max} min={settings.delay_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_max: value })} />
           <span className="nc-muted">с</span>
         </div>
       </div>

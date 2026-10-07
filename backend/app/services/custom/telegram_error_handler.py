@@ -36,6 +36,21 @@ _SPAMBOT_OK = (
     "свободен от каких-либо ограничений",
     "нет ограничений",
     "не ограничен",
+    "limits have been lifted",
+    "restrictions have been lifted",
+    "we have lifted",
+    "ограничения сняты",
+    "сняли ограничения",
+    "больше нет ограничений",
+)
+_SPAMBOT_APPEAL = (
+    "this is a mistake",
+    "that's a mistake",
+    "that is a mistake",
+    "это ошибка",
+    "submit a complaint",
+    "отправить жалобу",
+    "обжаловать",
 )
 _SPAMBOT_BLOCK = (
     "your account is now limited",
@@ -202,6 +217,22 @@ def parse_spambot_reply(text: str | None) -> bool | None:
     if any(marker in blob for marker in _SPAMBOT_BLOCK):
         return True
     return None
+
+
+def spambot_verdict_from_messages(texts: list[str] | None) -> bool | None:
+    """Newest message first: first decisive SpamBot reply wins."""
+    for text in texts or []:
+        parsed = parse_spambot_reply(text)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def is_spambot_appeal_button(label: str | None) -> bool:
+    blob = (label or "").strip().lower()
+    if not blob:
+        return False
+    return any(marker in blob for marker in _SPAMBOT_APPEAL)
 
 
 def _looks_like_invite_error(exc: Exception) -> bool:

@@ -22,6 +22,7 @@ from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
 from .discussion_service import DEFAULT_DISCUSSION_PROMPT
 from .job_service import list_jobs
+from .module_delays import DELAY_MAX_SECONDS
 from .lead_keywords import normalize_lead_keywords
 from .prompt_service import activate_prompt, create_named_prompt, list_prompts
 from .account_roles import account_is_task_ready
@@ -103,10 +104,10 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
     data["max_replies_per_run"] = _clamp_int(incoming.get("max_replies_per_run") or 1, 1, lo=1, hi=10)
     data["only_joined"] = bool(incoming.get("only_joined"))
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
-    data["delay_before_min"] = _clamp_int(incoming.get("delay_before_min") if incoming.get("delay_before_min") is not None else 42, 42, lo=0, hi=3600)
+    data["delay_before_min"] = _clamp_int(incoming.get("delay_before_min") if incoming.get("delay_before_min") is not None else 42, 42, lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_before_max"] = max(
         data["delay_before_min"],
-        _clamp_int(incoming.get("delay_before_max") if incoming.get("delay_before_max") is not None else 78, 78, lo=0, hi=3600),
+        _clamp_int(incoming.get("delay_before_max") if incoming.get("delay_before_max") is not None else 78, 78, lo=0, hi=DELAY_MAX_SECONDS),
     )
     try:
         prompt_id = incoming.get("prompt_id")

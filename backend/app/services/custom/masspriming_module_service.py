@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
 from .job_service import list_jobs
+from .module_delays import DELAY_MAX_SECONDS
 from .masspriming_service import TTL_DAY, normalize_prime_targets, normalize_ttl_period
 from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
@@ -80,10 +81,10 @@ def normalize_prime_settings(raw: Any) -> dict[str, Any]:
     data["skip_hours"] = _clamp_int(incoming.get("skip_hours") if incoming.get("skip_hours") is not None else 72, 72, lo=1, hi=168)
     data["max_per_account"] = _clamp_int(incoming.get("max_per_account") if incoming.get("max_per_account") is not None else 20, 20, lo=0, hi=200)
     data["max_per_hour"] = _clamp_int(incoming.get("max_per_hour") if incoming.get("max_per_hour") is not None else 8, 8, lo=0, hi=80)
-    data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else 8, 8, lo=0, hi=300)
+    data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else 8, 8, lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_max"] = max(
         data["delay_min"],
-        _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else 25, 25, lo=0, hi=600),
+        _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else 25, 25, lo=0, hi=DELAY_MAX_SECONDS),
     )
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     data["limit_rate"] = bool(incoming.get("limit_rate", True))

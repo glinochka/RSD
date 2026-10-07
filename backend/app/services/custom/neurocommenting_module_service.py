@@ -23,6 +23,7 @@ from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .job_service import list_jobs
 from .lead_keywords import normalize_lead_keywords
+from .module_delays import DELAY_MAX_SECONDS
 from .neurocommenting_service import (
     DEFAULT_NEUROCOMMENTING_PROMPT,
     POST_COMMENT_DELAY_MAX_SECONDS,
@@ -98,11 +99,11 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         data["max_per_chat"] = 10
     try:
-        data["delay_before_min"] = max(0, min(3600, int(incoming.get("delay_before_min") or POST_COMMENT_DELAY_MIN_SECONDS)))
+        data["delay_before_min"] = max(0, min(DELAY_MAX_SECONDS, int(incoming.get("delay_before_min") or POST_COMMENT_DELAY_MIN_SECONDS)))
     except (TypeError, ValueError):
         data["delay_before_min"] = POST_COMMENT_DELAY_MIN_SECONDS
     try:
-        data["delay_before_max"] = max(data["delay_before_min"], min(3600, int(incoming.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)))
+        data["delay_before_max"] = max(data["delay_before_min"], min(DELAY_MAX_SECONDS, int(incoming.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)))
     except (TypeError, ValueError):
         data["delay_before_max"] = max(data["delay_before_min"], POST_COMMENT_DELAY_MAX_SECONDS)
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))

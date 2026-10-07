@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_humanization_should_idle, farm_overlap_active_hours, schedule_account_humanization_rest
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -532,8 +533,8 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         await session.execute(delete(ParserUser).where(ParserUser.custom_automation_id == automation_id))
         await session.commit()
         try:
-            delay_chat = max(0, int(cfg.get("delay_chat") if cfg.get("delay_chat") is not None else 5))
-            delay_user = float(cfg.get("delay_user") if cfg.get("delay_user") is not None else 0.5)
+            delay_chat = max(0, min(DELAY_MAX_SECONDS, int(cfg.get("delay_chat") if cfg.get("delay_chat") is not None else 5)))
+            delay_user = max(0.0, min(float(DELAY_MAX_SECONDS), float(cfg.get("delay_user") if cfg.get("delay_user") is not None else 0.5)))
         except (TypeError, ValueError):
             delay_chat, delay_user = 5, 0.5
         from .task_dedup import load_unique_assign, store_unique_assign, unique_assign

@@ -1560,6 +1560,9 @@ def _apply_chat_target_update(chat: ChatTarget, payload: ChatTargetUpdate) -> No
 
 
 def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
+    extra = getattr(exc, "extra", None) or {}
+    if extra:
+        return HTTPException(status_code=exc.status_code, detail={"message": str(exc), **extra})
     return HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
@@ -1938,6 +1941,8 @@ async def sms_account_request(
             )
         except ProxyChoiceError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        except TelegramUserbotAuthError as exc:
+            raise _userbot_auth_http_error(exc) from exc
     return AccountSmsStartResponse(auth_token=result["auth_token"])
 
 
@@ -1949,13 +1954,16 @@ async def sms_account_verify(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        pool_account, social_account = await verify_account_sms(
-            session,
-            automation_id,
-            auth_token=payload.auth_token,
-            code=payload.code,
-            password=payload.password,
-        )
+        try:
+            pool_account, social_account = await verify_account_sms(
+                session,
+                automation_id,
+                auth_token=payload.auth_token,
+                code=payload.code,
+                password=payload.password,
+            )
+        except TelegramUserbotAuthError as exc:
+            raise _userbot_auth_http_error(exc) from exc
     _queue_account_health_check(background_tasks, automation_id)
     return AccountConnectResponse(
         account=_account_response(pool_account, social_account, automation.max_daily_messages_per_account)
@@ -2010,8 +2018,12 @@ def _spamblock_check_detail(result: dict) -> str:
     if status_value == "banned":
         return "Аккаунт забанен."
     if result.get("spamblocked") is True:
+        if result.get("appealed"):
+            return "Telegram ограничил аккаунт (спамблок). Отправлена жалоба в @SpamBot."
         return "Telegram ограничил аккаунт (спамблок)."
     if result.get("spamblocked") is False:
+        if result.get("appealed") or result.get("source") == "spambot_appeal":
+            return "Спамблок снят через @SpamBot."
         return "Ограничений нет."
     if status_value == "ok":
         return "SpamBot не дал однозначный ответ."

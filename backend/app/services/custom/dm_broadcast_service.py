@@ -18,6 +18,7 @@ from .account_pacing import (
     farm_overlap_active_hours,
 )
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .chat_broadcast_service import apply_spintax, normalize_broadcast_messages
 from .conversation_guard import sanitize_public_text
 from .dm_broadcast_module_service import ACTION, normalize_dm_recipients, normalize_dm_settings
@@ -114,8 +115,8 @@ def _delay_bounds(cfg: dict[str, Any], key_min: str, key_max: str, default_min: 
         high = int(cfg.get(key_max) if cfg.get(key_max) is not None else default_max)
     except (TypeError, ValueError):
         high = default_max
-    low = max(0, min(low, 3600))
-    high = max(low, min(high, 3600))
+    low = max(0, min(low, DELAY_MAX_SECONDS))
+    high = max(low, min(high, DELAY_MAX_SECONDS))
     return float(low), float(high)
 
 

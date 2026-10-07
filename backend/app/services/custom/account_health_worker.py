@@ -20,12 +20,21 @@ from ...config import settings
 logger = getLogger(__name__)
 
 _SPAMBLOCK_RECHECK = timedelta(days=7)
+_SPAMBLOCK_APPEAL_GAP = timedelta(hours=12)
 _HEALTH_MIN_GAP = timedelta(hours=10)
 _RECENT_USE_GAP = timedelta(minutes=15)
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _spamblock_appeal_due(account: SocialAccount) -> bool:
+    last = getattr(account, "spamblock_appealed_at", None)
+    if last is None:
+        return True
+    then = last.replace(tzinfo=None) if getattr(last, "tzinfo", None) else last
+    return (_utc_now() - then) >= _SPAMBLOCK_APPEAL_GAP
 
 
 def _media_root() -> Path:
@@ -113,6 +122,14 @@ class AccountHealthWorker:
                             info = await client.get_info(include_dialogs=include_dialogs)
                             if need_spam_check:
                                 spam_state = await client.check_spamblock(force=False)
+                            blocked_now = bool(social_account.is_spamblocked) or (
+                                isinstance(spam_state, dict) and spam_state.get("spamblocked") is True
+                            )
+                            if blocked_now and _spamblock_appeal_due(social_account):
+                                lifted = await client.appeal_temporary_spamblock()
+                                social_account.spamblock_appealed_at = _utc_now()
+                                if lifted.get("spamblocked") is False or spam_state is None:
+                                    spam_state = lifted
                             avatar_path = _avatar_path(automation_id, account_id)
                             if info.get("has_avatar") and (force or not avatar_path.exists()):
                                 try:
@@ -300,6 +317,10 @@ class AccountHealthWorker:
         try:
             async with TelegramAccountClient.for_account(social_account) as client:
                 spam_state = await client.check_spamblock(force=True)
+                if spam_state and spam_state.get("spamblocked") is True:
+                    lifted = await client.appeal_temporary_spamblock()
+                    social_account.spamblock_appealed_at = _utc_now()
+                    spam_state = {**spam_state, **lifted}
         except Exception as exc:
             error_kind = await update_account_after_telegram_error(session, social_account, exc)
             social_account.last_health_check_at = _utc_now()
@@ -326,6 +347,7 @@ class AccountHealthWorker:
             "status": "ok",
             "spamblocked": blocked,
             "source": (spam_state or {}).get("source"),
+            "appealed": bool((spam_state or {}).get("appealed")),
             "pool_account": pool_account,
             "social_account": social_account,
         }

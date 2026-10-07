@@ -15,6 +15,7 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .job_service import list_jobs
+from .module_delays import DELAY_MAX_SECONDS
 from .chat_folder_service import folder_payloads
 from .masslooking_service import normalize_story_targets
 from .account_roles import account_is_task_ready
@@ -84,10 +85,10 @@ def normalize_look_settings(raw: Any) -> dict[str, Any]:
     data["max_per_account"] = _clamp_int(incoming.get("max_per_account") if incoming.get("max_per_account") is not None else 50, 50, lo=0, hi=500)
     data["skip_seen"] = bool(incoming.get("skip_seen", True))
     data["skip_hours"] = _clamp_int(incoming.get("skip_hours") if incoming.get("skip_hours") is not None else 24, 24, lo=1, hi=168)
-    data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else 2, 2, lo=0, hi=120)
+    data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else 2, 2, lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_max"] = max(
         data["delay_min"],
-        _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else 6, 6, lo=0, hi=180),
+        _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else 6, 6, lo=0, hi=DELAY_MAX_SECONDS),
     )
     data["max_per_hour"] = _clamp_int(incoming.get("max_per_hour") if incoming.get("max_per_hour") is not None else 30, 30, lo=0, hi=500)
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))

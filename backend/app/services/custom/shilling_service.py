@@ -23,6 +23,7 @@ from .chat_membership_service import (
 )
 from .account_pacing import account_active_window, in_account_active_hours
 from .module_account_filters import no_accounts_picked, skip_account_for_module
+from .module_delays import DELAY_MAX_SECONDS
 from .conversation_guard import sanitize_public_text
 from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
@@ -632,7 +633,8 @@ async def perform_shilling_dialogue(
             high = float(cfg.get("delay_max") if cfg.get("delay_max") is not None else REPLY_DELAY_MAX_SECONDS)
         except (TypeError, ValueError):
             low, high = REPLY_DELAY_MIN_SECONDS, REPLY_DELAY_MAX_SECONDS
-        high = max(low, high)
+        low = max(0.0, min(low, float(DELAY_MAX_SECONDS)))
+        high = max(low, min(high, float(DELAY_MAX_SECONDS)))
         wait_for = random.uniform(low, high)
     elif comment_to is not None and wait_for < COMMENT_REPLY_DELAY_MIN_SECONDS:
         wait_for = COMMENT_REPLY_DELAY_MIN_SECONDS
