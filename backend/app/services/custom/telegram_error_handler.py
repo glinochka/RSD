@@ -59,6 +59,31 @@ class SessionInvalidError(RuntimeError):
     """Local session file is no longer authorized in Telegram."""
 
 
+class ProxyDeadError(RuntimeError):
+    """Assigned SOCKS/HTTP proxy is unreachable. Session file is still valid."""
+
+
+def looks_like_proxy_dead(exc: Exception) -> bool:
+    if isinstance(exc, ProxyDeadError):
+        return True
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    blob = f"{name} {text}"
+    compact = blob.replace("_", "").replace(" ", "")
+    needles = (
+        "proxyconnectionerror",
+        "proxyerror",
+        "could not connect to proxy",
+        "connect to proxy",
+        "connect call failed",
+        "socks5",
+        "socks4",
+    )
+    if any(token.replace(" ", "") in compact or token in blob for token in needles):
+        return True
+    return "connection to telegram failed" in text and "proxy" in blob
+
+
 FLOOD_ERRORS = set()
 DEACTIVATED_ERRORS = set()
 SESSION_ERRORS = set()
@@ -256,6 +281,8 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
     """Return dict with keys: kind, seconds (for flood)."""
     if _looks_like_session_busy_error(exc):
         return {"kind": "session_busy"}
+    if looks_like_proxy_dead(exc):
+        return {"kind": "proxy"}
     if isinstance(exc, SessionInvalidError) or _looks_like_session_error(exc):
         return {"kind": "session"}
     if FROZEN_ERRORS and isinstance(exc, tuple(FROZEN_ERRORS)):
@@ -607,6 +634,16 @@ async def execute_with_telegram_retry(
                     automation_id=automation_id,
                 )
                 raise
+            if kind == "proxy":
+                from .proxy_service import recover_dead_proxy
+
+                rotated = await recover_dead_proxy(session, account)
+                if rotated is not None:
+                    await session.commit()
+                    await session.refresh(account)
+                schedule_account_retry(account)
+                await _log_error(str(exc))
+                raise
             if kind == "session_busy":
                 schedule_account_retry(account)
                 await _log_error(str(exc))
@@ -672,6 +709,8 @@ async def update_account_after_telegram_error(
         return "session_invalid"
     if kind == "session_busy":
         return "session_busy"
+    if kind == "proxy":
+        return "proxy"
     if kind == "chat_restricted":
         return "chat_restricted"
     if kind == "flood":

@@ -46,7 +46,7 @@ from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry, is_chat_read_lost, log_action_error
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref, _looks_like_invite_hash, _invite_ref
-from ...alembic.models import AccountChatMembership, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
+from ...alembic.models import AccountChatMembership, ChatFolder, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
 
 logger = logging.getLogger(__name__)
 
@@ -694,8 +694,14 @@ async def create_chat_from_link(
     raw_link: str,
     *,
     mode: str | None = None,
+    folder_id: int | None = None,
 ) -> ChatTarget:
     parsed = parse_telegram_chat_ref(raw_link)
+    bound_folder_id = None
+    if folder_id:
+        folder = await session.get(ChatFolder, int(folder_id))
+        if folder is not None and folder.custom_automation_id == automation_id:
+            bound_folder_id = folder.id
 
     existing = await find_existing_chat_target(
         session,
@@ -719,6 +725,7 @@ async def create_chat_from_link(
         chat_type=None,
         mode=(mode or "").strip() or ChatMode.MONITORING.value,
         source=ChatSource.MANUAL.value,
+        folder_id=bound_folder_id,
         join_status=ChatJoinStatus.PENDING.value,
         join_attempts=0,
         is_active=True,

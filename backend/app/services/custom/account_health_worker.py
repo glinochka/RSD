@@ -123,6 +123,17 @@ class AccountHealthWorker:
                         break
                     except Exception as exc:
                         last_exc = exc
+                        from .proxy_service import recover_dead_proxy
+                        from .telegram_error_handler import looks_like_proxy_dead
+
+                        if looks_like_proxy_dead(exc):
+                            rotated = await recover_dead_proxy(session, social_account)
+                            if rotated is not None:
+                                await session.commit()
+                                await session.refresh(social_account)
+                                await asyncio.sleep(2)
+                                last_exc = None
+                                continue
                         if isinstance(exc, SessionInvalidError):
                             if not restored_backup:
                                 from .telegram_account_client import restore_encrypted_session_file

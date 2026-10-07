@@ -229,6 +229,15 @@
   border-color: #3b82f6;
 }
 
+.crm-item--clickable {
+  cursor: pointer;
+}
+
+.crm-item--clickable:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
 .crm-item:focus-within {
   z-index: 2;
 }

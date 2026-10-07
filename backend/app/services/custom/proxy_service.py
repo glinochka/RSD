@@ -1,10 +1,12 @@
 """Parse, store and evenly assign SOCKS/HTTP proxies to /custom accounts."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -18,6 +20,11 @@ from ...utils.crypto import decrypt_token, encrypt_token
 logger = getLogger(__name__)
 
 MAX_PROXIES = 500
+_UNHEALTHY_TTL = timedelta(minutes=30)
+_ROTATE_GAP = timedelta(seconds=90)
+_last_rotate_at: dict[int, datetime] = {}
+_rotate_locks: dict[int, asyncio.Lock] = {}
+_rotate_locks_guard = asyncio.Lock()
 _ALLOWED_SCHEMES = {"socks5": "socks5", "socks4": "socks4", "http": "http", "https": "http", "socks5h": "socks5"}
 _HOST_PORT_RE = re.compile(r"^(?P<host>[^:\s]+):(?P<port>\d+)$")
 _USER_AT_RE = re.compile(
@@ -554,3 +561,159 @@ async def account_proxy_picker_payload(session: AsyncSession, automation_id: int
             for row in await list_pool_proxies(session, automation_id)
         ]
     }
+
+
+def is_proxy_healthy(proxy: CustomProxy | None) -> bool:
+    if proxy is None or not proxy.is_active:
+        return False
+    if getattr(proxy, "is_healthy", True):
+        return True
+    failed = getattr(proxy, "last_failed_at", None)
+    if failed is None:
+        return True
+    then = failed.replace(tzinfo=None) if getattr(failed, "tzinfo", None) else failed
+    return (_utc_now() - then) >= _UNHEALTHY_TTL
+
+
+def mark_proxy_unhealthy(proxy: CustomProxy) -> None:
+    now = _utc_now()
+    proxy.is_healthy = False
+    proxy.fail_count = int(getattr(proxy, "fail_count", 0) or 0) + 1
+    proxy.last_failed_at = now
+    proxy.updated_at = now
+
+
+def mark_proxy_ok(proxy: CustomProxy) -> None:
+    now = _utc_now()
+    proxy.is_healthy = True
+    proxy.fail_count = 0
+    proxy.last_ok_at = now
+    proxy.updated_at = now
+
+
+async def probe_proxy_tcp(host: str, port: int, timeout: float = 4.0) -> bool:
+    """Cheap liveness check. Does not touch Telegram or .session files."""
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), timeout)
+    except Exception:
+        return False
+    try:
+        writer.close()
+        await writer.wait_closed()
+    except Exception:
+        pass
+    return True
+
+
+def _next_proxy_order(rows: list[CustomProxy], current_id: int | None) -> list[CustomProxy]:
+    if not rows:
+        return []
+    pivot = int(current_id or 0)
+    after = [row for row in rows if row.id > pivot]
+    before = [row for row in rows if row.id <= pivot]
+    return after + before
+
+
+async def _rotate_lock_for(account_id: int) -> asyncio.Lock:
+    async with _rotate_locks_guard:
+        lock = _rotate_locks.get(account_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _rotate_locks[account_id] = lock
+        return lock
+
+
+async def _drop_live_session(account: SocialAccount) -> None:
+    """Disconnect the one live Telethon client before changing its IP."""
+    from ...config import settings
+    from .account_session_orchestrator import _hubs
+    from .telegram_account_client import live_client_for_path
+
+    rel = (getattr(account, "session_file_path", None) or "").strip()
+    if rel:
+        path = str(Path(settings.MEDIA_ROOT).resolve() / rel)
+        live = live_client_for_path(path)
+        if live is not None:
+            try:
+                await live.drop_alive()
+            except Exception:
+                logger.debug("drop_alive before proxy rotate failed for %s", account.id, exc_info=True)
+    for hub in list(_hubs.values()):
+        client = hub.clients.pop(account.id, None)
+        if client is None:
+            continue
+        try:
+            await client.drop_alive()
+        except Exception:
+            logger.debug("hub drop_alive before proxy rotate failed for %s", account.id, exc_info=True)
+
+
+async def record_proxy_success(session: AsyncSession, account: SocialAccount) -> None:
+    payload = getattr(account, "telegram_proxy", None) or {}
+    proxy_id = payload.get("proxy_id") if isinstance(payload, dict) else None
+    pool = await session.scalar(select(PoolAccount).where(PoolAccount.social_account_id == account.id))
+    if proxy_id is None and pool is not None:
+        proxy_id = pool.proxy_id
+    if not proxy_id:
+        return
+    proxy = await session.get(CustomProxy, int(proxy_id))
+    if proxy is None:
+        return
+    mark_proxy_ok(proxy)
+
+
+async def recover_dead_proxy(session: AsyncSession, account: SocialAccount) -> CustomProxy | None:
+    """Mark the current proxy dead and bind the next living pool proxy.
+
+    Session-safe: drops the live MTProto client first, then writes the new
+    proxy. Caller must wait a couple of seconds and keep_alive() the same file.
+    """
+    lock = await _rotate_lock_for(account.id)
+    async with lock:
+        last = _last_rotate_at.get(account.id)
+        if last and (_utc_now() - last) < _ROTATE_GAP:
+            return None
+        pool_account = await session.scalar(
+            select(PoolAccount).where(
+                PoolAccount.social_account_id == account.id,
+                PoolAccount.removed_at.is_(None),
+            )
+        )
+        if pool_account is None:
+            return None
+        current_id = pool_account.proxy_id
+        current = await session.get(CustomProxy, int(current_id)) if current_id else None
+        if current is not None:
+            mark_proxy_unhealthy(current)
+        candidates = [
+            row
+            for row in await list_active_proxies(session, pool_account.custom_automation_id)
+            if not _is_dedicated(row) or (current is not None and row.id == current.id)
+        ]
+        living = [
+            row
+            for row in candidates
+            if row.id != current_id and is_proxy_healthy(row) and not _is_dedicated(row)
+        ]
+        chosen: CustomProxy | None = None
+        for proxy in _next_proxy_order(living, current_id):
+            if await probe_proxy_tcp(proxy.host, proxy.port):
+                chosen = proxy
+                break
+            mark_proxy_unhealthy(proxy)
+        if chosen is None:
+            logger.warning("No living proxy to rotate account %s onto", account.id)
+            return None
+        await _drop_live_session(account)
+        bind_account_proxy(pool_account, account, chosen)
+        mark_proxy_ok(chosen)
+        _last_rotate_at[account.id] = _utc_now()
+        logger.info(
+            "Rotated account %s proxy %s -> %s:%s",
+            account.id,
+            current_id,
+            chosen.host,
+            chosen.port,
+        )
+        return chosen
+

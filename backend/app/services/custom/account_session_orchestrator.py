@@ -6,6 +6,7 @@ streams and humanization on the same client.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -37,7 +38,8 @@ class AccountSessionHub:
         closed = 0
         for account_id, client in list(self.clients.items()):
             account = wanted.get(account_id)
-            if account is None or _session_should_sleep(account):
+            connected = bool(client.client and getattr(client.client, "is_connected", lambda: False)())
+            if account is None or _session_should_sleep(account) or not connected:
                 await self._close(account_id)
                 closed += 1
         for account in wanted.values():
@@ -45,14 +47,47 @@ class AccountSessionHub:
                 continue
             if _session_should_sleep(account):
                 continue
+            if await self._open(account):
+                opened += 1
+        return {"opened": opened, "closed": closed, "live": len(self.clients)}
+
+    async def _open(self, account: SocialAccount) -> bool:
+        from .proxy_service import recover_dead_proxy, record_proxy_success
+        from .telegram_error_handler import looks_like_proxy_dead
+
+        try:
+            wrapper = TelegramAccountClient.for_account(account)
+            await wrapper.keep_alive()
+            self.clients[account.id] = wrapper
+            async with async_session_maker() as session:
+                fresh = await session.get(SocialAccount, account.id)
+                if fresh is not None:
+                    await record_proxy_success(session, fresh)
+                    await session.commit()
+            return True
+        except Exception as exc:
+            if not looks_like_proxy_dead(exc):
+                logger.warning("Account session open failed %s: %s", account.id, exc)
+                return False
+            logger.warning("Proxy dead for account %s, rotating: %s", account.id, exc)
+            await self._close(account.id)
+            async with async_session_maker() as session:
+                fresh = await session.get(SocialAccount, account.id)
+                rotated = await recover_dead_proxy(session, fresh) if fresh is not None else None
+                if rotated is not None:
+                    await session.commit()
+                    await session.refresh(fresh)
+            if fresh is None or rotated is None:
+                return False
+            await asyncio.sleep(2)
             try:
-                wrapper = TelegramAccountClient.for_account(account)
+                wrapper = TelegramAccountClient.for_account(fresh)
                 await wrapper.keep_alive()
                 self.clients[account.id] = wrapper
-                opened += 1
-            except Exception as exc:
-                logger.warning("Account session open failed %s: %s", account.id, exc)
-        return {"opened": opened, "closed": closed, "live": len(self.clients)}
+                return True
+            except Exception as retry_exc:
+                logger.warning("Reconnect after proxy rotate failed %s: %s", account.id, retry_exc)
+                return False
 
     async def close(self) -> None:
         for account_id in list(self.clients):

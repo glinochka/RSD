@@ -9,16 +9,32 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.services.custom.telegram_error_handler import (
+    ProxyDeadError,
     SessionInvalidError,
     _classify_telegram_error,
     _looks_like_session_busy_error,
     _looks_like_session_error,
+    looks_like_proxy_dead,
 )
 from app.services.telegram_userbot_auth import (
     _TELEGRAM_ANDROID_API_ID,
     _TELEGRAM_DESKTOP_API_ID,
     iter_api_credential_candidates,
 )
+
+
+def test_dead_proxy_is_not_session_death():
+    exc = type("ProxyConnectionError", (Exception,), {})(
+        "Could not connect to proxy 88.218.186.149:63065 [Connect call failed]"
+    )
+    assert looks_like_proxy_dead(exc) is True
+    assert _classify_telegram_error(exc)["kind"] == "proxy"
+    assert _looks_like_session_error(exc) is False
+    assert looks_like_proxy_dead(ProxyDeadError("Прокси недоступен")) is True
+    assert looks_like_proxy_dead(Exception("Connection to Telegram failed 5 time(s)")) is False
+    assert looks_like_proxy_dead(
+        Exception("Connection to Telegram failed 5 time(s) [proxy 88.218.186.149:63065]")
+    ) is True
 
 
 def test_duplicated_auth_key_is_busy_not_revoked():

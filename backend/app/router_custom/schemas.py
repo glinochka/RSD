@@ -502,6 +502,7 @@ class ChatTargetCreate(BaseModel):
     provider: str = "telegram"
     invite_link: str = Field(..., min_length=1, max_length=512)
     mode: str = "monitoring"
+    folder_id: Optional[int] = None
     external_chat_id: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None

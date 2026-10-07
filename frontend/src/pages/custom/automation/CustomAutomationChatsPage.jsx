@@ -108,7 +108,19 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
 
   const parsedLink = useMemo(() => parseTelegramChatRef(inviteLink), [inviteLink]);
 
+  const activeFolder = useMemo(
+    () => folders.find((item) => String(item.id) === String(filters.folderId)) || null,
+    [folders, filters.folderId],
+  );
+  const inFolder = Boolean(filters.folderId);
+
   const loadChats = useCallback(async () => {
+    if (!filters.folderId) {
+      setChats([]);
+      setTotal(0);
+      setIsLoading(false);
+      return;
+    }
     try {
       setIsLoading(true);
       const data = await customService.getChats(id, {
@@ -258,7 +270,10 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     setError(null);
     setMessage(null);
     try {
-      const created = await customService.createChat(id, { invite_link: inviteLink.trim() });
+      const created = await customService.createChat(id, {
+        invite_link: inviteLink.trim(),
+        folder_id: filters.folderId ? Number(filters.folderId) : undefined,
+      });
       setShowForm(false);
       setInviteLink('');
       const foundTitle = created.title || created.invite_link;
@@ -341,13 +356,15 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
         <div>
           <h1 className="crm-title">Чаты и каналы</h1>
           <p className="crm-subtitle">
-            Один файл — одна папка. Папку можно выбрать целью задачи: аккаунты вступят пачкой через addlist и начнут работу.
+            {inFolder
+              ? `Чаты папки «${activeFolder?.name || ''}».`
+              : 'Сначала папки: один файл — одна папка. Нажмите папку, чтобы открыть чаты внутри.'}
           </p>
         </div>
         <div className="crm-stats">
           <div className="crm-stat">
-            <span className="crm-stat-value">{total}</span>
-            <span className="crm-stat-label">Всего</span>
+            <span className="crm-stat-value">{inFolder ? total : folders.length}</span>
+            <span className="crm-stat-label">{inFolder ? 'Чатов' : 'Папок'}</span>
           </div>
         </div>
       </div>
@@ -363,9 +380,24 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       {tab !== 'list' ? null : (
         <>
           <div className="settings-actions">
-            <button type="button" onClick={() => setShowForm((s) => !s)} className="btn btn-outline">
-              {showForm ? 'Скрыть форму' : 'Добавить чат'}
-            </button>
+            {inFolder ? (
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  setOffset(0);
+                  setShowForm(false);
+                  setFilters((current) => ({ ...current, folderId: '' }));
+                }}
+              >
+                К папкам
+              </button>
+            ) : null}
+            {inFolder ? (
+              <button type="button" onClick={() => setShowForm((s) => !s)} className="btn btn-outline">
+                {showForm ? 'Скрыть форму' : 'Добавить чат'}
+              </button>
+            ) : null}
             <CustomFileButton
               accept=".csv,.xlsx,.xls"
               variant="ubt"
@@ -374,9 +406,11 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             >
               {isImporting ? 'Импорт...' : 'Импорт Excel'}
             </CustomFileButton>
-            <button type="button" onClick={() => setShowFilters((s) => !s)} className="btn btn-outline">
-              {showFilters ? 'Скрыть фильтр' : 'Фильтр'}
-            </button>
+            {inFolder ? (
+              <button type="button" onClick={() => setShowFilters((s) => !s)} className="btn btn-outline">
+                {showFilters ? 'Скрыть фильтр' : 'Фильтр'}
+              </button>
+            ) : null}
             <button type="button" onClick={handleJoin} disabled={isJoining} className="btn btn-outline">
               {isJoining ? '...' : 'Вступить сейчас'}
             </button>
@@ -389,53 +423,58 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
           {message ? <p className="crm-flash">{message}</p> : null}
           {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
-          {folders.length > 0 ? (
-            <div className="settings-section">
-              <h3 className="settings-section-title">Папки</h3>
-              <div className="crm-list">
-                <div className="crm-item">
-                  <div className="crm-item-header">
-                    <h5 className="crm-item-title">Все чаты</h5>
-                    <button
-                      type="button"
-                      className={`btn ${filters.folderId === '' ? 'btn-on' : 'btn-outline'}`}
+          {!inFolder ? (
+            folders.length > 0 ? (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Папки</h3>
+                <div className="crm-list">
+                  {folders.map((folder) => (
+                    <div
+                      key={folder.id}
+                      className="crm-item crm-item--clickable"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
                         setOffset(0);
-                        setFilters((current) => ({ ...current, folderId: '' }));
+                        setFilters((current) => ({ ...current, folderId: String(folder.id) }));
                       }}
-                    >
-                      Показать
-                    </button>
-                  </div>
-                </div>
-                {folders.map((folder) => (
-                  <div key={folder.id} className="crm-item">
-                    <div className="crm-item-header">
-                      <h5 className="crm-item-title">{folder.name}</h5>
-                      <span className="crm-status">{folder.chats_count}</span>
-                    </div>
-                    <div className="crm-item-actions">
-                      <button
-                        type="button"
-                        className={`btn ${String(filters.folderId) === String(folder.id) ? 'btn-on' : 'btn-outline'}`}
-                        onClick={() => {
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
                           setOffset(0);
                           setFilters((current) => ({ ...current, folderId: String(folder.id) }));
-                        }}
-                      >
-                        Открыть
-                      </button>
-                      <button type="button" className="btn btn-outline" onClick={() => handleDeleteFolder(folder)}>
-                        Удалить
-                      </button>
+                        }
+                      }}
+                    >
+                      <div className="crm-item-header">
+                        <h5 className="crm-item-title">{folder.name}</h5>
+                        <span className="crm-status">{folder.chats_count} чатов</span>
+                      </div>
+                      <div className="crm-item-actions">
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleDeleteFolder(folder);
+                          }}
+                        >
+                          Удалить
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="crm-empty-list">
+                <p>Папок пока нет</p>
+                <span>Загрузите Excel — один файл станет одной папкой. Нажмите папку, чтобы увидеть чаты внутри.</span>
+              </div>
+            )
           ) : null}
 
-          {showForm ? (
+          {inFolder && showForm ? (
             <form onSubmit={handleCreate} className="settings-section">
               <h3 className="settings-section-title">Новый чат</h3>
               <div className="form-group">
@@ -465,7 +504,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             </form>
           ) : null}
 
-          {showFilters ? (
+          {inFolder && showFilters ? (
             <div className="settings-section">
               <h3 className="settings-section-title">Фильтр</h3>
               <FeatureToggle
@@ -554,7 +593,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                 </div>
               </div>
             </div>
-          ) : (
+          ) : inFolder ? (
             <div className="settings-section">
               <div className="form-group">
                 <label htmlFor="chat-filter-basic">Статус вступления</label>
@@ -569,16 +608,16 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                 />
               </div>
             </div>
-          )}
+          ) : null}
 
-          {isLoading ? (
+          {inFolder && isLoading ? (
             <div className="crm-empty-list"><p>Загрузка...</p></div>
-          ) : chats.length === 0 ? (
+          ) : inFolder && chats.length === 0 ? (
             <div className="crm-empty-list">
               <p>Нет чатов</p>
               <span>Добавьте вручную или импортируйте Excel — мелкие и заброшенные отсеются сами.</span>
             </div>
-          ) : (
+          ) : inFolder ? (
             <div className="crm-list">
               {chats.map((chat) => (
                 <div key={chat.id} className="crm-item">
@@ -609,9 +648,9 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
 
-          {total > PAGE_SIZE ? (
+          {inFolder && total > PAGE_SIZE ? (
             <div className="settings-actions">
               <button
                 type="button"
@@ -633,7 +672,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             </div>
           ) : null}
 
-          {jobs.length > 0 ? (
+          {inFolder && jobs.length > 0 ? (
             <div className="settings-section">
               <h3 className="settings-section-title">Импорты</h3>
               <div className="crm-list">

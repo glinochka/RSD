@@ -5968,6 +5968,122 @@ class TestAccountProxies:
         assert payload["accounts_with_proxy"] == 1
         assert payload["proxy_distribution"][0]["host"] == "10.1.1.1"
 
+    async def test_dead_proxy_rotates_to_next_living(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from datetime import timedelta
+
+        from app.alembic.models import CustomProxy
+        from app.services.custom import proxy_service
+        from app.services.custom.proxy_service import recover_dead_proxy, replace_proxy_list
+
+        proxy_service._last_rotate_at.clear()
+        monkeypatch.setattr(proxy_service, "_ROTATE_GAP", timedelta(0))
+
+        async def probe(host, port, timeout=4.0):
+            return host != "10.4.4.1"
+
+        monkeypatch.setattr(proxy_service, "probe_proxy_tcp", probe)
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            username="rotate_acc",
+            phone="+79995000001",
+        )
+        await replace_proxy_list(test_session, custom_automation, "10.4.4.1:1080\n10.4.4.2:1080")
+        await test_session.commit()
+        await test_session.refresh(account)
+        assert (account.telegram_proxy or {}).get("host") == "10.4.4.1"
+
+        chosen = await recover_dead_proxy(test_session, account)
+        await test_session.commit()
+        assert chosen is not None
+        assert chosen.host == "10.4.4.2"
+        await test_session.refresh(account)
+        assert (account.telegram_proxy or {}).get("host") == "10.4.4.2"
+        dead = (
+            await test_session.execute(
+                select(CustomProxy).where(
+                    CustomProxy.custom_automation_id == custom_automation.id,
+                    CustomProxy.host == "10.4.4.1",
+                )
+            )
+        ).scalar_one()
+        assert dead.is_healthy is False
+
+    async def test_dead_proxy_skips_unhealthy_peer(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from datetime import timedelta
+
+        from app.services.custom import proxy_service
+        from app.services.custom.proxy_service import recover_dead_proxy, replace_proxy_list
+
+        proxy_service._last_rotate_at.clear()
+        monkeypatch.setattr(proxy_service, "_ROTATE_GAP", timedelta(0))
+
+        async def probe(host, port, timeout=4.0):
+            return host == "10.6.6.3"
+
+        monkeypatch.setattr(proxy_service, "probe_proxy_tcp", probe)
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            username="skip_dead_peer",
+            phone="+79995000003",
+        )
+        await replace_proxy_list(
+            test_session, custom_automation, "10.6.6.1:1080\n10.6.6.2:1080\n10.6.6.3:1080"
+        )
+        await test_session.commit()
+        await test_session.refresh(account)
+        assert (account.telegram_proxy or {}).get("host") == "10.6.6.1"
+
+        chosen = await recover_dead_proxy(test_session, account)
+        await test_session.commit()
+        assert chosen is not None
+        assert chosen.host == "10.6.6.3"
+        await test_session.refresh(account)
+        assert (account.telegram_proxy or {}).get("host") == "10.6.6.3"
+
+    async def test_dead_proxy_stays_when_no_living_peer(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from datetime import timedelta
+
+        from app.services.custom import proxy_service
+        from app.services.custom.proxy_service import recover_dead_proxy, replace_proxy_list
+
+        proxy_service._last_rotate_at.clear()
+        monkeypatch.setattr(proxy_service, "_ROTATE_GAP", timedelta(0))
+
+        async def probe(host, port, timeout=4.0):
+            return False
+
+        monkeypatch.setattr(proxy_service, "probe_proxy_tcp", probe)
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            username="lonely_proxy_acc",
+            phone="+79995000002",
+        )
+        await replace_proxy_list(test_session, custom_automation, "10.5.5.1:1080")
+        await test_session.commit()
+        chosen = await recover_dead_proxy(test_session, account)
+        assert chosen is None
+
 
 class TestNeurocommentingDailyLimits:
     async def test_chat_cap_is_not_account_cap(self):

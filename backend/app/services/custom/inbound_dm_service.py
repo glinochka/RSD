@@ -1,6 +1,7 @@
 """Reply to unsolicited private messages without creating leads."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
@@ -213,109 +214,127 @@ async def _process_account(
     if await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
         return {"status": "skipped", "reason": "hourly_limit"}
 
-    handled = 0
-    try:
-        async with TelegramAccountClient.for_account(account) as client:
-            dialogs = await client.get_dialogs(limit=random.randint(8, 16))
-            for dialog in dialogs or []:
-                if not getattr(dialog, "is_user", False):
+    async def _run_with_client(client: TelegramAccountClient) -> dict[str, Any]:
+        handled = 0
+        dialogs = await client.get_dialogs(limit=random.randint(8, 16))
+        for dialog in dialogs or []:
+            if not getattr(dialog, "is_user", False):
+                continue
+            entity = dialog.entity
+            if entity is None or getattr(entity, "bot", False):
+                continue
+            if is_official_telegram_peer(entity):
+                continue
+            if entity_matches_peer_keys(entity, pool_peer_keys):
+                continue
+            peer_id = int(getattr(entity, "id", 0) or 0)
+            username = getattr(entity, "username", None)
+            if await _lead_exists_for_peer(session, automation.id, account.id, peer_id, username):
+                continue
+            messages = await client.get_messages(entity, limit=8)
+            history_texts = [str(getattr(item, "text", "") or "") for item in (messages or [])]
+            already_shared_link = conversation_has_link(history_texts)
+            for msg in reversed(list(messages or [])):
+                if not msg or not getattr(msg, "text", None) or getattr(msg, "out", False):
                     continue
-                entity = dialog.entity
-                if entity is None or getattr(entity, "bot", False):
+                incoming = str(msg.text).strip()
+                if not incoming:
                     continue
-                if is_official_telegram_peer(entity):
+                external_id = f"{peer_id}:{msg.id}"
+                if await _already_handled(session, automation.id, account.id, external_id):
                     continue
-                if entity_matches_peer_keys(entity, pool_peer_keys):
+                if not is_ready_to_reply(msg, external_id, lab_mode=False):
                     continue
-                peer_id = int(getattr(entity, "id", 0) or 0)
-                username = getattr(entity, "username", None)
-                if await _lead_exists_for_peer(session, automation.id, account.id, peer_id, username):
-                    continue
-                messages = await client.get_messages(entity, limit=8)
-                history_texts = [str(getattr(item, "text", "") or "") for item in (messages or [])]
-                already_shared_link = conversation_has_link(history_texts)
-                for msg in reversed(list(messages or [])):
-                    if not msg or not getattr(msg, "text", None) or getattr(msg, "out", False):
-                        continue
-                    incoming = str(msg.text).strip()
-                    if not incoming:
-                        continue
-                    external_id = f"{peer_id}:{msg.id}"
-                    if await _already_handled(session, automation.id, account.id, external_id):
-                        continue
-                    # Field only: 1–4 min before opening the chat. Test lab never calls this path.
-                    if not is_ready_to_reply(msg, external_id, lab_mode=False):
-                        continue
-                    allow_link = incoming_asks_for_link(incoming) and not already_shared_link
-                    try:
-                        reply = await _generate_reply(
-                            session, automation, incoming, allow_link=allow_link
-                        )
-                    except Exception as exc:
-                        await log_action_error(
-                            session,
-                            account,
-                            action_type=INBOUND_DM_ACTION,
-                            target_id=external_id,
-                            target_type="dm",
-                            error_message=str(exc)[:2000],
-                            payload={"incoming": incoming[:500], "peer_id": peer_id},
-                            automation_id=automation.id,
-                        )
-                        await session.commit()
-                        continue
-                    if not reply:
-                        continue
-
-                    async def _send_human_reply(
-                        _entity=entity,
-                        _msg=msg,
-                        _reply=reply,
-                    ):
-                        await client.human_reply(
-                            _entity,
-                            _reply,
-                            incoming_message=_msg,
-                            lab_mode=False,
-                        )
-
-                    await execute_with_telegram_retry(
+                allow_link = incoming_asks_for_link(incoming) and not already_shared_link
+                try:
+                    reply = await _generate_reply(
+                        session, automation, incoming, allow_link=allow_link
+                    )
+                except Exception as exc:
+                    await log_action_error(
                         session,
                         account,
-                        _send_human_reply,
                         action_type=INBOUND_DM_ACTION,
                         target_id=external_id,
                         target_type="dm",
+                        error_message=str(exc)[:2000],
+                        payload={"incoming": incoming[:500], "peer_id": peer_id},
+                        automation_id=automation.id,
+                    )
+                    await session.commit()
+                    continue
+                if not reply:
+                    continue
+
+                async def _send_human_reply(
+                    _entity=entity,
+                    _msg=msg,
+                    _reply=reply,
+                ):
+                    await client.human_reply(
+                        _entity,
+                        _reply,
+                        incoming_message=_msg,
+                        lab_mode=False,
+                    )
+
+                await execute_with_telegram_retry(
+                    session,
+                    account,
+                    _send_human_reply,
+                    action_type=INBOUND_DM_ACTION,
+                    target_id=external_id,
+                    target_type="dm",
+                    payload={
+                        "incoming": incoming[:500],
+                        "reply": reply[:500],
+                        "peer_id": peer_id,
+                        "username": username,
+                    },
+                    automation_id=automation.id,
+                )
+                session.add(
+                    AutomationActionLog(
+                        custom_automation_id=automation.id,
+                        social_account_id=account.id,
+                        action_type=INBOUND_DM_ACTION,
+                        target_id=external_id,
+                        target_type="dm",
+                        result="success",
                         payload={
                             "incoming": incoming[:500],
                             "reply": reply[:500],
                             "peer_id": peer_id,
-                            "username": username,
                         },
-                        automation_id=automation.id,
+                        created_at=_utc_now(),
                     )
-                    session.add(
-                        AutomationActionLog(
-                            custom_automation_id=automation.id,
-                            social_account_id=account.id,
-                            action_type=INBOUND_DM_ACTION,
-                            target_id=external_id,
-                            target_type="dm",
-                            result="success",
-                            payload={
-                                "incoming": incoming[:500],
-                                "reply": reply[:500],
-                                "peer_id": peer_id,
-                            },
-                            created_at=_utc_now(),
-                        )
-                    )
-                    await session.commit()
-                    handled += 1
-                    if allow_link:
-                        already_shared_link = True
-                    if account_should_idle(account) or await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
-                        return {"status": "ok", "handled": handled}
+                )
+                await session.commit()
+                handled += 1
+                if allow_link:
+                    already_shared_link = True
+                if account_should_idle(account) or await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
+                    return {"status": "ok", "handled": handled}
+        return {"status": "ok", "handled": handled}
+
+    try:
+        try:
+            async with TelegramAccountClient.for_account(account) as client:
+                return await _run_with_client(client)
+        except Exception as exc:
+            from .proxy_service import recover_dead_proxy
+            from .telegram_error_handler import looks_like_proxy_dead
+
+            if not looks_like_proxy_dead(exc):
+                raise
+            rotated = await recover_dead_proxy(session, account)
+            if rotated is None:
+                raise
+            await session.commit()
+            await session.refresh(account)
+            await asyncio.sleep(2)
+            async with TelegramAccountClient.for_account(account) as client:
+                return await _run_with_client(client)
     except Exception as exc:
         logger.warning("Inbound DM pass failed for account %s: %s", account.id, exc)
         await log_action_error(
@@ -330,7 +349,6 @@ async def _process_account(
         )
         await session.commit()
         return {"status": "error", "reason": str(exc)[:200]}
-    return {"status": "ok", "handled": handled}
 
 
 async def run_inbound_dm_pass(automation_id: int) -> dict[str, Any]:

@@ -2267,6 +2267,10 @@ class CustomProxy(Base):
         Boolean, default=False, server_default="false", nullable=False, index=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    is_healthy: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    fail_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 

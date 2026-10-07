@@ -110,6 +110,56 @@ class TestTaskChatFolders:
         assert chat.id in ids
         assert outsider.id not in ids
 
+    async def test_chats_api_lists_folders_then_folder_contents(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        folder = ChatFolder(
+            custom_automation_id=custom_automation.id, name="seo_excel", created_at=_now(), updated_at=_now()
+        )
+        test_session.add(folder)
+        await test_session.flush()
+        inside = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Inside",
+            invite_link="https://t.me/inside_folder",
+            folder_id=folder.id,
+            is_active=True,
+        )
+        orphan = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Orphan",
+            invite_link="https://t.me/orphan_chat",
+            is_active=True,
+        )
+        test_session.add_all([inside, orphan])
+        await test_session.commit()
+        await test_session.refresh(folder)
+        await test_session.refresh(inside)
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        folders = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/chats/folders",
+            headers=headers,
+        )
+        assert folders.status_code == 200, folders.text
+        names = [item["name"] for item in folders.json()["items"]]
+        assert "seo_excel" in names
+        scoped = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/chats",
+            headers=headers,
+            params={"folder_id": folder.id},
+        )
+        assert scoped.status_code == 200, scoped.text
+        items = scoped.json()["items"]
+        assert [item["id"] for item in items] == [inside.id]
+        assert all(item["folder_id"] == folder.id for item in items)
+
     async def test_broadcast_empty_folder_does_not_scan_all(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):

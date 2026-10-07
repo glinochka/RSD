@@ -11,14 +11,15 @@
     NOT banned – but the session is dead and you will have re-login via QR/SMS.
 
     Rules to follow:
-      1. Never change the proxy assigned to an account after first login.
-      2. Never copy a .session file to a different machine / container that
-         uses a different outbound IP without also migrating the proxy config.
-      3. Never run the same .session from two workers simultaneously
-         (the per-session asyncio.Lock in _lock_for_session prevents this
-          within one process, but not across separate containers/servers).
-      4. If you must change a proxy, log the account out first (revoke the
-         session via Telegram settings), then re-login from the new IP.
+      1. Never run the same .session from two workers / IPs at once
+         (AuthKeyDuplicatedError kills the key). In-process: asyncio lock +
+         live-handle + flock. Do not scale backend replicas on these files.
+      2. Never copy a .session file to a different machine without its proxy.
+      3. A dead proxy may be replaced only after drop_alive() has fully
+         disconnected that one live client. Then bind the next living proxy
+         and keep_alive() the SAME file. Never open a second Telethon client
+         on the old connection.
+      4. Do not QR/SMS the same account while keep_alive holds it.
 """
 import asyncio
 import io
@@ -39,9 +40,11 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import InputPhoneContact
 
 from .telegram_error_handler import (
+    ProxyDeadError,
     SessionInvalidError,
     _looks_like_session_busy_error,
     _looks_like_session_error,
+    looks_like_proxy_dead,
     parse_spambot_reply,
 )
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
@@ -460,6 +463,10 @@ class TelegramAccountClient:
             raise exc
         if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
             raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
+        if self._proxy and looks_like_proxy_dead(exc):
+            raise ProxyDeadError(str(exc) or "Прокси недоступен") from exc
+        if self._proxy and "connection to telegram failed" in str(exc).lower():
+            raise ProxyDeadError(str(exc) or "Прокси недоступен") from exc
         raise exc
 
     async def _connect_work_copy(self) -> bool:
@@ -508,6 +515,8 @@ class TelegramAccountClient:
             except Exception as exc:
                 if _looks_like_session_busy_error(exc):
                     raise
+                if looks_like_proxy_dead(exc) or isinstance(exc, ProxyDeadError):
+                    self._raise_connect_error(exc)
                 last_exc = exc
                 logger.info(
                     "Telegram login failed with api_id=%s for %s: %s",

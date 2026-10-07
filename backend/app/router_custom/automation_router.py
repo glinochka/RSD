@@ -2521,6 +2521,7 @@ async def create_chat(
                 automation_id,
                 payload.invite_link,
                 mode=payload.mode,
+                folder_id=payload.folder_id,
             )
             response = ChatTargetResponse.model_validate(chat)
     except ValueError as exc:
