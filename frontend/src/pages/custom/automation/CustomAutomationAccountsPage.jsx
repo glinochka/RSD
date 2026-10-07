@@ -15,6 +15,28 @@ import '../../../styles/customSolutionNav.css';
 
 const PAGE_SIZES = [25, 50, 100];
 const ACCEPT = '.zip,.csv,.session';
+const PROXY_COUNTRY_OPTIONS = [
+  { value: '', label: 'Авто (из строки или IP)' },
+  { value: 'FI', label: 'Финляндия' },
+  { value: 'DE', label: 'Германия' },
+  { value: 'NL', label: 'Нидерланды' },
+  { value: 'GB', label: 'Великобритания' },
+  { value: 'FR', label: 'Франция' },
+  { value: 'PL', label: 'Польша' },
+  { value: 'SE', label: 'Швеция' },
+  { value: 'UA', label: 'Украина' },
+  { value: 'RU', label: 'Россия' },
+  { value: 'KZ', label: 'Казахстан' },
+  { value: 'TR', label: 'Турция' },
+  { value: 'AE', label: 'ОАЭ' },
+  { value: 'US', label: 'США' },
+  { value: 'CA', label: 'Канада' },
+  { value: 'BR', label: 'Бразилия' },
+  { value: 'SG', label: 'Сингапур' },
+  { value: 'JP', label: 'Япония' },
+  { value: 'IN', label: 'Индия' },
+  { value: 'ZA', label: 'ЮАР' },
+];
 
 const STATUS_FILTERS = [
   { value: '', label: 'Все статусы' },
@@ -155,6 +177,7 @@ const CustomAutomationAccountsPage = () => {
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
   const [proxyText, setProxyText] = useState('');
+  const [proxyCountry, setProxyCountry] = useState('');
   const [proxySaving, setProxySaving] = useState(false);
   const [proxyMessage, setProxyMessage] = useState(null);
 
@@ -481,7 +504,10 @@ const CustomAutomationAccountsPage = () => {
     setProxySaving(true);
     setProxyMessage(null);
     try {
-      await customService.updateAutomationSettings(id, { proxy_list_text: proxyText });
+      await customService.updateAutomationSettings(id, {
+        proxy_list_text: proxyText,
+        proxy_country: proxyCountry || null,
+      });
       await loadPoolProxies();
       setProxyMessage('Пул прокси сохранён');
     } catch (err) {
@@ -945,9 +971,21 @@ const CustomAutomationAccountsPage = () => {
               {panel === 'proxy' ? (
                 <>
                   <p className="form-hint">
-                    В пуле сейчас: {poolProxies.length || 'пусто'}.
+                    В пуле сейчас: {poolProxies.length || 'пусто'}. Можно socks5/http, IPv4/IPv6.
+                    Если поставщик пишет HTTP-порт 1xxxx для SOCKS5 — первую цифру поднимаем сами, когда без этого порт мёртвый.
+                    Автоподстановка берёт прокси той же страны или региона (Европа, СА, ЮА, Африка, Азия).
                   </p>
                   {proxyMessage ? <p className="form-hint">{proxyMessage}</p> : null}
+                  <div className="form-group">
+                    <label htmlFor="acc-proxy-country">Страна этого списка</label>
+                    <CustomSelect
+                      id="acc-proxy-country"
+                      value={proxyCountry}
+                      options={PROXY_COUNTRY_OPTIONS}
+                      onChange={(event) => setProxyCountry(event.target.value)}
+                    />
+                    <p className="form-hint">Нужно, если у поставщика IPv4-шлюз в другой стране, а выход — Финляндия и т.п.</p>
+                  </div>
                   <div className="form-group">
                     <label htmlFor="acc-proxy-text">Список прокси</label>
                     <textarea
@@ -955,7 +993,7 @@ const CustomAutomationAccountsPage = () => {
                       rows={8}
                       value={proxyText}
                       onChange={(event) => setProxyText(event.target.value)}
-                      placeholder={'1.2.3.4:1080\n5.6.7.8:1080:user:pass\nsocks5://user:pass@9.8.7.6:1080'}
+                      placeholder={'socks5://user:pass@host:21625\nhttp://user:pass@host:11625\n[2001:db8::1]:1080:user:pass\nuser:pass@host:1080 FI'}
                     />
                   </div>
                   <CustomFileButton

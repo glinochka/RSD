@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import re
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -13,6 +14,13 @@ from urllib.parse import unquote, urlparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .proxy_geo import (
+    country_from_phone,
+    normalize_country,
+    proxy_fit_score,
+    region_for_country,
+    split_country_tail,
+)
 from ...alembic.models import CustomAutomation, CustomProxy, PoolAccount, SocialAccount
 from ...utils.crypto import decrypt_token, encrypt_token
 
@@ -26,9 +34,21 @@ _last_rotate_at: dict[int, datetime] = {}
 _rotate_locks: dict[int, asyncio.Lock] = {}
 _rotate_locks_guard = asyncio.Lock()
 _ALLOWED_SCHEMES = {"socks5": "socks5", "socks4": "socks4", "http": "http", "https": "http", "socks5h": "socks5"}
-_HOST_PORT_RE = re.compile(r"^(?P<host>[^:\s]+):(?P<port>\d+)$")
+_ISO_FIELD_RE = re.compile(r"^[A-Za-z]{2}$")
+_URL_LINE_RE = re.compile(
+    r"^(?P<scheme>https?|socks5h?|socks4)://(?P<body>.+)$",
+    re.IGNORECASE,
+)
+_USER_AT_V6_RE = re.compile(
+    r"^(?P<username>[^:@\s]+):(?P<password>[^@]*?)@\[(?P<host>[0-9a-fA-F:]+)\]:(?P<port>\d+)$"
+)
 _USER_AT_RE = re.compile(
-    r"^(?P<username>[^:@\s]+):(?P<password>[^@]*?)@(?P<host>[^:\s]+):(?P<port>\d+)$"
+    r"^(?P<username>[^:@\s]+):(?P<password>[^@]*?)@(?P<host>[^:\[\]\s]+):(?P<port>\d+)$"
+)
+_HOST_PORT_V6_RE = re.compile(r"^\[(?P<host>[0-9a-fA-F:]+)\]:(?P<port>\d+)$")
+_HOST_PORT_RE = re.compile(r"^(?P<host>[^:\[\]\s]+):(?P<port>\d+)$")
+_IPV6_AUTH_RE = re.compile(
+    r"^\[(?P<host>[0-9a-fA-F:]+)\]:(?P<port>\d+):(?P<username>[^:]*):(?P<password>.*)$"
 )
 
 
@@ -71,64 +91,157 @@ def _parse_host(value: str | None) -> str:
     return host
 
 
+def detect_ip_version(host: str) -> int | None:
+    try:
+        return ipaddress.ip_address((host or "").strip().strip("[]")).version
+    except ValueError:
+        return None
+
+
+def vendor_socks5_port(port: int) -> int | None:
+    """HTTP 1xxxx → SOCKS5 2xxxx used by several IPv6 shops. 1080/8080 stay."""
+    if port < 10000 or port > 65535:
+        return None
+    text = str(port)
+    if text[0] != "1":
+        return None
+    bumped = int("2" + text[1:])
+    if bumped > 65535:
+        return None
+    return bumped
+
+
 def proxy_fingerprint(scheme: str, host: str, port: int, username: str | None) -> str:
     raw = f"{scheme}|{host.lower()}|{port}|{(username or '').lower()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def parse_proxy_line(raw: str) -> dict[str, Any]:
-    line = (raw or "").strip()
-    if not line or line.startswith("#"):
-        raise ValueError("empty")
-    if line.lower().startswith(("socks", "http")) and "://" in line:
-        parsed = urlparse(line)
-        scheme = _normalize_scheme(parsed.scheme)
-        host = _parse_host(parsed.hostname)
-        port = _parse_port(parsed.port)
-        username = unquote(parsed.username) if parsed.username else None
-        password = unquote(parsed.password) if parsed.password else None
-    elif "@" in line and "://" not in line:
-        match = _USER_AT_RE.match(line)
-        if not match:
-            raise ValueError("Ожидается user:pass@host:port")
-        scheme = "socks5"
-        host = _parse_host(match.group("host"))
-        port = _parse_port(match.group("port"))
-        username = match.group("username")
-        password = match.group("password") or None
-    else:
-        parts = line.split(":")
-        if len(parts) == 2:
-            scheme = "socks5"
-            host = _parse_host(parts[0])
-            port = _parse_port(parts[1])
-            username = None
-            password = None
-        elif len(parts) >= 4:
-            scheme = "socks5"
-            host = _parse_host(parts[0])
-            port = _parse_port(parts[1])
-            username = parts[2] or None
-            password = ":".join(parts[3:]) or None
-        else:
-            match = _HOST_PORT_RE.match(line)
-            if not match:
-                raise ValueError("Ожидается host:port или host:port:user:pass")
-            scheme = "socks5"
-            host = _parse_host(match.group("host"))
-            port = _parse_port(match.group("port"))
-            username = None
-            password = None
+def _split_country_field(parts: list[str]) -> tuple[list[str], str | None]:
+    if len(parts) < 5:
+        return parts, None
+    code = normalize_country(parts[-1])
+    if not code or not _ISO_FIELD_RE.match(parts[-1].strip()):
+        return parts, None
+    return parts[:-1], code
+
+
+def _parsed(
+    scheme: str,
+    host: str,
+    port: int,
+    username: str | None,
+    password: str | None,
+    *,
+    country_code: str | None = None,
+    scheme_explicit: bool = False,
+) -> dict[str, Any]:
     username = (username or "").strip() or None
     password = password if password else None
+    host = _parse_host(host)
     return {
         "scheme": scheme,
         "host": host,
         "port": port,
         "username": username,
         "password": password,
+        "country_code": country_code,
+        "region": region_for_country(country_code),
+        "ip_version": detect_ip_version(host),
+        "scheme_explicit": scheme_explicit,
         "fingerprint": proxy_fingerprint(scheme, host, port, username),
     }
+
+
+def parse_proxy_line(raw: str) -> dict[str, Any]:
+    stripped = (raw or "").strip()
+    if not stripped or stripped.startswith("#"):
+        raise ValueError("empty")
+    line, tail_country = split_country_tail(stripped)
+    if not line:
+        raise ValueError("empty")
+    url_match = _URL_LINE_RE.match(line)
+    if url_match:
+        parsed = urlparse(line)
+        scheme = _normalize_scheme(parsed.scheme)
+        host = _parse_host(parsed.hostname)
+        if parsed.port is None:
+            raise ValueError("В URL нет порта")
+        return _parsed(
+            scheme,
+            host,
+            _parse_port(parsed.port),
+            unquote(parsed.username) if parsed.username else None,
+            unquote(parsed.password) if parsed.password else None,
+            country_code=tail_country,
+            scheme_explicit=True,
+        )
+    at_v6 = _USER_AT_V6_RE.match(line)
+    if at_v6:
+        return _parsed(
+            "socks5",
+            at_v6.group("host"),
+            _parse_port(at_v6.group("port")),
+            at_v6.group("username"),
+            at_v6.group("password") or None,
+            country_code=tail_country,
+        )
+    if "@" in line and "://" not in line:
+        match = _USER_AT_RE.match(line)
+        if not match:
+            raise ValueError("Ожидается user:pass@host:port")
+        return _parsed(
+            "socks5",
+            match.group("host"),
+            _parse_port(match.group("port")),
+            match.group("username"),
+            match.group("password") or None,
+            country_code=tail_country,
+        )
+    v6_auth = _IPV6_AUTH_RE.match(line)
+    if v6_auth:
+        return _parsed(
+            "socks5",
+            v6_auth.group("host"),
+            _parse_port(v6_auth.group("port")),
+            v6_auth.group("username") or None,
+            v6_auth.group("password") or None,
+            country_code=tail_country,
+        )
+    host_v6 = _HOST_PORT_V6_RE.match(line)
+    if host_v6:
+        return _parsed(
+            "socks5",
+            host_v6.group("host"),
+            _parse_port(host_v6.group("port")),
+            None,
+            None,
+            country_code=tail_country,
+        )
+    parts = line.split(":")
+    parts, field_country = _split_country_field(parts)
+    country = tail_country or field_country
+    if len(parts) == 2:
+        return _parsed("socks5", parts[0], _parse_port(parts[1]), None, None, country_code=country)
+    if len(parts) >= 4:
+        return _parsed(
+            "socks5",
+            parts[0],
+            _parse_port(parts[1]),
+            parts[2] or None,
+            ":".join(parts[3:]) or None,
+            country_code=country,
+        )
+    match = _HOST_PORT_RE.match(line)
+    if not match:
+        raise ValueError("Ожидается host:port, user:pass@host:port или socks5://user:pass@host:port")
+    return _parsed(
+        "socks5",
+        match.group("host"),
+        _parse_port(match.group("port")),
+        None,
+        None,
+        country_code=country,
+    )
 
 
 def parse_proxy_list(raw_text: str | None) -> tuple[list[dict[str, Any]], list[str]]:
@@ -151,6 +264,98 @@ def parse_proxy_list(raw_text: str | None) -> tuple[list[dict[str, Any]], list[s
         seen.add(parsed["fingerprint"])
         items.append(parsed)
     return items, errors
+
+
+async def probe_socks5_handshake(
+    host: str,
+    port: int,
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    timeout: float = 2.0,
+) -> bool:
+    """True if the port speaks SOCKS5 (optionally with user/pass)."""
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), timeout)
+    except Exception:
+        return False
+    try:
+        if username:
+            writer.write(b"\x05\x01\x02")
+        else:
+            writer.write(b"\x05\x01\x00")
+        await writer.drain()
+        hello = await asyncio.wait_for(reader.readexactly(2), timeout)
+        if hello[0] != 5:
+            return False
+        if hello[1] == 0:
+            return True
+        if hello[1] != 2 or not username:
+            return False
+        user = (username or "").encode("utf-8")[:255]
+        secret = (password or "").encode("utf-8")[:255]
+        writer.write(bytes([1, len(user)]) + user + bytes([len(secret)]) + secret)
+        await writer.drain()
+        auth = await asyncio.wait_for(reader.readexactly(2), timeout)
+        return auth[0] == 1 and auth[1] == 0
+    except Exception:
+        return False
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+async def apply_vendor_socks_port(item: dict[str, Any]) -> dict[str, Any]:
+    """If SOCKS5 on a 1xxxx HTTP port is dead, bump the first digit (11625→21625)."""
+    if item.get("scheme") != "socks5":
+        return item
+    bumped = vendor_socks5_port(int(item["port"]))
+    if bumped is None:
+        return item
+    original_ok = await probe_socks5_handshake(
+        item["host"],
+        int(item["port"]),
+        username=item.get("username"),
+        password=item.get("password"),
+    )
+    if original_ok:
+        return item
+    bumped_ok = await probe_socks5_handshake(
+        item["host"],
+        bumped,
+        username=item.get("username"),
+        password=item.get("password"),
+    )
+    if not bumped_ok:
+        return item
+    item = dict(item)
+    item["port"] = bumped
+    item["fingerprint"] = proxy_fingerprint(item["scheme"], item["host"], bumped, item.get("username"))
+    return item
+
+
+async def normalize_imported_proxies(
+    items: list[dict[str, Any]],
+    *,
+    default_country: str | None = None,
+) -> list[dict[str, Any]]:
+    default = normalize_country(default_country)
+    sem = asyncio.Semaphore(20)
+
+    async def _one(item: dict[str, Any]) -> dict[str, Any]:
+        async with sem:
+            fixed = await apply_vendor_socks_port(item)
+        country = fixed.get("country_code") or default
+        fixed["country_code"] = country
+        fixed["region"] = region_for_country(country)
+        return fixed
+
+    if not items:
+        return []
+    return list(await asyncio.gather(*(_one(item) for item in items)))
 
 
 def proxy_label(payload: dict | None) -> str | None:
@@ -264,6 +469,7 @@ async def upsert_dedicated_proxy(
         parsed = parse_proxy_line(raw_line)
     except ValueError as exc:
         raise ProxyChoiceError(f"Не удалось разобрать прокси: {exc}") from exc
+    parsed = (await normalize_imported_proxies([parsed]))[0]
     existing = await session.scalar(
         select(CustomProxy).where(
             CustomProxy.custom_automation_id == automation_id,
@@ -278,6 +484,9 @@ async def upsert_dedicated_proxy(
         existing.port = parsed["port"]
         existing.username = parsed["username"]
         existing.password_enc = password_enc
+        existing.country_code = parsed.get("country_code")
+        existing.region = parsed.get("region")
+        existing.ip_version = parsed.get("ip_version")
         existing.is_active = True
         existing.updated_at = now
         await session.flush()
@@ -290,6 +499,9 @@ async def upsert_dedicated_proxy(
         username=parsed["username"],
         password_enc=password_enc,
         fingerprint=parsed["fingerprint"],
+        country_code=parsed.get("country_code"),
+        region=parsed.get("region"),
+        ip_version=parsed.get("ip_version"),
         is_dedicated=True,
         is_active=True,
         created_at=now,
@@ -368,16 +580,33 @@ async def rebalance_proxies(
             bind_account_proxy(pool_account, social, None)
         return {"proxy_count": 0, "assigned": assigned}
     assigned = 0
-    cursor = 0
+    loads = {row.id: 0 for row in shared}
     for pool_account, social in accounts:
         current = by_id.get(pool_account.proxy_id)
         if _is_dedicated(current):
             assigned += 1
             continue
-        bind_account_proxy(pool_account, social, shared[cursor % len(shared)])
+        chosen = _best_proxy_for_account(shared, social, loads)
+        bind_account_proxy(pool_account, social, chosen)
+        loads[chosen.id] += 1
         assigned += 1
-        cursor += 1
     return {"proxy_count": len(shared), "assigned": assigned}
+
+
+def _best_proxy_for_account(
+    rows: list[CustomProxy],
+    account: SocialAccount | None,
+    loads: dict[int, int],
+) -> CustomProxy:
+    country = country_from_phone(getattr(account, "phone_number", None))
+    return min(
+        rows,
+        key=lambda row: (
+            proxy_fit_score(country, getattr(row, "country_code", None)),
+            loads.get(row.id, 0),
+            row.id,
+        ),
+    )
 
 
 async def pick_least_loaded_proxy(
@@ -385,6 +614,7 @@ async def pick_least_loaded_proxy(
     automation_id: int,
     *,
     proxies: list[CustomProxy] | None = None,
+    account: SocialAccount | None = None,
 ) -> CustomProxy | None:
     source = proxies if proxies is not None else await list_active_proxies(session, automation_id)
     rows = [row for row in source if not _is_dedicated(row)]
@@ -401,7 +631,7 @@ async def pick_least_loaded_proxy(
     for proxy_id in result.scalars().all():
         if proxy_id in counts:
             counts[proxy_id] += 1
-    return min(rows, key=lambda row: (counts.get(row.id, 0), row.id))
+    return _best_proxy_for_account(rows, account, counts)
 
 
 async def assign_proxy_to_new_account(
@@ -420,6 +650,7 @@ async def assign_proxy_to_new_account(
             session,
             pool_account.custom_automation_id,
             proxies=proxies,
+            account=social_account,
         )
     bind_account_proxy(pool_account, social_account, chosen)
     return chosen
@@ -463,6 +694,8 @@ async def replace_proxy_list(
     session: AsyncSession,
     automation: CustomAutomation,
     raw_text: str | None,
+    *,
+    default_country: str | None = None,
 ) -> dict[str, Any]:
     text = raw_text if raw_text is not None else ""
     parsed, errors = parse_proxy_list(text)
@@ -470,6 +703,7 @@ async def replace_proxy_list(
         raise ProxyParseError("Не удалось разобрать ни одного прокси. Проверьте формат строк.")
     if len(parsed) > MAX_PROXIES:
         raise ProxyParseError(f"Слишком много прокси (максимум {MAX_PROXIES}).")
+    parsed = await normalize_imported_proxies(parsed, default_country=default_country)
 
     automation.proxy_list_text = text
     automation.updated_at = _utc_now()
@@ -490,6 +724,9 @@ async def replace_proxy_list(
             row.port = item["port"]
             row.username = item["username"]
             row.password_enc = password_enc
+            row.country_code = item.get("country_code")
+            row.region = item.get("region")
+            row.ip_version = item.get("ip_version")
             row.is_active = True
             row.updated_at = now
             kept.append(row)
@@ -502,6 +739,9 @@ async def replace_proxy_list(
                 username=item["username"],
                 password_enc=password_enc,
                 fingerprint=item["fingerprint"],
+                country_code=item.get("country_code"),
+                region=item.get("region"),
+                ip_version=item.get("ip_version"),
                 is_dedicated=False,
                 is_active=True,
                 created_at=now,
@@ -536,6 +776,9 @@ async def proxy_settings_payload(session: AsyncSession, automation: CustomAutoma
             "scheme": row.scheme,
             "host": row.host,
             "port": row.port,
+            "country_code": getattr(row, "country_code", None),
+            "region": getattr(row, "region", None),
+            "ip_version": getattr(row, "ip_version", None),
             "account_count": counts.get(row.id, 0),
         }
         for row in pool
@@ -557,6 +800,8 @@ async def account_proxy_picker_payload(session: AsyncSession, automation_id: int
                 "scheme": row.scheme,
                 "host": row.host,
                 "port": row.port,
+                "country_code": getattr(row, "country_code", None),
+                "ip_version": getattr(row, "ip_version", None),
             }
             for row in await list_pool_proxies(session, automation_id)
         ]
@@ -696,7 +941,16 @@ async def recover_dead_proxy(session: AsyncSession, account: SocialAccount) -> C
             if row.id != current_id and is_proxy_healthy(row) and not _is_dedicated(row)
         ]
         chosen: CustomProxy | None = None
-        for proxy in _next_proxy_order(living, current_id):
+        country = country_from_phone(getattr(account, "phone_number", None))
+        ranked = sorted(
+            living,
+            key=lambda row: (
+                proxy_fit_score(country, getattr(row, "country_code", None)),
+                0 if row.id > int(current_id or 0) else 1,
+                row.id,
+            ),
+        )
+        for proxy in ranked or _next_proxy_order(living, current_id):
             if await probe_proxy_tcp(proxy.host, proxy.port):
                 chosen = proxy
                 break

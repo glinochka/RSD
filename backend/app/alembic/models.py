@@ -2263,6 +2263,9 @@ class CustomProxy(Base):
     username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
+    region: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    ip_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_dedicated: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False, index=True
     )

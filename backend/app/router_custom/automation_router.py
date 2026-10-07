@@ -1427,6 +1427,7 @@ async def update_automation_settings(
                 update_data.get("account_warmup_messages")
             )
         proxy_list_text = update_data.pop("proxy_list_text", None)
+        proxy_country = update_data.pop("proxy_country", None)
         work_fields = {}
         for key in ("work_hour_start", "work_hour_end", "work_weekdays"):
             if key in update_data:
@@ -1439,7 +1440,9 @@ async def update_automation_settings(
             setattr(db_automation, field, value)
         if proxy_list_text is not None:
             try:
-                await replace_proxy_list(session, db_automation, proxy_list_text)
+                await replace_proxy_list(
+                    session, db_automation, proxy_list_text, default_country=proxy_country
+                )
             except ProxyParseError as exc:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         if is_dmp_notify_pipeline(db_automation):

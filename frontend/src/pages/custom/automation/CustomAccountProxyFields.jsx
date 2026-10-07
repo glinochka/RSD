@@ -16,7 +16,7 @@ const CustomAccountProxyFields = ({
     AUTO_OPTION,
     ...proxies.map((item) => ({
       value: String(item.id),
-      label: item.label || `${item.scheme}://${item.host}:${item.port}`,
+      label: `${item.label || `${item.scheme}://${item.host}:${item.port}`}${item.country_code ? ` · ${item.country_code}` : ''}`,
     })),
   ];
   const hasOwnLine = Boolean((proxyLine || '').trim());
@@ -41,7 +41,7 @@ const CustomAccountProxyFields = ({
           value={proxyLine}
           onChange={(e) => onProxyLineChange(e.target.value)}
           disabled={disabled}
-          placeholder="socks5://user:pass@host:port"
+          placeholder="socks5://user:pass@host:port или http://user:pass@host:port"
         />
         <p className="form-hint">{hint}</p>
       </div>

@@ -5802,11 +5802,108 @@ class TestAccountProxies:
         assert plain["username"] is None
         assert plain["scheme"] == "socks5"
 
+        http = parse_proxy_line("http://modeler_zzGSY9:76SBBHzDc16s@139.144.4.230:11625")
+        assert http["scheme"] == "http"
+        assert http["host"] == "139.144.4.230"
+        assert http["port"] == 11625
+        assert http["username"] == "modeler_zzGSY9"
+        assert http["ip_version"] == 4
+
+        socks = parse_proxy_line("socks5://modeler_zzGSY9:76SBBHzDc16s@139.144.4.230:21625")
+        assert socks["scheme"] == "socks5"
+        assert socks["port"] == 21625
+
+        tagged = parse_proxy_line("login:secret@12.0.0.3:9050 FI")
+        assert tagged["country_code"] == "FI"
+        assert tagged["region"] == "europe"
+
+        colon_country = parse_proxy_line("11.0.0.2:1080:login:secret:DE")
+        assert colon_country["country_code"] == "DE"
+        assert colon_country["password"] == "secret"
+
+        v6 = parse_proxy_line("socks5://u:p@[2001:db8::1]:1080")
+        assert v6["host"] == "2001:db8::1"
+        assert v6["ip_version"] == 6
+
         items, errors = parse_proxy_list(
             "# comment\n\n10.0.0.1:1080\n10.0.0.1:1080\nbad line\n11.0.0.2:1080:u:p\n"
         )
         assert [item["host"] for item in items] == ["10.0.0.1", "11.0.0.2"]
         assert len(errors) == 1
+
+    async def test_vendor_socks_port_bump_and_geo_assign(self, monkeypatch):
+        from app.services.custom import proxy_service as ps
+        from app.services.custom.proxy_geo import country_from_phone, proxy_fit_score
+        from app.services.custom.proxy_service import (
+            apply_vendor_socks_port,
+            parse_proxy_line,
+            vendor_socks5_port,
+        )
+
+        assert vendor_socks5_port(11625) == 21625
+        assert vendor_socks5_port(10001) == 20001
+        assert vendor_socks5_port(21625) is None
+        assert vendor_socks5_port(1080) is None
+
+        async def fake_probe(_host, port, **_kwargs):
+            return port == 21625
+
+        monkeypatch.setattr(ps, "probe_socks5_handshake", fake_probe)
+        bumped = await apply_vendor_socks_port(
+            parse_proxy_line("socks5://u:p@139.144.4.230:11625")
+        )
+        assert bumped["port"] == 21625
+        http_kept = await apply_vendor_socks_port(
+            parse_proxy_line("http://u:p@139.144.4.230:11625")
+        )
+        assert http_kept["scheme"] == "http"
+        assert http_kept["port"] == 11625
+
+        assert country_from_phone("+358401234567") == "FI"
+        assert country_from_phone("+79991234567") == "RU"
+        assert country_from_phone("+12025551234") == "US"
+        assert proxy_fit_score("RU", "FI") == 1
+        assert proxy_fit_score("RU", "US") == 3
+        assert proxy_fit_score("US", "US") == 0
+
+    async def test_geo_prefers_same_country_then_region(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomProxy, PoolAccount
+        from app.services.custom.proxy_service import replace_proxy_list
+
+        ru = await self._add_account(test_session, custom_automation, username="geo_ru", phone="+79991111111")
+        us = await self._add_account(test_session, custom_automation, username="geo_us", phone="+12025550100")
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.3.3.1:1080 FI\n10.3.3.2:1080 US",
+            default_country=None,
+        )
+        await test_session.commit()
+        proxies = {
+            row.country_code: row.id
+            for row in (
+                await test_session.execute(
+                    select(CustomProxy).where(CustomProxy.custom_automation_id == custom_automation.id)
+                )
+            ).scalars().all()
+        }
+        assert set(proxies) == {"FI", "US"}
+        ru_pool = await test_session.scalar(select(PoolAccount).where(PoolAccount.social_account_id == ru.id))
+        us_pool = await test_session.scalar(select(PoolAccount).where(PoolAccount.social_account_id == us.id))
+        assert ru_pool.proxy_id == proxies["FI"]
+        assert us_pool.proxy_id == proxies["US"]
+
+        await replace_proxy_list(test_session, custom_automation, "10.4.4.1:1080", default_country="FI")
+        await test_session.commit()
+        tagged = await test_session.scalar(
+            select(CustomProxy).where(CustomProxy.host == "10.4.4.1")
+        )
+        assert tagged.country_code == "FI"
+        assert tagged.region == "europe"
 
     async def test_settings_roundtrip_even_distribution(
         self,

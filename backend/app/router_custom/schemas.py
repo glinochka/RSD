@@ -200,6 +200,9 @@ class ProxyDistributionItem(BaseModel):
     scheme: str
     host: str
     port: int
+    country_code: str | None = None
+    region: str | None = None
+    ip_version: int | None = None
     account_count: int
 
 
@@ -276,6 +279,7 @@ class CustomAutomationSettingsUpdate(BaseModel):
     account_warmup_messages: list[str] | None = None
     account_warmup_enabled: bool | None = None
     proxy_list_text: str | None = None
+    proxy_country: str | None = None
     work_hour_start: int | None = None
     work_hour_end: int | None = None
     work_weekdays: list[int] | None = None
@@ -334,6 +338,8 @@ class AccountProxyOption(BaseModel):
     scheme: str
     host: str
     port: int
+    country_code: str | None = None
+    ip_version: int | None = None
 
 
 class AccountProxyListResponse(BaseModel):
