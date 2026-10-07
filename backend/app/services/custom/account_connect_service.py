@@ -164,6 +164,22 @@ async def persist_authorized_session(
         return pair[0], pair[1], True
 
 
+def _rewrite_connect_exc(exc: Exception, *, prefix: str, had_proxy: bool) -> TelegramUserbotAuthError:
+    from .telegram_error_handler import looks_like_proxy_dead
+
+    blob = str(exc).lower()
+    if had_proxy and (
+        looks_like_proxy_dead(exc)
+        or "could not connect to proxy" in blob
+        or "connection to telegram failed" in blob
+    ):
+        return TelegramUserbotAuthError(
+            "Прокси не отвечает, Telegram через него не открывается. "
+            "Выберите другой из пула или вставьте рабочую строку."
+        )
+    return TelegramUserbotAuthError(f"{prefix}: {exc}")
+
+
 def _token_proxy_id(token_data: dict[str, Any]) -> int | None:
     raw = token_data.get("proxy_id")
     try:
@@ -191,7 +207,7 @@ async def start_account_qr(
     except TelegramUserbotAuthError:
         raise
     except Exception as exc:
-        raise TelegramUserbotAuthError(f"Не удалось начать QR-вход: {exc}") from exc
+        raise _rewrite_connect_exc(exc, prefix="Не удалось начать QR-вход", had_proxy=bool(proxy)) from exc
 
     api_id = int(result.get("api_id") or 0)
     api_hash = str(result.get("api_hash") or "")
@@ -355,10 +371,11 @@ async def request_account_sms(
     except TelegramUserbotAuthError:
         raise
     except Exception as exc:
-        detail = f"Не удалось отправить код подтверждения Telegram: {exc}"
         if "api_id/api_hash combination is invalid" in str(exc).lower():
-            detail = "Telegram отклонил API-ключи. Попробуйте вход по QR."
-        raise TelegramUserbotAuthError(detail) from exc
+            raise TelegramUserbotAuthError("Telegram отклонил API-ключи. Попробуйте вход по QR.") from exc
+        raise _rewrite_connect_exc(
+            exc, prefix="Не удалось отправить код подтверждения Telegram", had_proxy=bool(proxy)
+        ) from exc
     finally:
         await client.disconnect()
 

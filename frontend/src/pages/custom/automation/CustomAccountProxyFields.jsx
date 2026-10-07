@@ -10,7 +10,7 @@ const CustomAccountProxyFields = ({
   onProxyIdChange,
   onProxyLineChange,
   disabled = false,
-  hint = 'Можно выбрать прокси из пула или ввести новый — он останется только у этого аккаунта.',
+  hint = 'Авто пропускает мёртвые прокси из пула. Свой останется только у этого аккаунта.',
 }) => {
   const options = [
     AUTO_OPTION,

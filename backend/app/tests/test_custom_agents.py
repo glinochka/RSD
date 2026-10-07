@@ -6301,6 +6301,37 @@ class TestAccountProxies:
         chosen = await recover_dead_proxy(test_session, account)
         assert chosen is None
 
+    async def test_connect_auto_skips_dead_pool_proxy(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from app.services.custom import proxy_service
+        from app.services.custom.proxy_service import ProxyChoiceError, replace_proxy_list, resolve_connect_proxy
+
+        async def probe(host, port, timeout=4.0):
+            return host != "88.218.186.149"
+
+        monkeypatch.setattr(proxy_service, "probe_proxy_tcp", probe)
+        await replace_proxy_list(
+            test_session, custom_automation, "88.218.186.149:63065\n10.8.8.2:1080"
+        )
+        await test_session.commit()
+
+        proxy_id, payload = await resolve_connect_proxy(test_session, custom_automation.id)
+        assert payload is not None
+        assert payload["addr"] == "10.8.8.2"
+        assert proxy_id is not None
+
+        dead_id = next(
+            row.id
+            for row in await proxy_service.list_pool_proxies(test_session, custom_automation.id)
+            if row.host == "88.218.186.149"
+        )
+        with pytest.raises(ProxyChoiceError, match="недоступен"):
+            await resolve_connect_proxy(test_session, custom_automation.id, proxy_id=dead_id)
+
 
 class TestNeurocommentingDailyLimits:
     async def test_chat_cap_is_not_account_cap(self):

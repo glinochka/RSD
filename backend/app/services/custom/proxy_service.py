@@ -620,6 +620,8 @@ async def pick_least_loaded_proxy(
     rows = [row for row in source if not _is_dedicated(row)]
     if not rows:
         return None
+    healthy = [row for row in rows if is_proxy_healthy(row)]
+    rows = healthy or rows
     counts = {row.id: 0 for row in rows}
     result = await session.execute(
         select(PoolAccount.proxy_id).where(
@@ -672,6 +674,33 @@ async def load_telethon_proxy(
     return proxy.id, telethon_proxy_dict(connection_payload(proxy))
 
 
+async def probe_and_fix_proxy(proxy: CustomProxy) -> bool:
+    """TCP (and vendor SOCKS port bump) before handing the proxy to Telethon."""
+    if await probe_proxy_tcp(proxy.host, int(proxy.port)):
+        mark_proxy_ok(proxy)
+        return True
+    if str(proxy.scheme or "").lower() == "socks5":
+        original_port = int(proxy.port)
+        bumped = vendor_socks5_port(original_port)
+        if bumped and await probe_proxy_tcp(proxy.host, bumped):
+            proxy.port = bumped
+            proxy.fingerprint = proxy_fingerprint("socks5", proxy.host, bumped, proxy.username)
+            proxy.updated_at = _utc_now()
+            mark_proxy_ok(proxy)
+            logger.info("Connect proxy %s bumped %s -> %s", proxy.id, original_port, bumped)
+            return True
+    mark_proxy_unhealthy(proxy)
+    logger.warning("Connect proxy dead %s:%s", proxy.host, proxy.port)
+    return False
+
+
+def _connect_proxy_dead_message(proxy: CustomProxy) -> str:
+    return (
+        f"Прокси {proxy.host}:{proxy.port} недоступен (нет соединения). "
+        "Выберите другой из пула или вставьте рабочую строку."
+    )
+
+
 async def resolve_connect_proxy(
     session: AsyncSession,
     automation_id: int,
@@ -679,6 +708,7 @@ async def resolve_connect_proxy(
     proxy_id: int | None = None,
     proxy_line: str | None = None,
 ) -> tuple[int | None, dict[str, Any] | None]:
+    explicit = bool((proxy_line or "").strip() or proxy_id)
     proxy = await resolve_account_proxy_choice(
         session,
         automation_id,
@@ -687,7 +717,32 @@ async def resolve_connect_proxy(
     )
     if proxy is None:
         return None, None
-    return proxy.id, telethon_proxy_dict(connection_payload(proxy))
+    if await probe_and_fix_proxy(proxy):
+        return proxy.id, telethon_proxy_dict(connection_payload(proxy))
+    if explicit:
+        raise ProxyChoiceError(_connect_proxy_dead_message(proxy))
+    pool = [
+        row
+        for row in await list_pool_proxies(session, automation_id)
+        if row.id != proxy.id
+    ]
+    ranked = sorted(
+        pool,
+        key=lambda row: (0 if is_proxy_healthy(row) else 1, row.id),
+    )
+    for row in ranked:
+        if await probe_and_fix_proxy(row):
+            logger.info(
+                "Connect skipped dead %s:%s, using %s:%s",
+                proxy.host,
+                proxy.port,
+                row.host,
+                row.port,
+            )
+            return row.id, telethon_proxy_dict(connection_payload(row))
+    raise ProxyChoiceError(
+        "Ни один прокси из пула не отвечает. Обновите список или вставьте свой на время входа."
+    )
 
 
 async def replace_proxy_list(
