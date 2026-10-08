@@ -147,13 +147,34 @@ def session_action_allowlist(cfg: dict[str, Any] | None) -> set[str] | None:
     data = cfg or {}
     if not data:
         return None
-    names: set[str] = {"typing_idle", "draft", "saved", "view_profile", "search"}
+    names: set[str] = {
+        "typing_idle",
+        "draft",
+        "saved",
+        "view_profile",
+        "search",
+        "afk",
+        "read_comments",
+        "react_dm",
+        "forward_saved",
+        "search_public",
+        "open_commenter",
+        "archive_chat",
+        "pin_dm",
+        "block_commenter",
+        "ask_chat",
+        "reply_farm",
+    }
     if data.get("do_read_channels", True):
         names.add("scroll_channels")
+        names.add("read_comments")
+        names.add("search_public")
+        names.add("open_commenter")
     if data.get("do_stories", True):
         names.add("stories")
     if data.get("do_reactions", True):
         names.add("react")
+        names.add("react_dm")
     if data.get("do_comment_contacts", True):
         names.add("comment_contact")
     return names
@@ -168,7 +189,6 @@ def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
         and account.is_active
         and not account.is_banned
         and not account.is_frozen
-        and not account.is_spamblocked
     )
     return {
         "id": account.id,

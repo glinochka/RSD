@@ -4550,10 +4550,11 @@ class TestAccountHealthSpamblockAndDelete:
         kind = await update_account_after_telegram_error(
             test_session, account, Exception("USER_BANNED_IN_CHANNEL")
         )
-        assert kind == "chat_restricted"
+        assert kind == "channel_banned"
         await test_session.refresh(account)
         assert account.is_banned is False
         assert account.is_active is True
+        assert account.is_channel_banned is True
 
     async def test_frozen_account_is_not_spamblock_or_session(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -4747,8 +4748,12 @@ class TestAccountHealthSpamblockAndDelete:
             async def __aexit__(self, *args):
                 return False
 
-            async def check_spamblock(self):
-                return {"spamblocked": True, "source": "spambot", "raw": "limited"}
+            async def check_spamblock(self, *, force=False):
+                del force
+                return {"spamblocked": True, "source": "spambot", "raw": "Your account is now limited."}
+
+            async def appeal_temporary_spamblock(self):
+                return {"spamblocked": True, "source": "spambot_appeal", "appealed": True, "raw": "Your account is now limited."}
 
         fake = _FakeClient()
         mock_cls = MagicMock()
@@ -4762,7 +4767,7 @@ class TestAccountHealthSpamblockAndDelete:
         data = response.json()
         assert data["spamblocked"] is True
         assert data["account"]["is_spamblocked"] is True
-        assert "спамблок" in data["detail"].lower()
+        assert "лимит" in data["detail"].lower() or "спамблок" in data["detail"].lower()
         test_session.expire_all()
         saved = await test_session.get(SocialAccount, account_id)
         assert saved.is_spamblocked is True
@@ -4808,8 +4813,14 @@ class TestAccountHealthSpamblockAndDelete:
             async def __aexit__(self, *args):
                 return False
 
-            async def check_spamblock(self):
-                return {"spamblocked": False, "source": "spambot", "raw": "ok"}
+            async def check_spamblock(self, *, force=False):
+                del force
+                return {
+                    "spamblocked": False,
+                    "source": "spambot",
+                    "raw": "Good news, no limits are currently applied to your account.",
+                    "classification": {"kind": "none", "blocked": False, "until": None, "detail": "ok"},
+                }
 
         fake = _FakeClient()
         mock_cls = MagicMock()
@@ -5028,6 +5039,162 @@ class TestAccountProfile:
         copy_session_bundle(dest, other)
         assert other.is_file()
         assert session_file_has_auth_key(dest) is False
+
+
+class TestAccountAuthorizations:
+    async def test_serialize_and_list_terminate(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+        monkeypatch,
+    ):
+        from types import SimpleNamespace
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom import account_authorizations_service as svc
+        from app.services.custom.account_authorizations_service import serialize_authorization
+
+        current = serialize_authorization(SimpleNamespace(
+            hash=0, current=True, device_model="UBT", platform="Desktop",
+            app_name="Telegram Desktop", app_version="5.0", ip="1.1.1.1",
+            country="FI", region="Uusimaa", date_created=1700000000, date_active=1700000100,
+        ))
+        extra = serialize_authorization(SimpleNamespace(
+            hash=9911, current=False, device_model="iPhone", platform="iOS",
+            app_name="Telegram iOS", app_version="10", ip="8.8.8.8",
+            country="RU", region="Moscow", date_created=1700000000, date_active=1700000200,
+        ))
+        assert current["can_terminate"] is False
+        assert extra["can_terminate"] is True
+        assert extra["place"] == "RU, Moscow"
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000991",
+            username="sesslist",
+            encrypted_session="x",
+            session_file_path="sessions/sesslist.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+
+        auths = [
+            SimpleNamespace(hash=0, current=True, device_model="UBT", platform="Desktop",
+                            app_name="UBT", app_version="1", ip="1.1.1.1", country="FI",
+                            region="", date_created=1, date_active=2),
+            SimpleNamespace(hash=9911, current=False, device_model="iPhone", platform="iOS",
+                            app_name="Telegram", app_version="10", ip="8.8.8.8", country="RU",
+                            region="Moscow", date_created=1, date_active=2),
+        ]
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def __call__(self, request):
+                name = type(request).__name__
+                if name == "GetAuthorizationsRequest":
+                    return SimpleNamespace(authorizations=list(auths))
+                if name == "ResetAuthorizationRequest":
+                    assert int(request.hash) == 9911
+                    auths[:] = [item for item in auths if int(item.hash) != 9911]
+                    return True
+                raise AssertionError(name)
+
+        monkeypatch.setattr(svc.TelegramAccountClient, "for_account", lambda *_args, **_kwargs: FakeClient())
+
+        listed = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/authorizations",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert listed.status_code == 200, listed.text
+        body = listed.json()
+        assert body["count"] == 2
+        assert body["account"]["telegram_session_count"] == 2
+        hashes = {item["hash"] for item in body["items"]}
+        assert hashes == {"0", "9911"}
+
+        blocked = await client.delete(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/authorizations/0",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert blocked.status_code == 422
+
+        removed = await client.delete(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/authorizations/9911",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["count"] == 1
+        assert removed.json()["items"][0]["current"] is True
+
+        paused = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/session-guard/pause?minutes=15",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert paused.status_code == 200, paused.text
+        assert paused.json()["paused_until"]
+        await test_session.refresh(account)
+        assert account.session_guard_paused_until is not None
+
+        adopted = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/session-guard/adopt",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert adopted.status_code == 200, adopted.text
+        await test_session.refresh(account)
+        assert account.session_guard_paused_until is None
+        assert account.known_auth_hashes == ["0"]
+
+    async def test_list_authorizations_without_session(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000992",
+            username="nosess",
+            encrypted_session="",
+            session_file_path=None,
+            is_active=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        response = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/authorizations",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 422
 
 
 class TestAccountRolesWarmupAndLab:
@@ -7191,8 +7358,6 @@ class TestAccountPacingAndSessions:
     async def test_join_does_not_start_ten_minute_write_rest(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
-        from datetime import datetime, timezone
-
         from app.services.custom.telegram_error_handler import execute_with_telegram_retry
 
         account = await self._add_account(
@@ -7221,9 +7386,8 @@ class TestAccountPacingAndSessions:
             action_type="neurocommenting",
             automation_id=custom_automation.id,
         )
-        assert account.next_action_at is not None
-        wait = (account.next_action_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
-        assert 10 * 60 <= wait <= 15 * 60
+        # Target writes stay in the work window; they do not start a 10–70 min flash rest.
+        assert account.next_action_at is None
 
     async def test_prune_keeps_current_and_spare(self):
         from types import SimpleNamespace
@@ -7435,6 +7599,8 @@ class TestPeerDialogAndWarmupPacing:
         test_session: AsyncSession,
         custom_automation: CustomAutomation,
     ):
+        from datetime import datetime, timedelta, timezone
+
         from app.services.account_pool_service import get_or_create_default_pool
         from app.services.custom.account_roles import default_roles_for_class
         from app.services.custom.rotation_service import select_account_for_action
@@ -7451,6 +7617,7 @@ class TestPeerDialogAndWarmupPacing:
             is_active=True,
             is_banned=False,
             is_channel_banned=True,
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=10),
         )
         test_session.add(account)
         await test_session.flush()

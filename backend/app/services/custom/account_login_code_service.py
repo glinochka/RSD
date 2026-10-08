@@ -99,6 +99,11 @@ async def read_last_telegram_login_code(
             "social_account": social_account,
         }
 
+    from .account_session_guard_service import LOGIN_CODE_GRACE_SECONDS, pause_session_guard
+
+    paused_until = pause_session_guard(social_account, seconds=LOGIN_CODE_GRACE_SECONDS)
+    await session.commit()
+
     best: dict[str, Any] | None = None
     for msg in messages:
         if not msg or getattr(msg, "out", False):

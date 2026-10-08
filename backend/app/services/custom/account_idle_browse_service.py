@@ -10,7 +10,7 @@ import logging
 import random
 from typing import Any
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,8 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
 from .account_pacing import account_humanization_should_idle, moscow_now, schedule_account_humanization_rest
 from .humanization_session import (
+    CHAT_QUESTION_ACTION,
+    CHAT_REPLY_ACTION,
     COMMENT_CONTACT_ACTION,
     comment_contact_policy,
     run_humanization_session,
@@ -69,6 +71,39 @@ async def load_comment_contact_policy(session: AsyncSession, account: SocialAcco
     return policy
 
 
+async def _recent_farm_questions(session: AsyncSession, automation_id: int) -> list[dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=6)
+    rows = (
+        await session.execute(
+            select(AutomationActionLog).where(
+                AutomationActionLog.custom_automation_id == automation_id,
+                AutomationActionLog.action_type == CHAT_QUESTION_ACTION,
+                AutomationActionLog.result == "success",
+                AutomationActionLog.created_at >= cutoff,
+            )
+        )
+    ).scalars().all()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        try:
+            chat_id = int(row.target_id or 0)
+            message_id = int(payload.get("message_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not chat_id or not message_id:
+            continue
+        items.append(
+            {
+                "account_id": row.social_account_id,
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": payload.get("text"),
+            }
+        )
+    return items
+
+
 async def _eligible_accounts(session: AsyncSession, automation_id: int) -> list[tuple[PoolAccount, SocialAccount]]:
     result = await session.execute(
         select(PoolAccount, SocialAccount)
@@ -115,9 +150,11 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
         sample = rows if len(rows) <= ACCOUNTS_PER_PASS else random.sample(rows, ACCOUNTS_PER_PASS)
         intensity = None if cfg.get("intensity") in (None, "auto") else cfg.get("intensity")
         allow = session_action_allowlist(cfg)
+        farm_questions = await _recent_farm_questions(session, automation_id)
         for pool_account, social in sample:
             try:
                 policy = await load_comment_contact_policy(session, social)
+                pending = [item for item in farm_questions if int(item.get("account_id") or 0) != social.id]
                 async with TelegramAccountClient.for_account(social) as client:
                     outcome = await run_humanization_session(
                         client,
@@ -127,6 +164,7 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
                         allowed_actions=allow,
                         intensity=intensity,
                         session_minutes=int(cfg.get("session_minutes") or 0),
+                        farm_questions=pending,
                     )
                 contact = outcome.get("comment_contact")
                 if isinstance(contact, dict) and contact.get("status"):
@@ -144,6 +182,37 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
                                 "added": policy.added,
                                 "cap": policy.cap,
                             },
+                            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        )
+                    )
+                question = outcome.get("chat_question")
+                if isinstance(question, dict) and question.get("status") == "success":
+                    session.add(
+                        AutomationActionLog(
+                            custom_automation_id=automation_id,
+                            social_account_id=social.id,
+                            action_type=CHAT_QUESTION_ACTION,
+                            target_id=str(question.get("chat_id") or ""),
+                            target_type="chat",
+                            result="success",
+                            payload={
+                                "message_id": question.get("message_id"),
+                                "text": question.get("text"),
+                            },
+                            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        )
+                    )
+                reply = outcome.get("chat_reply")
+                if isinstance(reply, dict) and reply.get("status") == "success":
+                    session.add(
+                        AutomationActionLog(
+                            custom_automation_id=automation_id,
+                            social_account_id=social.id,
+                            action_type=CHAT_REPLY_ACTION,
+                            target_id=str(reply.get("chat_id") or ""),
+                            target_type="chat",
+                            result="success",
+                            payload={"message_id": reply.get("message_id")},
                             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
                         )
                     )

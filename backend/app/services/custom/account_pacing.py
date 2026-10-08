@@ -41,8 +41,20 @@ TRUSTED_AGE_DAYS = 30
 STAGE_CAUTIOUS = "cautious"   # 0–7 days on the platform
 STAGE_NORMAL = "normal"       # 7–30 days
 STAGE_TRUSTED = "trusted"     # 30+ days
+SETTLE_HOURS = 24
+OBSERVE_UNTIL_HOURS = 48      # day 1 after settle: read / type / 2–3 joins
+REPLY_UNTIL_HOURS = 72        # day 2: veterans write first, new account replies
+PHASE_SETTLE = "settle"
+PHASE_OBSERVE = "observe"
+PHASE_REPLY = "reply"
+PHASE_RAMP = "ramp"
 RAMP_FULL_DAYS = 7
-RAMP_START_FACTOR = 0.30      # day 1 ≈ 30% of the mature budget, day 7 = 100%
+RAMP_START_FACTOR = 0.10      # tests / SETTLE_HOURS=0: 10% from day 0
+WORK_RAMP_START_FACTOR = 0.25  # production: 25% work at 72h → 100% on day 7
+OBSERVE_HUMANIZATION_FACTOR = 0.10
+REPLY_HUMANIZATION_FACTOR = 0.20
+OBSERVE_JOIN_DAILY_MIN = 2
+OBSERVE_JOIN_DAILY_MAX = 3
 
 # ---------------------------------------------------------------------------
 # Humanization rest  (warmup DMs, peer dialog, idle browse, reactions)
@@ -65,6 +77,12 @@ _SESSION_ACTION_BUDGET = {
     STAGE_NORMAL: (5, 8),
     STAGE_TRUSTED: (7, 10),
 }
+_OBSERVE_SESSION_SECONDS = (40, 90)
+_OBSERVE_ACTION_BUDGET = (2, 3)
+_REPLY_SESSION_SECONDS = (60, 140)
+_REPLY_ACTION_BUDGET = (3, 4)
+_OBSERVE_HUMANIZATION_REST = (2 * 60 * 60, 4 * 60 * 60)
+_REPLY_HUMANIZATION_REST = (60 * 60, 2 * 60 * 60)
 
 # ---------------------------------------------------------------------------
 # Shared: retry after failed write
@@ -174,6 +192,11 @@ def moscow_now(now: datetime | None = None) -> datetime:
 
 def moscow_today_date(now: datetime | None = None) -> datetime:
     return moscow_now(now)
+
+
+def moscow_day_start_utc(now: datetime | None = None) -> datetime:
+    local = moscow_now(now).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _stable_frac(account_id: int, salt: int) -> float:
@@ -344,27 +367,157 @@ def account_humanization_stage(account: SocialAccount | None, *, now: datetime |
     return STAGE_TRUSTED
 
 
-def humanization_ramp_factor(account: SocialAccount | None, *, now: datetime | None = None) -> float:
-    """Progressive cap: ~30% on day 0, 100% from day 7."""
+def account_upload_age_hours(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    created = account_created_at(account)
+    if created is None:
+        return 0.0
+    current = now or _utc_now()
+    return max(0.0, (current - created).total_seconds() / 3600.0)
+
+
+def account_upload_phase(account: SocialAccount | None, *, now: datetime | None = None) -> str:
+    """Upload calendar: settle 24h → observe day 1 → reply day 2 → ramp."""
+    if SETTLE_HOURS <= 0:
+        return PHASE_RAMP
+    created = account_created_at(account)
+    if account is None or created is None:
+        return PHASE_RAMP
+    hours = account_upload_age_hours(account, now=now)
+    if hours < float(SETTLE_HOURS):
+        return PHASE_SETTLE
+    if hours < float(OBSERVE_UNTIL_HOURS):
+        return PHASE_OBSERVE
+    if hours < float(REPLY_UNTIL_HOURS):
+        return PHASE_REPLY
+    return PHASE_RAMP
+
+
+def account_in_settle_rest(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """First 24 hours after upload: no work, no humanization, stay offline."""
+    return account_upload_phase(account, now=now) == PHASE_SETTLE
+
+
+def account_may_keep_alive(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """Persistent hub online only after day 2. Days 1–2 use short connect/disconnect."""
+    return account_upload_phase(account, now=now) == PHASE_RAMP
+
+
+def account_may_do_work(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """Comments, shilling, broadcasts, cold DMs — from day 3."""
+    return account_upload_phase(account, now=now) == PHASE_RAMP
+
+
+def account_may_first_write_dm(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """First outgoing DM to a non-contact. This is the PeerFlood gesture."""
+    return account_upload_phase(account, now=now) == PHASE_RAMP
+
+
+def account_may_reply_dm(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """Reply if they wrote first — day 2+."""
+    return account_upload_phase(account, now=now) in {PHASE_REPLY, PHASE_RAMP}
+
+
+def account_may_receive_peer(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    return account_may_reply_dm(account, now=now)
+
+
+def account_may_join(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    return account_upload_phase(account, now=now) in {PHASE_OBSERVE, PHASE_REPLY, PHASE_RAMP}
+
+
+def account_uses_seed_channel_joins(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """Day 1: join only via public search of seed channels, not the work chat queue."""
+    return account_upload_phase(account, now=now) == PHASE_OBSERVE
+
+
+def account_may_humanize(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    return account_upload_phase(account, now=now) in {PHASE_OBSERVE, PHASE_REPLY, PHASE_RAMP}
+
+
+def join_daily_cap(account: SocialAccount | None, *, now: datetime | None = None) -> int | None:
+    """Hard cap on day 1–2. None = only the 1–5h join delay applies."""
+    phase = account_upload_phase(account, now=now)
+    if phase == PHASE_SETTLE:
+        return 0
+    aid = int(getattr(account, "id", 0) or 0)
+    if phase == PHASE_OBSERVE:
+        return OBSERVE_JOIN_DAILY_MIN + (aid % (OBSERVE_JOIN_DAILY_MAX - OBSERVE_JOIN_DAILY_MIN + 1))
+    if phase == PHASE_REPLY:
+        return OBSERVE_JOIN_DAILY_MAX + (aid % 2)
+    return None
+
+
+def activity_ramp_factor(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """Work-task frequency. 0 until day 3, then 25% → 100% by day 7."""
+    created = account_created_at(account)
+    if created is None:
+        return 1.0
     days = account_age_days(account, now=now)
     if days >= RAMP_FULL_DAYS:
         return 1.0
-    return RAMP_START_FACTOR + (1.0 - RAMP_START_FACTOR) * (days / RAMP_FULL_DAYS)
+    if SETTLE_HOURS <= 0:
+        return RAMP_START_FACTOR + (1.0 - RAMP_START_FACTOR) * (days / float(RAMP_FULL_DAYS))
+    if account_upload_phase(account, now=now) != PHASE_RAMP:
+        return 0.0
+    start_days = float(REPLY_UNTIL_HOURS) / 24.0
+    span = max(0.01, float(RAMP_FULL_DAYS) - start_days)
+    progress = (days - start_days) / span
+    return WORK_RAMP_START_FACTOR + (1.0 - WORK_RAMP_START_FACTOR) * min(1.0, max(0.0, progress))
+
+
+def humanization_ramp_factor(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """Read/type/react frequency. Sparse on day 1–2, then follows work ramp."""
+    if SETTLE_HOURS <= 0:
+        return activity_ramp_factor(account, now=now)
+    phase = account_upload_phase(account, now=now)
+    if phase == PHASE_SETTLE:
+        return 0.0
+    if phase == PHASE_OBSERVE:
+        return OBSERVE_HUMANIZATION_FACTOR
+    if phase == PHASE_REPLY:
+        return REPLY_HUMANIZATION_FACTOR
+    return activity_ramp_factor(account, now=now)
+
+
+def activity_interval_scale(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """Stretch gaps so 10% frequency waits ~10× longer. Unknown age stays 1×."""
+    factor = humanization_ramp_factor(account, now=now)
+    if factor <= 0:
+        return 1.0 / max(OBSERVE_HUMANIZATION_FACTOR, RAMP_START_FACTOR)
+    return min(1.0 / max(OBSERVE_HUMANIZATION_FACTOR, RAMP_START_FACTOR), 1.0 / factor)
 
 
 def humanization_session_seconds(account: SocialAccount | None, *, now: datetime | None = None, stage: str | None = None) -> float:
     """How long to keep the MTProto socket open for one humanization pass."""
+    if not account_may_humanize(account, now=now) and SETTLE_HOURS > 0:
+        return 0.0
+    phase = account_upload_phase(account, now=now)
+    if phase == PHASE_OBSERVE:
+        low, high = _OBSERVE_SESSION_SECONDS
+        return random.uniform(float(low), float(high))
+    if phase == PHASE_REPLY:
+        low, high = _REPLY_SESSION_SECONDS
+        return random.uniform(float(low), float(high))
     resolved = stage or account_humanization_stage(account, now=now)
     low, high = _SESSION_SECONDS.get(resolved) or _SESSION_SECONDS[STAGE_NORMAL]
-    return random.uniform(float(low), float(high))
+    factor = humanization_ramp_factor(account, now=now)
+    length_scale = 0.5 + 0.5 * factor
+    return random.uniform(float(low), float(high)) * length_scale
 
 
 def humanization_session_action_budget(account: SocialAccount | None, *, now: datetime | None = None, stage: str | None = None) -> int:
     """How many in-session gestures (read/react/stories/…) this pass may run."""
+    if not account_may_humanize(account, now=now) and SETTLE_HOURS > 0:
+        return 0
+    phase = account_upload_phase(account, now=now)
+    if phase == PHASE_OBSERVE:
+        return random.randint(*_OBSERVE_ACTION_BUDGET)
+    if phase == PHASE_REPLY:
+        return random.randint(*_REPLY_ACTION_BUDGET)
     resolved = stage or account_humanization_stage(account, now=now)
     low, high = _SESSION_ACTION_BUDGET.get(resolved) or _SESSION_ACTION_BUDGET[STAGE_NORMAL]
     raw = random.randint(low, high) * humanization_ramp_factor(account, now=now)
-    return max(2, int(round(raw)))
+    return max(1, int(round(raw)))
 
 
 def post_join_mute_chance(account: SocialAccount | None, *, now: datetime | None = None) -> float:
@@ -400,11 +553,14 @@ def effective_daily_target_max(
         return 0
     if raw <= 2:
         return raw
+    factor = activity_ramp_factor(account, now=now)
+    if factor <= 0:
+        return 0
     aid = int(getattr(account, "id", 0) or 0)
     frac = _daily_stable_frac(aid, 300, now)
     lo = max(5, int(raw * 0.5))
     hi = max(lo, raw)
-    return lo + int(frac * (hi - lo))
+    return max(1, int(round((lo + int(frac * (hi - lo))) * factor)))
 
 
 # ---------------------------------------------------------------------------
@@ -412,10 +568,12 @@ def effective_daily_target_max(
 # ---------------------------------------------------------------------------
 
 def target_rest_seconds_for_account(account: SocialAccount | None, *, now: datetime | None = None) -> float:
-    """40–70 min rest; first week sits out longer (55–85 min)."""
+    """40–70 min rest; first week sits out longer (55–85 min), then stretch by ramp."""
     if account_humanization_stage(account, now=now) == STAGE_CAUTIOUS:
-        return random.uniform(CAUTIOUS_TARGET_REST_MIN_SECONDS, CAUTIOUS_TARGET_REST_MAX_SECONDS)
-    return random.uniform(TARGET_REST_MIN_SECONDS, TARGET_REST_MAX_SECONDS)
+        base = random.uniform(CAUTIOUS_TARGET_REST_MIN_SECONDS, CAUTIOUS_TARGET_REST_MAX_SECONDS)
+    else:
+        base = random.uniform(TARGET_REST_MIN_SECONDS, TARGET_REST_MAX_SECONDS)
+    return base * activity_interval_scale(account, now=now)
 
 
 def account_is_resting(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
@@ -484,6 +642,10 @@ def account_should_idle(
     """True when the account must not send a TARGET action."""
     from .work_mode import in_configured_work_hours, in_daily_idle_gap
 
+    if account_in_settle_rest(account, now=now):
+        return True
+    if not account_may_do_work(account, now=now):
+        return True
     if account_is_flood_quarantined(account, now=now):
         return True
     if account_in_target_rest_day(account, now=now):
@@ -517,6 +679,8 @@ def account_membership_should_idle(
     """Join/leave hygiene: respect flood quarantine and the global work window."""
     from .work_mode import in_configured_work_hours
 
+    if not account_may_join(account, now=now):
+        return True
     if account_is_flood_quarantined(account, now=now):
         return True
     return not in_configured_work_hours(now, account_id=getattr(account, "id", None))
@@ -541,10 +705,17 @@ def schedule_account_rest(account: SocialAccount, *, seconds: float | None = Non
 # ---------------------------------------------------------------------------
 
 def humanization_rest_seconds(account: SocialAccount | None = None, *, now: datetime | None = None) -> float:
-    """15–30 min rest after a warmup DM, idle-browse or reaction; 20–40 in week one."""
+    """15–30 min rest after a warmup DM, idle-browse or reaction; 2–4 h on day 1."""
+    phase = account_upload_phase(account, now=now)
+    if phase == PHASE_OBSERVE:
+        return random.uniform(*_OBSERVE_HUMANIZATION_REST)
+    if phase == PHASE_REPLY:
+        return random.uniform(*_REPLY_HUMANIZATION_REST)
     if account_humanization_stage(account, now=now) == STAGE_CAUTIOUS:
-        return random.uniform(CAUTIOUS_HUMANIZATION_REST_MIN_SECONDS, CAUTIOUS_HUMANIZATION_REST_MAX_SECONDS)
-    return random.uniform(HUMANIZATION_REST_MIN_SECONDS, HUMANIZATION_REST_MAX_SECONDS)
+        base = random.uniform(CAUTIOUS_HUMANIZATION_REST_MIN_SECONDS, CAUTIOUS_HUMANIZATION_REST_MAX_SECONDS)
+    else:
+        base = random.uniform(HUMANIZATION_REST_MIN_SECONDS, HUMANIZATION_REST_MAX_SECONDS)
+    return base * activity_interval_scale(account, now=now)
 
 
 def account_humanization_is_resting(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
@@ -567,6 +738,8 @@ def account_humanization_should_idle(
     """True when the account should not send a HUMANIZATION action."""
     from .work_mode import in_configured_work_hours, in_daily_idle_gap
 
+    if not account_may_humanize(account, now=now):
+        return True
     if account_is_flood_quarantined(account, now=now):
         return True
     if in_daily_idle_gap(getattr(account, "id", None), now=now):

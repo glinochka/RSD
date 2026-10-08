@@ -20,10 +20,16 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable
 
 from .account_pacing import (
+    PHASE_OBSERVE,
+    PHASE_REPLY,
+    PHASE_SETTLE,
     STAGE_CAUTIOUS,
     STAGE_NORMAL,
     STAGE_TRUSTED,
     account_humanization_stage,
+    account_in_settle_rest,
+    account_may_humanize,
+    account_upload_phase,
     humanization_session_action_budget,
     humanization_session_seconds,
     moscow_now,
@@ -37,6 +43,33 @@ COMMENT_CONTACT_ACTION = "comment_contact"
 _SAVED_NOTES = ("не забыть", "ок", "написать позже", ".")
 _DRAFT_TEXTS = ("сейчас напишу", "ок, сек", "думаю")
 _SEARCH_QUERIES = ("ок", "фото", "завтра")
+SEED_CHANNEL_QUERIES = (
+    "Рифмы и Панчи",
+    "Топор Live",
+    "Казань на максималках",
+)
+_PUBLIC_SEARCH = SEED_CHANNEL_QUERIES + (
+    "MDK",
+    "Лентач",
+    "Пикабу",
+    "Подслушано",
+    "Нетипичная Махачкала",
+)
+SEED_CHANNEL_JOIN_ACTION = "seed_channel_join"
+_CHAT_QUESTIONS = (
+    "А как у вас обычно с этим бывает, кто недавно проходил?",
+    "Подскажите по теме: с чего лучше начать, если новичок?",
+    "Кто уже пробовал — есть смысл или так себе?",
+    "А что сейчас актуально по этой теме, не устарело?",
+)
+_FARM_REPLIES = (
+    "У меня так же почти, просто дольше возился.",
+    "Норм вопрос. Я через неделю втянулся.",
+    "Да, у нас похожая история была.",
+    "Согласен, у меня так же вышло.",
+)
+CHAT_QUESTION_ACTION = "chat_question"
+CHAT_REPLY_ACTION = "chat_question_reply"
 _SERVICE_USER_IDS = {777000, 42777, 333000}
 _CONTACT_DAY_PCT = 26  # ~1/4 of days are eligible, then gap/cap still apply
 
@@ -94,6 +127,13 @@ def comment_contact_policy(
         return CommentContactPolicy(False, "no_account")
     aid = int(account.id)
     cap = lifetime_comment_contact_cap(aid)
+    phase = account_upload_phase(account, now=now)
+    if phase in {PHASE_OBSERVE, PHASE_REPLY}:
+        if added_count >= 1:
+            return CommentContactPolicy(False, "early_cap", cap=1, added=added_count)
+        if attempted_today:
+            return CommentContactPolicy(False, "already_today", cap=1, added=added_count)
+        return CommentContactPolicy(True, "ok", cap=1, added=added_count)
     if account_humanization_stage(account, now=now) == STAGE_CAUTIOUS:
         return CommentContactPolicy(False, "cautious", cap=cap, added=added_count)
     if added_count >= cap:
@@ -555,6 +595,379 @@ async def note_in_saved(client: Any, *, lab_mode: bool = False) -> bool:
         return False
 
 
+async def sit_afk(client: Any, *, lab_mode: bool = False) -> bool:
+    del client
+    await _pause(lab_mode, 18.0, 70.0)
+    return True
+
+
+def _channel_posts(dialogs: list[Any]) -> list[Any]:
+    return [
+        item
+        for item in (dialogs or [])
+        if getattr(item, "is_channel", False) or getattr(getattr(item, "entity", None), "broadcast", False)
+    ]
+
+
+def _user_dialogs(dialogs: list[Any]) -> list[Any]:
+    return [
+        item
+        for item in (dialogs or [])
+        if getattr(item, "is_user", False) and not getattr(getattr(item, "entity", None), "bot", False)
+    ]
+
+
+def _group_dialogs(dialogs: list[Any]) -> list[Any]:
+    return [
+        item
+        for item in (dialogs or [])
+        if getattr(item, "is_group", False) or getattr(getattr(item, "entity", None), "megagroup", False)
+    ]
+
+
+async def read_channel_comments(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=18)
+        channels = _channel_posts(dialogs)
+        if not channels:
+            return False
+        entity = getattr(random.choice(channels), "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 1.0, 3.5)
+        posts = await telethon.get_messages(entity, limit=8)
+        threaded = [item for item in (posts or []) if getattr(getattr(item, "replies", None), "replies", 0)]
+        if not threaded:
+            return bool(posts)
+        post = random.choice(threaded)
+        await _pause(lab_mode, 1.5, 4.0)
+        comments = await telethon.get_messages(entity, limit=12, reply_to=getattr(post, "id", None))
+        if comments and random.random() < 0.35:
+            try:
+                await telethon.send_reaction(entity, comments[0], random.choice(("👍", "🔥", "❤", "😂")))
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
+
+
+async def react_in_dm(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=14)
+        users = _user_dialogs(dialogs)
+        if not users:
+            return False
+        entity = getattr(random.choice(users), "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 0.8, 2.4)
+        msgs = await telethon.get_messages(entity, limit=6)
+        incoming = [item for item in (msgs or []) if not getattr(item, "out", False)]
+        if not incoming:
+            return False
+        await telethon.send_reaction(entity, incoming[0], random.choice(("👍", "❤", "🔥", "😂", "👏")))
+        return True
+    except Exception:
+        return False
+
+
+async def forward_to_saved(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=16)
+        pool = _channel_posts(dialogs) + _user_dialogs(dialogs)
+        if not pool:
+            return False
+        entity = getattr(random.choice(pool), "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 0.8, 2.8)
+        msgs = await telethon.get_messages(entity, limit=5)
+        if not msgs:
+            return False
+        await telethon.forward_messages("me", msgs[0], entity)
+        return True
+    except Exception as exc:
+        logger.debug("Forward to Saved skipped: %s", exc)
+        return False
+
+
+async def pin_recent_dm(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=12)
+        users = _user_dialogs(dialogs)
+        if not users:
+            return False
+        entity = getattr(random.choice(users), "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 0.6, 2.0)
+        msgs = await telethon.get_messages(entity, limit=4)
+        if not msgs:
+            return False
+        pin = getattr(telethon, "pin_message", None)
+        if callable(pin):
+            await pin(entity, msgs[0], notify=False)
+            return True
+        from telethon.tl.functions.messages import UpdatePinnedMessageRequest
+
+        await telethon(UpdatePinnedMessageRequest(peer=entity, id=int(msgs[0].id), silent=True))
+        return True
+    except Exception:
+        return False
+
+
+def _seed_query_tokens(query: str) -> list[str]:
+    return [token for token in (query or "").lower().replace("ё", "е").split() if len(token) >= 3]
+
+
+def seed_channel_match_score(chat: Any, query: str) -> int:
+    """Higher is better. 0 = do not join this search hit."""
+    if chat is None or getattr(chat, "bot", False):
+        return 0
+    if type(chat).__name__ in {"User", "UserEmpty"}:
+        return 0
+    title = str(getattr(chat, "title", None) or "").lower().replace("ё", "е")
+    username = str(getattr(chat, "username", None) or "").lower()
+    if not title and not username:
+        return 0
+    tokens = _seed_query_tokens(query)
+    needle = (query or "").lower().replace("ё", "е")
+    score = 0
+    if needle and needle in title:
+        score += 60
+    if tokens and all(token in title for token in tokens):
+        score += 40
+    elif tokens and sum(1 for token in tokens if token in title) >= max(1, len(tokens) - 1):
+        score += 15
+    if username and any(token in username for token in tokens):
+        score += 10
+    if getattr(chat, "broadcast", False):
+        score += 12
+    if getattr(chat, "megagroup", False) and not getattr(chat, "broadcast", False):
+        score += 4
+    return score if score >= 40 else 0
+
+
+def pick_seed_channel(chats: list[Any], query: str) -> Any | None:
+    ranked = [(seed_channel_match_score(chat, query), chat) for chat in chats or []]
+    ranked = [item for item in ranked if item[0] > 0]
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked[0][1]
+
+
+async def search_and_join_seed_channel(
+    client: Any,
+    query: str,
+    *,
+    lab_mode: bool = False,
+    account: Any | None = None,
+) -> dict[str, Any]:
+    """Search a public title, join the best channel hit, then read a bit of the feed."""
+    telethon = _telethon(client)
+    from telethon.tl.functions.contacts import SearchRequest
+    from telethon.tl.functions.channels import JoinChannelRequest
+
+    await _pause(lab_mode, 1.2, 3.5)
+    result = await telethon(SearchRequest(q=query, limit=8))
+    chats = list(getattr(result, "chats", None) or [])
+    target = pick_seed_channel(chats, query)
+    if target is None:
+        return {"status": "no_match", "query": query}
+    await _pause(lab_mode, 1.5, 4.5)
+    try:
+        entity = await telethon.get_entity(target)
+    except Exception:
+        entity = target
+    already = False
+    try:
+        await telethon(JoinChannelRequest(entity))
+    except Exception as exc:
+        name = type(exc).__name__
+        if "UserAlreadyParticipant" in name or "already" in str(exc).lower():
+            already = True
+        else:
+            return {"status": "error", "query": query, "error": str(exc)[:200]}
+    if not lab_mode:
+        await settle_after_join(client, entity, account, lab_mode=lab_mode)
+    return {
+        "status": "already" if already else "ok",
+        "query": query,
+        "title": getattr(entity, "title", None) or getattr(target, "title", None),
+        "username": getattr(entity, "username", None) or getattr(target, "username", None),
+        "chat_id": getattr(entity, "id", None) or getattr(target, "id", None),
+    }
+
+
+async def search_public_channels(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        from telethon.tl.functions.contacts import SearchRequest
+
+        query = random.choice(SEED_CHANNEL_QUERIES)
+        await _pause(lab_mode, 1.2, 3.5)
+        result = await telethon(SearchRequest(q=query, limit=8))
+        chats = list(getattr(result, "chats", None) or [])
+        if not chats:
+            return True
+        target = random.choice(chats)
+        await _pause(lab_mode, 1.5, 4.5)
+        try:
+            entity = await telethon.get_entity(target)
+        except Exception:
+            entity = target
+        msgs = await telethon.get_messages(entity, limit=random.randint(5, 10))
+        if msgs and random.random() < 0.55:
+            last_id = getattr(msgs[0], "id", None)
+            if last_id:
+                await telethon.send_read_acknowledge(entity, max_id=int(last_id))
+        return True
+    except Exception as exc:
+        logger.debug("Public search skipped: %s", exc)
+        return False
+
+
+async def open_commenter_profile(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        from telethon.tl.functions.users import GetFullUserRequest
+
+        dialogs = await telethon.get_dialogs(limit=14)
+        channels = _channel_posts(dialogs)
+        if not channels:
+            return False
+        entity = getattr(random.choice(channels), "entity", None)
+        if entity is None:
+            return False
+        posts = await telethon.get_messages(entity, limit=6)
+        threaded = [item for item in (posts or []) if getattr(getattr(item, "replies", None), "replies", 0)]
+        if not threaded:
+            return False
+        comments = await telethon.get_messages(entity, limit=10, reply_to=getattr(threaded[0], "id", None))
+        senders = [
+            getattr(item, "sender", None)
+            for item in (comments or [])
+            if getattr(item, "sender", None) and not getattr(item.sender, "bot", False) and not getattr(item.sender, "is_self", False)
+        ]
+        if not senders:
+            return False
+        await _pause(lab_mode, 0.8, 2.2)
+        await telethon(GetFullUserRequest(random.choice(senders)))
+        return True
+    except Exception:
+        return False
+
+
+async def block_random_commenter(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        from telethon.tl.functions.contacts import BlockRequest
+
+        dialogs = await telethon.get_dialogs(limit=12)
+        channels = _channel_posts(dialogs)
+        if not channels:
+            return False
+        entity = getattr(random.choice(channels), "entity", None)
+        posts = await telethon.get_messages(entity, limit=5) if entity else []
+        threaded = [item for item in (posts or []) if getattr(getattr(item, "replies", None), "replies", 0)]
+        if not threaded:
+            return False
+        comments = await telethon.get_messages(entity, limit=8, reply_to=getattr(threaded[0], "id", None))
+        senders = [
+            getattr(item, "sender", None)
+            for item in (comments or [])
+            if getattr(item, "sender", None)
+            and not getattr(item.sender, "bot", False)
+            and not getattr(item.sender, "is_self", False)
+            and not getattr(item.sender, "contact", False)
+        ]
+        if not senders:
+            return False
+        await _pause(lab_mode, 0.8, 2.0)
+        await telethon(BlockRequest(id=random.choice(senders)))
+        return True
+    except Exception:
+        return False
+
+
+async def archive_random_chat(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=16)
+        pool = [item for item in (dialogs or []) if not getattr(item, "archived", False)]
+        if not pool:
+            return False
+        entity = getattr(random.choice(pool), "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 0.5, 1.8)
+        edit = getattr(telethon, "edit_folder", None)
+        if callable(edit):
+            await edit(entity, 1)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+async def ask_themed_chat_question(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=16)
+        groups = _group_dialogs(dialogs)
+        if not groups:
+            return False
+        dialog = random.choice(groups)
+        entity = getattr(dialog, "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 2.0, 6.0)
+        text = random.choice(_CHAT_QUESTIONS)
+        sent = await telethon.send_message(entity, text)
+        client._chat_question = {
+            "status": "success",
+            "chat_id": getattr(entity, "id", None),
+            "message_id": getattr(sent, "id", None),
+            "text": text,
+        }
+        return True
+    except Exception as exc:
+        logger.debug("Chat question skipped: %s", exc)
+        return False
+
+
+async def reply_farm_chat_question(
+    client: Any,
+    *,
+    lab_mode: bool = False,
+    farm_questions: list[dict[str, Any]] | None = None,
+) -> bool:
+    questions = [item for item in (farm_questions or []) if item.get("chat_id") and item.get("message_id")]
+    if not questions:
+        return False
+    telethon = _telethon(client)
+    target = random.choice(questions)
+    try:
+        await _pause(lab_mode, 1.5, 5.0)
+        entity = await telethon.get_entity(int(target["chat_id"]))
+        await telethon.send_message(entity, random.choice(_FARM_REPLIES), reply_to=int(target["message_id"]))
+        client._chat_reply = {
+            "status": "success",
+            "chat_id": target.get("chat_id"),
+            "message_id": target.get("message_id"),
+        }
+        return True
+    except Exception as exc:
+        logger.debug("Farm chat reply skipped: %s", exc)
+        return False
+
+
 async def mute_peer(client: Any, entity: Any) -> bool:
     try:
         from telethon.tl.functions.account import UpdateNotifySettingsRequest
@@ -595,13 +1008,43 @@ async def settle_after_join(client: Any, entity: Any, account: Any | None = None
     return {"actions": done}
 
 
-def _action_catalog(stage: str, *, allowed: set[str] | None = None) -> list[tuple[str, Callable[..., Awaitable[bool]]]]:
-    """Stage gates writes. Everyone reads; older accounts may react / draft / Saved."""
+def _observe_catalog() -> list[tuple[str, Callable[..., Awaitable[bool]]]]:
+    return [
+        ("scroll_channels", scroll_subscribed_channels),
+        ("stories", glance_stories),
+        ("view_profile", view_recent_profile),
+        ("typing_idle", typing_without_send),
+        ("afk", sit_afk),
+        ("read_comments", read_channel_comments),
+        ("open_commenter", open_commenter_profile),
+        ("react", react_in_subscriptions),
+        ("comment_contact", add_commenter_contact),
+    ]
+
+
+def _action_catalog(
+    stage: str,
+    *,
+    allowed: set[str] | None = None,
+    phase: str | None = None,
+) -> list[tuple[str, Callable[..., Awaitable[bool]]]]:
+    """Stage gates writes. Day 1 only reads/reacts/contacts; no first DMs."""
+    if phase in {PHASE_OBSERVE, PHASE_REPLY}:
+        actions = _observe_catalog()
+        if phase == PHASE_REPLY:
+            actions.append(("react_dm", react_in_dm))
+        if allowed is not None:
+            actions = [(name, fn) for name, fn in actions if name in allowed]
+        return actions
     actions: list[tuple[str, Callable[..., Awaitable[bool]]]] = [
         ("scroll_channels", scroll_subscribed_channels),
         ("stories", glance_stories),
         ("view_profile", view_recent_profile),
         ("typing_idle", typing_without_send),
+        ("afk", sit_afk),
+        ("read_comments", read_channel_comments),
+        ("search_public", search_public_channels),
+        ("open_commenter", open_commenter_profile),
     ]
     if stage in {STAGE_NORMAL, STAGE_TRUSTED}:
         actions.extend(
@@ -610,10 +1053,21 @@ def _action_catalog(stage: str, *, allowed: set[str] | None = None) -> list[tupl
                 ("search", search_in_recent_chat),
                 ("draft", leave_then_clear_draft),
                 ("comment_contact", add_commenter_contact),
+                ("react_dm", react_in_dm),
+                ("forward_saved", forward_to_saved),
+                ("archive_chat", archive_random_chat),
+                ("reply_farm", reply_farm_chat_question),
             ]
         )
     if stage == STAGE_TRUSTED:
-        actions.append(("saved", note_in_saved))
+        actions.extend(
+            [
+                ("saved", note_in_saved),
+                ("pin_dm", pin_recent_dm),
+                ("block_commenter", block_random_commenter),
+                ("ask_chat", ask_themed_chat_question),
+            ]
+        )
     if allowed is not None:
         actions = [(name, fn) for name, fn in actions if name in allowed]
     return actions
@@ -628,8 +1082,20 @@ async def run_humanization_session(
     allowed_actions: set[str] | None = None,
     intensity: str | None = None,
     session_minutes: int = 0,
+    farm_questions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Keep one socket open, look alive, then go offline."""
+    phase = account_upload_phase(account)
+    if not lab_mode and (account_in_settle_rest(account) or phase == PHASE_SETTLE or not account_may_humanize(account)):
+        return {
+            "stage": account_humanization_stage(account),
+            "budget": 0,
+            "actions": [],
+            "seconds": 0,
+            "comment_contact": None,
+            "chat_question": None,
+            "chat_reply": None,
+        }
     stage = intensity if intensity in {STAGE_CAUTIOUS, STAGE_NORMAL, STAGE_TRUSTED} else account_humanization_stage(account)
     budget = humanization_session_action_budget(account, stage=stage)
     if session_minutes and not lab_mode:
@@ -648,7 +1114,11 @@ async def run_humanization_session(
     done.append("browse")
     content = 1
 
-    catalog = _action_catalog(stage, allowed=allowed_actions)
+    catalog = _action_catalog(stage, allowed=allowed_actions, phase=phase)
+    from .account_restriction import LIMITED_KINDS, restriction_kind
+
+    if restriction_kind(account) in LIMITED_KINDS:
+        catalog = [(name, fn) for name, fn in catalog if name not in {"react_dm", "pin_dm"}]
     random.shuffle(catalog)
     for name, fn in catalog:
         if content >= budget:
@@ -657,6 +1127,8 @@ async def run_humanization_session(
         try:
             if name == "comment_contact":
                 ok = await fn(client, lab_mode=lab_mode, account=account, policy=policy)
+            elif name == "reply_farm":
+                ok = await fn(client, lab_mode=lab_mode, farm_questions=farm_questions)
             else:
                 ok = await fn(client, lab_mode=lab_mode)
         except TypeError:
@@ -671,7 +1143,7 @@ async def run_humanization_session(
     elapsed = time.monotonic() - started
     leftover = target_seconds - elapsed
     if leftover > 4 and not lab_mode:
-        await asyncio.sleep(min(leftover, 90.0))
+        await asyncio.sleep(min(leftover, 240.0))
         done.append("idle_hold")
 
     if await set_presence(client, offline=True, lab_mode=lab_mode):
@@ -683,4 +1155,6 @@ async def run_humanization_session(
         "actions": done,
         "seconds": round(time.monotonic() - started, 2),
         "comment_contact": getattr(client, "_comment_contact", None),
+        "chat_question": getattr(client, "_chat_question", None),
+        "chat_reply": getattr(client, "_chat_reply", None),
     }

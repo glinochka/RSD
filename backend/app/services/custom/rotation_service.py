@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
 from .account_pacing import account_is_flood_quarantined, account_should_idle, effective_daily_target_max
+from .account_restriction import restriction_blocks_action
 from .account_roles import account_matches_action
 
 logger = getLogger(__name__)
@@ -125,7 +126,9 @@ def _filter_eligible(
             continue
         if not ignore_rest and account_should_idle(social_account):
             continue
-        if exclude_spamblocked and social_account.is_spamblocked:
+        if restriction_blocks_action(social_account, action_type):
+            continue
+        if exclude_spamblocked and action_type in _DM_ACTIONS and social_account.is_spamblocked:
             continue
         if not account_matches_action(pool_account, social_account, action_type):
             continue

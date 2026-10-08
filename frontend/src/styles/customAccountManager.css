@@ -639,6 +639,84 @@ a.acc-icon-btn {
   font-size: 0.875rem;
 }
 
+.acc-session-count {
+  appearance: none;
+  border: 0;
+  background: #f3f6f9;
+  color: #111827;
+  font: inherit;
+  font-weight: 650;
+  min-width: 32px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.acc-session-count:hover {
+  background: #e8ecf0;
+}
+
+.acc-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.acc-sessions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.acc-sessions-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.acc-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.acc-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8ecf0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.acc-session-row.is-current {
+  background: #f7f8fa;
+}
+
+.acc-session-row b {
+  display: block;
+  font-size: 0.875rem;
+  color: #111827;
+}
+
+.acc-session-row small {
+  display: block;
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 0.75rem;
+}
+
+.acc-session-row .acc-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .acc-drop-overlay {
   position: absolute;
   inset: 0;

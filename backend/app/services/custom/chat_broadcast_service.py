@@ -13,8 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import (
-    STAGE_CAUTIOUS,
-    account_humanization_stage,
+    activity_interval_scale,
     account_should_idle,
     farm_overlap_active_hours,
     moscow_now,
@@ -388,7 +387,7 @@ async def run_chat_broadcast_pass(automation_id: int, run_config: dict[str, Any]
                     continue
                 if not await account_is_joined(session, chat.id, picked.id):
                     continue
-                factor = warmup_slow if account_humanization_stage(picked) == STAGE_CAUTIOUS else 1
+                factor = activity_interval_scale(picked) if warmup_slow else 1
                 chain = list(messages)
                 if first_mode == "ai":
                     hint = chain[0]["text"] if chain else ""

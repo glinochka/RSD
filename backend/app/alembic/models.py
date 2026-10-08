@@ -2393,6 +2393,16 @@ class SocialAccount(Base):
     telegram_device: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     spare_telegram_device: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    telegram_session_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    restriction_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    restriction_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    restriction_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_guard_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    session_guard_paused_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    session_guard_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    known_auth_hashes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     daily_messages_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     daily_messages_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

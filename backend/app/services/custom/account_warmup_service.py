@@ -126,12 +126,14 @@ def enroll_pool_account(automation: CustomAutomation | None, pool_account: PoolA
 
 
 def warmup_gap_seconds(account=None) -> int:
-    """1–2 h between warmup lines; first-week accounts wait 2–4 h."""
-    from .account_pacing import STAGE_CAUTIOUS, account_humanization_stage
+    """1–2 h between warmup lines; first-week accounts wait 2–4 h, then stretch by ramp."""
+    from .account_pacing import STAGE_CAUTIOUS, account_humanization_stage, activity_interval_scale
 
     if account_humanization_stage(account) == STAGE_CAUTIOUS:
-        return random.randint(2 * 60 * 60, 4 * 60 * 60)
-    return random.randint(WARMUP_GAP_MIN_SECONDS, WARMUP_GAP_MAX_SECONDS)
+        base = random.randint(2 * 60 * 60, 4 * 60 * 60)
+    else:
+        base = random.randint(WARMUP_GAP_MIN_SECONDS, WARMUP_GAP_MAX_SECONDS)
+    return int(base * activity_interval_scale(account))
 
 
 def _due_for_dialog(pool_account: PoolAccount) -> bool:
@@ -261,6 +263,14 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
             if skip_account_for_module(cfg, social, pool_account):
                 continue
             if not social.is_active or social.is_banned or getattr(social, "is_frozen", False) or not social.session_file_path:
+                continue
+            from .account_restriction import restriction_blocks_action
+
+            if restriction_blocks_action(social, "account_warmup"):
+                continue
+            from .account_pacing import account_may_first_write_dm
+
+            if not account_may_first_write_dm(social):
                 continue
             # Use HUMANIZATION idle check – target-action cooldown must NOT block warmup
             if account_humanization_should_idle(social):

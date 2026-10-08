@@ -885,10 +885,18 @@ class TelegramAccountClient:
                     texts.append(text)
             if not texts:
                 return None
+            from .account_restriction import classify_spambot_reply
+
+            classification = None
+            for text in texts:
+                classification = classify_spambot_reply(text)
+                if classification is not None:
+                    break
             return {
                 "spamblocked": spambot_verdict_from_messages(texts),
                 "source": "spambot",
                 "raw": texts[0] if texts else "",
+                "classification": classification,
             }
 
         existing = await _read_history()
@@ -940,11 +948,19 @@ class TelegramAccountClient:
             for message in messages or []
         ]
         texts = [item for item in texts if item]
+        from .account_restriction import classify_spambot_reply
+
+        classification = None
+        for text in texts:
+            classification = classify_spambot_reply(text)
+            if classification is not None:
+                break
         return {
             "spamblocked": spambot_verdict_from_messages(texts),
             "source": "spambot_appeal" if clicked else "spambot",
             "appealed": clicked,
             "raw": texts[0] if texts else "",
+            "classification": classification,
         }
 
     async def _click_spambot_appeal(self) -> bool:
@@ -969,8 +985,8 @@ class TelegramAccountClient:
                             await self.client.send_message(_SPAMBOT, label)
                         logger.info("Clicked SpamBot appeal: %s", label)
                         return True
-                    except Exception as exc:
-                        logger.warning("SpamBot appeal click failed: %s", exc)
+                    except Exception as click_exc:
+                        logger.warning("SpamBot appeal click failed: %s", click_exc)
                         return False
         return False
 

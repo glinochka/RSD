@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.custom.account_pacing import (
+    PHASE_OBSERVE,
+    PHASE_REPLY,
     STAGE_CAUTIOUS,
     STAGE_NORMAL,
     STAGE_TRUSTED,
@@ -17,13 +19,16 @@ from app.services.custom.account_warmup_service import (
 )
 from app.services.custom.humanization_session import (
     CommentContactPolicy,
+    SEED_CHANNEL_QUERIES,
     _action_catalog,
     add_commenter_contact,
     comment_contact_policy,
     is_comment_contact_day,
     lifetime_comment_contact_cap,
+    pick_seed_channel,
     run_humanization_session,
     settle_after_join,
+    typing_without_send,
 )
 
 
@@ -95,6 +100,20 @@ class FakeClient:
     async def send_reaction(self, *args, **kwargs):
         self.calls.append("send_reaction")
 
+    async def forward_messages(self, *args, **kwargs):
+        self.calls.append("forward_messages")
+        return [SimpleNamespace(id=2)]
+
+    async def pin_message(self, *args, **kwargs):
+        self.calls.append("pin_message")
+
+    async def edit_folder(self, *args, **kwargs):
+        self.calls.append("edit_folder")
+
+    async def get_entity(self, *args, **kwargs):
+        self.calls.append("get_entity")
+        return SimpleNamespace(id=22, title="Топор", username="topor", broadcast=True, megagroup=False)
+
     def action(self, entity, kind):
         self.calls.append(f"action:{kind}")
         return _TypingCM()
@@ -102,6 +121,12 @@ class FakeClient:
     async def __call__(self, request):
         name = type(request).__name__
         self.calls.append(name)
+        if name == "SearchRequest":
+            return SimpleNamespace(
+                chats=[SimpleNamespace(id=55, title="Топор", username="topor", broadcast=True)],
+                users=[],
+                results=[],
+            )
         return SimpleNamespace(peer_stories=[], stories=[], authorizations=[])
 
 
@@ -111,13 +136,16 @@ def _account(*, days: int) -> SimpleNamespace:
 
 
 def test_warmup_gap_lengthens_for_new_accounts():
+    from app.services.custom.account_pacing import activity_interval_scale
+
     now = datetime.utcnow().replace(tzinfo=None)
     fresh = SimpleNamespace(created_at=now - timedelta(days=1))
     aged = SimpleNamespace(created_at=now - timedelta(days=20))
     assert account_humanization_stage(fresh, now=now) == STAGE_CAUTIOUS
     assert account_humanization_stage(aged, now=now) == STAGE_NORMAL
+    scale = activity_interval_scale(fresh, now=now)
     for _ in range(15):
-        assert 2 * 3600 <= warmup_gap_seconds(fresh) <= 4 * 3600
+        assert 2 * 3600 * scale <= warmup_gap_seconds(fresh) <= 4 * 3600 * scale + 1
         assert WARMUP_GAP_MIN_SECONDS <= warmup_gap_seconds(aged) <= WARMUP_GAP_MAX_SECONDS
         assert WARMUP_GAP_MIN_SECONDS <= warmup_gap_seconds() <= WARMUP_GAP_MAX_SECONDS
 
@@ -128,16 +156,58 @@ def test_action_catalog_withholds_writes_from_new_accounts():
     trusted = {name for name, _fn in _action_catalog(STAGE_TRUSTED)}
     assert "stories" in cautious
     assert "scroll_channels" in cautious
+    assert "typing_idle" in cautious
+    assert "search_public" in cautious
+    assert "read_comments" in cautious
     assert "react" not in cautious
     assert "comment_contact" not in cautious
     assert "saved" not in cautious
     assert "draft" not in cautious
+    assert "ask_chat" not in cautious
     assert "react" in normal
     assert "draft" in normal
     assert "comment_contact" in normal
+    assert "forward_saved" in normal
     assert "saved" not in normal
     assert "saved" in trusted
     assert "comment_contact" in trusted
+    assert "ask_chat" in trusted
+    assert "pin_dm" in trusted
+    observe = {name for name, _fn in _action_catalog(STAGE_CAUTIOUS, phase=PHASE_OBSERVE)}
+    assert "react" in observe
+    assert "comment_contact" in observe
+    assert "typing_idle" in observe
+    assert "search_public" not in observe
+    assert "ask_chat" not in observe
+    reply = {name for name, _fn in _action_catalog(STAGE_CAUTIOUS, phase=PHASE_REPLY)}
+    assert "react_dm" in reply
+    assert "ask_chat" not in reply
+
+
+def test_seed_channel_search_picks_the_named_channels():
+    assert SEED_CHANNEL_QUERIES == (
+        "Рифмы и Панчи",
+        "Топор Live",
+        "Казань на максималках",
+    )
+    rhymes = SimpleNamespace(title="Рифмы и Панчи", username="rhymes", broadcast=True, megagroup=False, bot=False)
+    noise = SimpleNamespace(title="Рифмы для детей", username="kids", broadcast=True, megagroup=False, bot=False)
+    topor = SimpleNamespace(title="Топор Live", username="toporlive", broadcast=True, megagroup=False, bot=False)
+    magazine = SimpleNamespace(title="ТОПОР", username="topor", broadcast=True, megagroup=False, bot=False)
+    kazan = SimpleNamespace(title="Казань на максималках", username="kazanmax", broadcast=True, megagroup=False, bot=False)
+    assert pick_seed_channel([noise, rhymes], "Рифмы и Панчи") is rhymes
+    assert pick_seed_channel([magazine, topor], "Топор Live") is topor
+    assert pick_seed_channel([kazan], "Казань на максималках") is kazan
+    assert pick_seed_channel([magazine], "Топор Live") is None
+
+
+@pytest.mark.asyncio
+async def test_typing_without_send_does_not_send_message():
+    client = FakeClient()
+    ok = await typing_without_send(client, lab_mode=True)
+    assert ok is True
+    assert "get_dialogs" in client.calls
+    assert "send_message" not in client.calls
 
 
 @pytest.mark.asyncio
@@ -196,6 +266,17 @@ def test_comment_contact_is_not_a_daily_quota():
         last_success_at=datetime.utcnow().replace(tzinfo=None) - timedelta(days=10),
         now=datetime(off_day.year, off_day.month, off_day.day, 12, 0),
     ).reason == "not_today"
+
+
+def test_observe_phase_may_add_one_contact(monkeypatch):
+    import app.services.custom.account_pacing as pacing
+
+    monkeypatch.setattr(pacing, "SETTLE_HOURS", 24)
+    now = datetime.utcnow().replace(tzinfo=None)
+    young = SimpleNamespace(id=7, created_at=now - timedelta(hours=30))
+    gate = comment_contact_policy(young, now=now)
+    assert gate.allow is True
+    assert comment_contact_policy(young, added_count=1, now=now).reason == "early_cap"
 
 
 @pytest.mark.asyncio

@@ -162,6 +162,20 @@ async def has_live_joined_member(session: AsyncSession, chat_target_id: int) -> 
     return found is not None
 
 
+async def count_joins_since(session: AsyncSession, account_id: int, since: datetime) -> int:
+    found = await session.scalar(
+        select(func.count())
+        .select_from(AccountChatMembership)
+        .where(
+            AccountChatMembership.social_account_id == account_id,
+            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+            AccountChatMembership.joined_at.isnot(None),
+            AccountChatMembership.joined_at >= since,
+        )
+    )
+    return int(found or 0)
+
+
 async def get_membership(
     session: AsyncSession,
     chat_target_id: int,

@@ -1097,8 +1097,14 @@ async def rebind_account_proxy_if_far(
     pool_account: PoolAccount | None,
     social_account: SocialAccount,
 ) -> CustomProxy | None:
-    """Move auto-assigned accounts off a far proxy once the phone country is known."""
+    """Move auto-assigned accounts off a far proxy once the phone country is known.
+
+    Never runs after the first Telegram connect — swapping IP on a live
+    .session is a freeze / AuthKeyDuplicated trigger.
+    """
     if pool_account is None:
+        return None
+    if getattr(social_account, "last_health_check_at", None) is not None:
         return None
     current = await session.get(CustomProxy, int(pool_account.proxy_id)) if pool_account.proxy_id else None
     if _is_dedicated(current):

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import CustomAutomation, PoolAccount, SocialAccount
+from .account_pacing import account_may_keep_alive
 from .account_roles import account_is_live
 from .telegram_account_client import TelegramAccountClient
 from .work_mode import apply_work_mode, in_configured_work_hours, in_daily_idle_gap, reset_work_mode
@@ -63,6 +64,12 @@ class AccountSessionHub:
                 fresh = await session.get(SocialAccount, account.id)
                 if fresh is not None:
                     await record_proxy_success(session, fresh)
+                    try:
+                        from .account_session_guard_service import guard_live_client
+
+                        await guard_live_client(session, fresh, wrapper, force=True)
+                    except Exception as guard_exc:
+                        logger.debug("Session guard on open skipped %s: %s", account.id, guard_exc)
                     await session.commit()
             return True
         except Exception as exc:
@@ -84,6 +91,16 @@ class AccountSessionHub:
                 wrapper = TelegramAccountClient.for_account(fresh)
                 await wrapper.keep_alive()
                 self.clients[account.id] = wrapper
+                async with async_session_maker() as session:
+                    live = await session.get(SocialAccount, account.id)
+                    if live is not None:
+                        try:
+                            from .account_session_guard_service import guard_live_client
+
+                            await guard_live_client(session, live, wrapper, force=True)
+                            await session.commit()
+                        except Exception:
+                            pass
                 return True
             except Exception as retry_exc:
                 logger.warning("Reconnect after proxy rotate failed %s: %s", account.id, retry_exc)
@@ -104,6 +121,8 @@ class AccountSessionHub:
 
 
 def _session_should_sleep(account: SocialAccount) -> bool:
+    if not account_may_keep_alive(account):
+        return True
     if in_daily_idle_gap(getattr(account, "id", None)):
         return True
     return not in_configured_work_hours(account_id=getattr(account, "id", None))
@@ -211,10 +230,17 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
         streams = gated
         hub = _hubs.setdefault(automation_id, AccountSessionHub(automation_id))
         sync = await hub.sync(accounts)
-        if not hub.clients:
-            return {"status": "sleeping", **sync}
+        try:
+            from .account_session_guard_service import maybe_guard_hub_clients
+
+            guard = await maybe_guard_hub_clients(hub)
+            sync = {**sync, "guard": guard}
+        except Exception as guard_exc:
+            logger.debug("Session guard tick skipped: %s", guard_exc)
         join_fn = next((fn for name, fn in streams if name == "join"), None)
         work = [(name, fn) for name, fn in streams if name != "join"]
+        if not hub.clients and not join_fn and not work:
+            return {"status": "sleeping", **sync}
         join_result = await join_fn(automation_id) if join_fn else None
         if not work:
             return {"status": "ok", "stream": "join", "join": join_result, "result": join_result, **sync}

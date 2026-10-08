@@ -1025,6 +1025,50 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getAccountAuthorizations(automationId, accountId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_AUTHORIZATIONS(automationId, accountId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async terminateAccountAuthorization(automationId, accountId, hash) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_AUTHORIZATION(automationId, accountId, hash)}`,
+      {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async pauseAccountSessionGuard(automationId, accountId, minutes = 15) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_SESSION_GUARD_PAUSE(automationId, accountId)}?minutes=${minutes}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async adoptAccountSessions(automationId, accountId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_SESSION_GUARD_ADOPT(automationId, accountId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
     async updateAccount(automationId, accountId, { displayName, bio } = {}) {
       const body = {};
       if (displayName !== undefined) {

@@ -404,6 +404,12 @@ class AccountResponse(BaseModel):
     is_spamblocked: bool = False
     is_frozen: bool = False
     is_channel_banned: bool = False
+    restriction_kind: Optional[str] = None
+    restriction_until: Optional[datetime] = None
+    restriction_label: Optional[str] = None
+    restriction_scope: Optional[str] = None
+    session_guard_enabled: bool = True
+    session_guard_paused_until: Optional[datetime] = None
     risk_score: Optional[float] = None
     trust_score: Optional[float] = None
     session_file_path: Optional[str] = None
@@ -418,6 +424,7 @@ class AccountResponse(BaseModel):
     flood_quarantined_until: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
+    telegram_session_count: Optional[int] = None
 
 
 class AccountQrStartResponse(BaseModel):
@@ -463,12 +470,44 @@ class AccountSpamblockCheckResponse(BaseModel):
     spamblocked: bool | None = None
     source: str | None = None
     detail: str
+    restriction_kind: Optional[str] = None
 
 
 class AccountTelegramCodeResponse(BaseModel):
     code: str | None = None
     sent_at: Optional[datetime] = None
     detail: str
+    session_guard_paused_until: Optional[datetime] = None
+
+
+class AccountSessionGuardPauseResponse(BaseModel):
+    account: AccountResponse
+    paused_until: Optional[datetime] = None
+    detail: str
+
+
+class AccountAuthorizationItem(BaseModel):
+    hash: str
+    current: bool = False
+    device_model: Optional[str] = None
+    platform: Optional[str] = None
+    app_name: Optional[str] = None
+    app_version: Optional[str] = None
+    ip: Optional[str] = None
+    country: Optional[str] = None
+    region: Optional[str] = None
+    place: Optional[str] = None
+    title: str
+    subtitle: Optional[str] = None
+    created_at: Optional[datetime] = None
+    active_at: Optional[datetime] = None
+    can_terminate: bool = False
+
+
+class AccountAuthorizationListResponse(BaseModel):
+    items: list[AccountAuthorizationItem]
+    count: int
+    account: Optional[AccountResponse] = None
 
 
 class AccountPrepareStatusResponse(BaseModel):

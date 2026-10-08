@@ -19,6 +19,8 @@ from .schemas import (
     AccountHealthCheckResult,
     AccountSpamblockCheckResponse,
     AccountTelegramCodeResponse,
+    AccountSessionGuardPauseResponse,
+    AccountAuthorizationListResponse,
     AccountListResponse,
     AccountPrepareStatusResponse,
     AccountProxyListResponse,
@@ -154,6 +156,18 @@ from ..services.custom.account_connect_service import (
 )
 from ..services.custom.account_health_worker import AccountHealthWorker
 from ..services.custom.account_login_code_service import read_last_telegram_login_code
+from ..services.custom.account_authorizations_service import (
+    AccountAuthorizationError,
+    list_account_authorizations,
+    terminate_account_authorization,
+)
+from ..services.custom.account_restriction import restriction_label, restriction_scope
+from ..services.custom.account_session_guard_service import (
+    LOGIN_CODE_GRACE_SECONDS,
+    OPERATOR_PAUSE_SECONDS,
+    adopt_account_sessions,
+    pause_account_session_guard,
+)
 from ..services.telegram_userbot_auth import TelegramUserbotAuthError
 from ..services.custom.bulk_profile_service import (
     BulkProfileUpdateWorker,
@@ -1498,6 +1512,20 @@ def _prompt_response(prompt) -> CustomPromptResponse:
     return CustomPromptResponse.model_validate(data)
 
 
+def _restriction_label(social_account: SocialAccount) -> str | None:
+    try:
+        return restriction_label(social_account)
+    except Exception:
+        return None
+
+
+def _restriction_scope(social_account: SocialAccount) -> str | None:
+    try:
+        return restriction_scope(social_account)
+    except Exception:
+        return None
+
+
 def _account_response(
     pool_account: PoolAccount,
     social_account: SocialAccount,
@@ -1522,6 +1550,12 @@ def _account_response(
         is_spamblocked=bool(getattr(social_account, "is_spamblocked", False)),
         is_frozen=bool(getattr(social_account, "is_frozen", False)),
         is_channel_banned=bool(getattr(social_account, "is_channel_banned", False)),
+        restriction_kind=getattr(social_account, "restriction_kind", None),
+        restriction_until=getattr(social_account, "restriction_until", None),
+        restriction_label=_restriction_label(social_account),
+        restriction_scope=_restriction_scope(social_account),
+        session_guard_enabled=bool(getattr(social_account, "session_guard_enabled", True)),
+        session_guard_paused_until=getattr(social_account, "session_guard_paused_until", None),
         risk_score=social_account.risk_score,
         trust_score=social_account.trust_score,
         session_file_path=social_account.session_file_path,
@@ -1536,6 +1570,7 @@ def _account_response(
         flood_quarantined_until=getattr(social_account, "flood_quarantined_until", None),
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
+        telegram_session_count=getattr(social_account, "telegram_session_count", None),
     )
 
 
@@ -2018,9 +2053,17 @@ def _spamblock_check_detail(result: dict) -> str:
     if status_value == "banned":
         return "Аккаунт забанен."
     if result.get("spamblocked") is True:
+        kind = str(((result.get("classification") or {}) if isinstance(result.get("classification"), dict) else {}).get("kind") or "")
+        labels = {
+            "limited": "Временный лимит: нельзя писать в ЛС незнакомцам и инвайтить. Чаты и комменты можно.",
+            "limited_permanent": "Постоянный лимит ЛС/инвайтов. Чаты и комменты можно.",
+            "geo": "Гео/новый номер: лимит как у спамблока (ЛС и инвайты). Чаты и комменты можно.",
+            "frozen": "Заморозка: любые записи запрещены, только чтение.",
+        }
+        base = labels.get(kind, "Telegram ограничил аккаунт (спамблок ЛС/инвайтов). Чаты и комменты обычно можно.")
         if result.get("appealed"):
-            return "Telegram ограничил аккаунт (спамблок). Отправлена жалоба в @SpamBot."
-        return "Telegram ограничил аккаунт (спамблок)."
+            return f"{base} Отправлена жалоба в @SpamBot."
+        return base
     if result.get("spamblocked") is False:
         if result.get("appealed") or result.get("source") == "spambot_appeal":
             return "Спамблок снят через @SpamBot."
@@ -2048,6 +2091,7 @@ async def check_account_spamblock(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=_spamblock_check_detail(result),
             )
+        classification = result.get("classification") if isinstance(result.get("classification"), dict) else {}
         return AccountSpamblockCheckResponse(
             account=_account_response(
                 result["pool_account"],
@@ -2057,6 +2101,7 @@ async def check_account_spamblock(
             spamblocked=result.get("spamblocked"),
             source=result.get("source"),
             detail=_spamblock_check_detail(result),
+            restriction_kind=(classification or {}).get("kind") or getattr(result.get("social_account"), "restriction_kind", None),
         )
 
 
@@ -2080,17 +2125,153 @@ async def get_account_telegram_code(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Нет сессии Telegram. Подключите аккаунт заново по QR или SMS.",
             )
+        paused_until = None
+        social = result.get("social_account")
+        if social is not None:
+            from ..services.custom.account_session_guard_service import pause_session_guard
+
+            paused_until = pause_session_guard(social, seconds=LOGIN_CODE_GRACE_SECONDS)
+            await session.commit()
         if status_value == "error":
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=str(result.get("error") or "Не удалось прочитать чат Telegram"),
             )
+        grace = " Защита сессий на паузе 5 минут — можно входить."
         if status_value == "empty":
-            return AccountTelegramCodeResponse(detail="В служебном чате Telegram кода пока нет")
+            return AccountTelegramCodeResponse(
+                detail="В служебном чате Telegram кода пока нет." + grace,
+                session_guard_paused_until=paused_until,
+            )
         return AccountTelegramCodeResponse(
             code=result.get("code"),
             sent_at=result.get("sent_at"),
-            detail="Последний код из чата Telegram",
+            detail="Последний код из чата Telegram." + grace,
+            session_guard_paused_until=paused_until,
+        )
+
+
+def _authorization_http_error(result: dict[str, Any]) -> None:
+    status_value = str(result.get("status") or "")
+    if status_value == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    if status_value == "no_session":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Нет сессии Telegram. Подключите аккаунт заново по QR или SMS.",
+        )
+    if status_value == "error":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(result.get("error") or "Не удалось получить список сессий Telegram"),
+        )
+
+
+@router.get(
+    "/automations/{automation_id}/accounts/{account_id}/authorizations",
+    response_model=AccountAuthorizationListResponse,
+)
+async def get_account_authorizations(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await list_account_authorizations(session, automation_id, account_id)
+        _authorization_http_error(result)
+        return AccountAuthorizationListResponse(
+            items=result.get("items") or [],
+            count=int(result.get("count") or 0),
+            account=_account_response(
+                result["pool_account"],
+                result["social_account"],
+                automation.max_daily_messages_per_account,
+            ),
+        )
+
+
+@router.delete(
+    "/automations/{automation_id}/accounts/{account_id}/authorizations/{hash_value}",
+    response_model=AccountAuthorizationListResponse,
+)
+async def delete_account_authorization(
+    automation_id: int,
+    account_id: int,
+    hash_value: str,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    try:
+        parsed_hash = int(hash_value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Некорректный идентификатор сессии") from exc
+    async with async_session_maker() as session:
+        try:
+            result = await terminate_account_authorization(session, automation_id, account_id, parsed_hash)
+        except AccountAuthorizationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        _authorization_http_error(result)
+        return AccountAuthorizationListResponse(
+            items=result.get("items") or [],
+            count=int(result.get("count") or 0),
+            account=_account_response(
+                result["pool_account"],
+                result["social_account"],
+                automation.max_daily_messages_per_account,
+            ),
+        )
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/{account_id}/session-guard/pause",
+    response_model=AccountSessionGuardPauseResponse,
+)
+async def pause_account_session_guard_endpoint(
+    automation_id: int,
+    account_id: int,
+    minutes: int = Query(15, ge=1, le=60),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await pause_account_session_guard(
+            session,
+            automation_id,
+            account_id,
+            seconds=int(minutes) * 60 or OPERATOR_PAUSE_SECONDS,
+        )
+        if result.get("status") == "not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        until = result.get("paused_until")
+        return AccountSessionGuardPauseResponse(
+            account=_account_response(
+                result["pool_account"],
+                result["social_account"],
+                automation.max_daily_messages_per_account,
+            ),
+            paused_until=until,
+            detail="Защита сессий на паузе. Можно входить с телефона.",
+        )
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/{account_id}/session-guard/adopt",
+    response_model=AccountAuthorizationListResponse,
+)
+async def adopt_account_sessions_endpoint(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await adopt_account_sessions(session, automation_id, account_id)
+        _authorization_http_error(result)
+        return AccountAuthorizationListResponse(
+            items=result.get("items") or [],
+            count=int(result.get("count") or 0),
+            account=_account_response(
+                result["pool_account"],
+                result["social_account"],
+                automation.max_daily_messages_per_account,
+            ),
         )
 
 

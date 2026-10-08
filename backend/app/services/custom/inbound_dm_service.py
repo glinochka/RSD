@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_humanization_should_idle as account_should_idle, farm_overlap_active_hours
+from .account_pacing import account_humanization_should_idle, account_may_reply_dm, farm_overlap_active_hours
 from .conversation_guard import (
     conversation_has_link,
     entity_matches_peer_keys,
@@ -209,7 +209,9 @@ async def _process_account(
 ) -> dict[str, Any]:
     if not account.session_file_path or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
         return {"status": "skipped", "reason": "inactive"}
-    if account_should_idle(account):
+    if not account_may_reply_dm(account):
+        return {"status": "skipped", "reason": "too_new"}
+    if account_humanization_should_idle(account):
         return {"status": "skipped", "reason": "resting"}
     if await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
         return {"status": "skipped", "reason": "hourly_limit"}
@@ -313,7 +315,7 @@ async def _process_account(
                 handled += 1
                 if allow_link:
                     already_shared_link = True
-                if account_should_idle(account) or await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
+                if account_humanization_should_idle(account) or await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
                     return {"status": "ok", "handled": handled}
         return {"status": "ok", "handled": handled}
 

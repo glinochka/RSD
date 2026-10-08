@@ -209,14 +209,19 @@ for cls_name in (
 
 def parse_spambot_reply(text: str | None) -> bool | None:
     """True = spamblock, False = clean, None = unknown. Ignores a single-chat ban."""
-    blob = (text or "").strip().lower()
-    if not blob:
+    from .account_restriction import classify_spambot_reply
+
+    info = classify_spambot_reply(text)
+    if info is None:
+        blob = (text or "").strip().lower()
+        if not blob:
+            return None
+        if any(marker in blob for marker in _SPAMBOT_OK):
+            return False
+        if any(marker in blob for marker in _SPAMBOT_BLOCK):
+            return True
         return None
-    if any(marker in blob for marker in _SPAMBOT_OK):
-        return False
-    if any(marker in blob for marker in _SPAMBOT_BLOCK):
-        return True
-    return None
+    return bool(info.get("blocked"))
 
 
 def spambot_verdict_from_messages(texts: list[str] | None) -> bool | None:
@@ -479,11 +484,10 @@ def mark_account_deactivated(account: SocialAccount, exc: Exception) -> None:
     account.updated_at = _utc_now()
 
 
-def mark_spamblocked(account: SocialAccount, *, blocked: bool) -> None:
-    account.is_spamblocked = blocked
-    account.spamblocked_at = _utc_now() if blocked else None
-    account.spamblock_checked_at = _utc_now()
-    account.updated_at = _utc_now()
+def mark_spamblocked(account: SocialAccount, *, blocked: bool, kind: str | None = None) -> None:
+    from .account_restriction import KIND_LIMITED, apply_limited_flag
+
+    apply_limited_flag(account, blocked=blocked, kind=kind or KIND_LIMITED)
 
 
 def mark_channel_banned(account: SocialAccount) -> None:
@@ -494,8 +498,11 @@ def mark_channel_banned(account: SocialAccount) -> None:
 
 def mark_frozen(account: SocialAccount) -> None:
     """Session stays valid; Telegram rejects writes until the freeze is lifted."""
+    from .account_restriction import KIND_FROZEN
+
     account.is_frozen = True
     account.frozen_at = account.frozen_at or _utc_now()
+    account.restriction_kind = KIND_FROZEN
     account.updated_at = _utc_now()
 
 

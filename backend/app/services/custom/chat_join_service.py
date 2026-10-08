@@ -48,6 +48,7 @@ from .telegram_error_handler import SessionInvalidError, execute_with_telegram_r
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref, _looks_like_invite_hash, _invite_ref
 from ...alembic.models import (
     AccountChatMembership,
+    AutomationActionLog,
     ChatFolder,
     ChatJoinStatus,
     ChatMode,
@@ -765,6 +766,152 @@ async def create_chat_from_link(
     return chat
 
 
+async def _seed_join_logs(session: AsyncSession, account_id: int) -> list[AutomationActionLog]:
+    result = await session.execute(
+        select(AutomationActionLog)
+        .where(
+            AutomationActionLog.social_account_id == account_id,
+            AutomationActionLog.action_type == "seed_channel_join",
+        )
+        .order_by(AutomationActionLog.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+def _seed_log_query(row: AutomationActionLog) -> str:
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    return str(payload.get("query") or row.target_id or "").strip()
+
+
+def _seed_cooldown_active(logs: list[AutomationActionLog], *, now: datetime) -> bool:
+    from .chat_membership_service import JOIN_DELAY_MIN_SECONDS
+
+    for row in logs:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        raw = payload.get("cooldown_until")
+        if raw:
+            try:
+                until = datetime.fromisoformat(str(raw))
+                if until.tzinfo is not None:
+                    until = until.replace(tzinfo=None)
+                if until > now:
+                    return True
+            except ValueError:
+                pass
+        if row.result in {"ok", "success", "already"} and row.created_at:
+            then = row.created_at.replace(tzinfo=None) if getattr(row.created_at, "tzinfo", None) else row.created_at
+            if (now - then).total_seconds() < JOIN_DELAY_MIN_SECONDS:
+                return True
+        break
+    return False
+
+
+async def join_next_seed_channel(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    exclude_account_ids: set[int] | None = None,
+    apply_cooldown: bool = True,
+) -> dict[str, Any] | None:
+    """Day-1 warmup: search a seed channel title and join it. 2–3 per day."""
+    from .account_pacing import (
+        account_membership_should_idle,
+        account_uses_seed_channel_joins,
+        join_daily_cap,
+        moscow_day_start_utc,
+    )
+    from .humanization_session import SEED_CHANNEL_QUERIES, search_and_join_seed_channel
+    from .rotation_service import list_alive_session_accounts
+
+    automation = await session.get(CustomAutomation, automation_id)
+    warmup = ((automation.module_settings or {}).get("warmup") or {}) if automation else {}
+    if not automation or not getattr(automation, "account_warmup_enabled", False):
+        return None
+    if warmup.get("do_joins") is False:
+        return None
+    blocked = set(exclude_account_ids or set())
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    since = moscow_day_start_utc(now)
+    for account in await list_alive_session_accounts(session, automation_id):
+        if account.id in blocked:
+            continue
+        if not account_uses_seed_channel_joins(account):
+            continue
+        if account_membership_should_idle(account):
+            continue
+        logs = await _seed_join_logs(session, account.id)
+        if apply_cooldown and _seed_cooldown_active(logs, now=now):
+            continue
+        cap = join_daily_cap(account, now=now) or 0
+        joined_today = sum(
+            1
+            for row in logs
+            if row.result in {"ok", "success"}
+            and row.created_at
+            and (row.created_at.replace(tzinfo=None) if getattr(row.created_at, "tzinfo", None) else row.created_at) >= since
+        )
+        if joined_today >= cap:
+            continue
+        done = {_seed_log_query(row) for row in logs if row.result in {"ok", "success", "already"} and _seed_log_query(row)}
+        remaining = [query for query in SEED_CHANNEL_QUERIES if query not in done]
+        if not remaining:
+            continue
+        query = random.choice(remaining)
+        try:
+            async with TelegramAccountClient.for_account(account) as client:
+                outcome = await execute_with_telegram_retry(
+                    session,
+                    account,
+                    lambda: search_and_join_seed_channel(client, query, account=account),
+                    action_type="join_chat",
+                    target_id=query,
+                    target_type="seed_channel",
+                    payload={"query": query},
+                    automation_id=automation_id,
+                    pace=False,
+                )
+        except Exception as exc:
+            logger.info("Seed channel join failed for %s (%s): %s", account.id, query, exc)
+            return {
+                "status": "error",
+                "reason": str(exc)[:200],
+                "account_id": account.id,
+                "query": query,
+            }
+        status = str((outcome or {}).get("status") or "error")
+        delay = random.uniform(JOIN_DELAY_MIN_SECONDS, JOIN_DELAY_MAX_SECONDS)
+        cooldown_until = now + timedelta(seconds=delay)
+        session.add(
+            AutomationActionLog(
+                custom_automation_id=automation_id,
+                social_account_id=account.id,
+                action_type="seed_channel_join",
+                target_id=str((outcome or {}).get("username") or query)[:255],
+                target_type="channel",
+                result="success" if status in {"ok", "already"} else status[:32],
+                payload={
+                    "query": query,
+                    "title": (outcome or {}).get("title"),
+                    "username": (outcome or {}).get("username"),
+                    "chat_id": (outcome or {}).get("chat_id"),
+                    "cooldown_until": cooldown_until.isoformat(),
+                },
+                created_at=now,
+            )
+        )
+        if apply_cooldown:
+            await apply_account_join_cooldown(session, automation_id, account.id, wait_seconds=delay)
+        await session.commit()
+        return {
+            "status": status,
+            "account_id": account.id,
+            "query": query,
+            "title": (outcome or {}).get("title"),
+            "reason": "seed_channel",
+        }
+    return None
+
+
 async def join_next_membership(
     session: AsyncSession,
     automation_id: int,
@@ -794,6 +941,28 @@ async def join_next_membership(
         return {"status": "skipped", "reason": "missing_entities"}
     if account_membership_should_idle(account):
         return {"status": "skipped", "reason": "account_idle"}
+    from .account_pacing import (
+        activity_ramp_factor,
+        account_may_do_work,
+        account_uses_seed_channel_joins,
+        join_daily_cap,
+        moscow_day_start_utc,
+    )
+
+    if account_uses_seed_channel_joins(account):
+        return {"status": "skipped", "reason": "seed_channel_joins", "account_id": account.id}
+
+    cap = join_daily_cap(account)
+    if cap == 0:
+        return {"status": "skipped", "reason": "settle_rest"}
+    if cap is not None:
+        from .chat_membership_service import count_joins_since
+
+        joined_today = await count_joins_since(session, account.id, moscow_day_start_utc())
+        if joined_today >= cap:
+            return {"status": "skipped", "reason": "join_daily_cap"}
+    elif account_may_do_work(account) and random.random() > activity_ramp_factor(account):
+        return {"status": "skipped", "reason": "ramp"}
     from .chat_addlist_service import chat_addlist_slug
 
     if (membership.purpose or "") == ACTOR_PURPOSE or chat_addlist_slug(chat_target):
@@ -1125,7 +1294,10 @@ async def join_pending_chats(
     if need_task_joins:
         await ensure_task_joins_for_automation(session, automation_id)
         await join_pending_addlists(session, automation_id)
-        return []
+        if rate_limit and not farm_overlap_active_hours():
+            return []
+        seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
+        return [seed] if seed else []
     else:
         await recover_stale_joining_memberships(session, automation_id)
         await process_due_pending_actions(session, automation_id)
@@ -1143,15 +1315,27 @@ async def join_pending_chats(
     if rate_limit and not farm_overlap_active_hours():
         return []
     pairs = max_pairs if max_pairs is not None else (MAX_JOINS_PER_TICK if rate_limit else 10_000)
-    results: list[dict[str, Any]] = []
     from .rotation_service import list_alive_session_accounts
+    from .account_pacing import account_uses_seed_channel_joins
 
+    alive = await list_alive_session_accounts(session, automation_id)
     used_accounts: set[int] = {
         account.id
-        for account in await list_alive_session_accounts(session, automation_id)
-        if account_membership_should_idle(account)
+        for account in alive
+        if account_membership_should_idle(account) or account_uses_seed_channel_joins(account)
     }
-    for _ in range(pairs):
+    results: list[dict[str, Any]] = []
+    seed = await join_next_seed_channel(
+        session,
+        automation_id,
+        exclude_account_ids={account.id for account in alive if account_membership_should_idle(account)},
+        apply_cooldown=rate_limit,
+    )
+    if seed:
+        results.append(seed)
+        if seed.get("account_id"):
+            used_accounts.add(int(seed["account_id"]))
+    for _ in range(max(0, pairs - len(results))):
         outcome = await join_next_membership(
             session,
             automation_id,

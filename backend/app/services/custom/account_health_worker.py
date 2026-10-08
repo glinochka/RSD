@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_is_resting
+from .account_pacing import account_in_settle_rest, account_is_resting, account_may_keep_alive
 from .account_classification_service import classify_account
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, update_account_after_telegram_error
@@ -78,6 +78,8 @@ class AccountHealthWorker:
             }
 
         if not force:
+            if account_in_settle_rest(social_account):
+                return {"account_id": account_id, "status": "skipped", "reason": "settle_rest"}
             if account_is_resting(social_account):
                 return {"account_id": account_id, "status": "skipped", "reason": "resting"}
             used = social_account.last_used_at
@@ -95,6 +97,10 @@ class AccountHealthWorker:
         avatar_bytes = None
         error_kind = None
         spam_state = None
+        if social_account.last_health_check_at is None:
+            from .proxy_service import rebind_account_proxy_if_far
+
+            await rebind_account_proxy_if_far(session, pool_account, social_account)
         if social_account.session_file_path:
             session_path = _media_root() / social_account.session_file_path
             if not session_path.exists():
@@ -117,15 +123,27 @@ class AccountHealthWorker:
                             need_spam_check = (_utc_now() - then) >= (_SPAMBLOCK_RECHECK + timedelta(days=jitter_days))
                             if need_spam_check:
                                 need_spam_check = random.random() < 0.35
-                        include_dialogs = (not bool(social_account.auto_classified)) or random.random() < 0.12
+                        mature = account_may_keep_alive(social_account)
+                        if not mature:
+                            need_spam_check = False
+                        include_dialogs = mature and (
+                            (not bool(social_account.auto_classified)) or random.random() < 0.12
+                        )
                         async with TelegramAccountClient.for_account(social_account) as client:
                             info = await client.get_info(include_dialogs=include_dialogs)
+                            if mature:
+                                try:
+                                    from .account_authorizations_service import count_authorizations
+
+                                    info["telegram_session_count"] = await count_authorizations(client)
+                                except Exception:
+                                    pass
                             if need_spam_check:
                                 spam_state = await client.check_spamblock(force=False)
                             blocked_now = bool(social_account.is_spamblocked) or (
                                 isinstance(spam_state, dict) and spam_state.get("spamblocked") is True
                             )
-                            if blocked_now and _spamblock_appeal_due(social_account):
+                            if blocked_now and not social_account.is_frozen and _spamblock_appeal_due(social_account):
                                 lifted = await client.appeal_temporary_spamblock()
                                 social_account.spamblock_appealed_at = _utc_now()
                                 if lifted.get("spamblocked") is False or spam_state is None:
@@ -232,9 +250,8 @@ class AccountHealthWorker:
             social_account.current_bio = info.get("bio") or social_account.current_bio
             social_account.friends_count = info.get("dialogs_count")
             social_account.activity_score = self._activity_score(info)
-            from .proxy_service import rebind_account_proxy_if_far
-
-            await rebind_account_proxy_if_far(session, pool_account, social_account)
+            if info.get("telegram_session_count") is not None:
+                social_account.telegram_session_count = int(info["telegram_session_count"])
 
         if spam_state is not None:
             self._apply_spam_state(social_account, spam_state)
@@ -274,15 +291,20 @@ class AccountHealthWorker:
 
     @staticmethod
     def _apply_spam_state(social_account: SocialAccount, spam_state: dict[str, Any]) -> None:
+        from .account_restriction import apply_limited_flag, apply_restriction_classification
+
         blocked = spam_state.get("spamblocked")
-        social_account.spamblock_checked_at = _utc_now()
+        classification = spam_state.get("classification")
+        if isinstance(classification, dict):
+            apply_restriction_classification(social_account, classification)
+            return
         if blocked is True:
-            social_account.is_spamblocked = True
-            social_account.spamblocked_at = social_account.spamblocked_at or _utc_now()
+            apply_limited_flag(social_account, blocked=True)
         elif blocked is False:
-            social_account.is_spamblocked = False
-            social_account.spamblocked_at = None
-        social_account.updated_at = _utc_now()
+            apply_limited_flag(social_account, blocked=False)
+        else:
+            social_account.spamblock_checked_at = _utc_now()
+            social_account.updated_at = _utc_now()
 
     async def check_account_spamblock(
         self,
@@ -320,7 +342,8 @@ class AccountHealthWorker:
         try:
             async with TelegramAccountClient.for_account(social_account) as client:
                 spam_state = await client.check_spamblock(force=True)
-                if spam_state and spam_state.get("spamblocked") is True:
+                kind = str(((spam_state or {}).get("classification") or {}).get("kind") or "")
+                if spam_state and spam_state.get("spamblocked") is True and kind != "frozen" and not social_account.is_frozen:
                     lifted = await client.appeal_temporary_spamblock()
                     social_account.spamblock_appealed_at = _utc_now()
                     spam_state = {**spam_state, **lifted}
@@ -351,6 +374,7 @@ class AccountHealthWorker:
             "spamblocked": blocked,
             "source": (spam_state or {}).get("source"),
             "appealed": bool((spam_state or {}).get("appealed")),
+            "classification": (spam_state or {}).get("classification"),
             "pool_account": pool_account,
             "social_account": social_account,
         }

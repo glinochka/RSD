@@ -120,13 +120,23 @@ const statusMeta = (account) => {
   return { label: 'Активен', chip: 'ok' };
 };
 
-const constraintMeta = (account) => {
+const restrictionMeta = (account) => {
+  if (account.is_frozen || account.restriction_kind === 'frozen') {
+    return { label: account.restriction_label || 'Заморозка', chip: 'info' };
+  }
+  if (account.restriction_label) {
+    return { label: account.restriction_label, chip: 'bad' };
+  }
+  if (account.is_spamblocked) {
+    return { label: 'ЛС/инвайт', chip: 'bad' };
+  }
   if (account.is_channel_banned) {
     return { label: 'Бан в каналах', chip: 'bad' };
   }
-  if (account.is_frozen) {
-    return { label: 'Frozen', chip: 'info' };
-  }
+  return { label: 'Нет', chip: 'ok' };
+};
+
+const constraintMeta = (account) => {
   if (account.flood_quarantined_until && new Date(account.flood_quarantined_until) > new Date()) {
     return { label: 'Карантин FloodWait', chip: 'warn' };
   }
@@ -134,6 +144,17 @@ const constraintMeta = (account) => {
     return { label: WARMUP_STATUS_LABELS[account.warmup_status] || 'Карантин', chip: 'warn' };
   }
   return { label: '—', chip: 'mute' };
+};
+
+const guardPauseLabel = (account) => {
+  if (!account?.session_guard_paused_until) {
+    return null;
+  }
+  const until = new Date(account.session_guard_paused_until);
+  if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) {
+    return null;
+  }
+  return until.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 };
 
 const CustomAutomationAccountsPage = () => {
@@ -180,6 +201,10 @@ const CustomAutomationAccountsPage = () => {
   const [proxyCountry, setProxyCountry] = useState('');
   const [proxySaving, setProxySaving] = useState(false);
   const [proxyMessage, setProxyMessage] = useState(null);
+  const [sessionItems, setSessionItems] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState(null);
+  const [terminatingHash, setTerminatingHash] = useState(null);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -229,6 +254,38 @@ const CustomAutomationAccountsPage = () => {
   useEffect(() => {
     loadPoolProxies();
   }, [loadPoolProxies]);
+
+  const loadSessions = useCallback(async (accountId) => {
+    if (!id || !accountId) {
+      return;
+    }
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      const data = await customService.getAccountAuthorizations(id, accountId);
+      setSessionItems(data.items || []);
+      if (typeof data.count === 'number') {
+        setAccounts((prev) => prev.map((item) => (
+          item.id === accountId ? { ...item, telegram_session_count: data.count } : item
+        )));
+      }
+    } catch (err) {
+      setSessionItems([]);
+      setSessionsError(err.message || 'Не удалось загрузить сессии');
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (!drawerId) {
+      setSessionItems([]);
+      setSessionsError(null);
+      return undefined;
+    }
+    loadSessions(drawerId);
+    return undefined;
+  }, [drawerId, loadSessions]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -441,6 +498,30 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
+  const handleTerminateSession = async (item) => {
+    if (!item?.can_terminate || !drawerId) {
+      return;
+    }
+    if (!window.confirm(`Завершить сессию «${item.title}»? Это устройство выйдет из аккаунта.`)) {
+      return;
+    }
+    setTerminatingHash(item.hash);
+    setSessionsError(null);
+    try {
+      const data = await customService.terminateAccountAuthorization(id, drawerId, item.hash);
+      setSessionItems(data.items || []);
+      if (typeof data.count === 'number') {
+        setAccounts((prev) => prev.map((row) => (
+          row.id === drawerId ? { ...row, telegram_session_count: data.count } : row
+        )));
+      }
+    } catch (err) {
+      setSessionsError(err.message || 'Не удалось завершить сессию');
+    } finally {
+      setTerminatingHash(null);
+    }
+  };
+
   const handleDeleteAccount = async (account) => {
     const label = account.phone_number || account.username || `#${account.id}`;
     if (!window.confirm(`Удалить аккаунт ${label}?`)) {
@@ -492,11 +573,34 @@ const CustomAutomationAccountsPage = () => {
           detail: data.detail || '',
         },
       }));
+      await loadAccounts();
     } catch (err) {
       setLoginCodes((prev) => ({
         ...prev,
         [account.id]: { loading: false, error: err.message || 'Не удалось прочитать код' },
       }));
+    }
+  };
+
+  const handlePauseSessionGuard = async (account) => {
+    setError(null);
+    try {
+      await customService.pauseAccountSessionGuard(id, account.id, 15);
+      await loadAccounts();
+      await loadSessions(account.id);
+    } catch (err) {
+      setError(err.message || 'Не удалось поставить защиту сессий на паузу');
+    }
+  };
+
+  const handleAdoptSessions = async (account) => {
+    setError(null);
+    try {
+      const data = await customService.adoptAccountSessions(id, account.id);
+      setSessionItems(data.items || []);
+      await loadAccounts();
+    } catch (err) {
+      setError(err.message || 'Не удалось перевести аккаунт в общий пул');
     }
   };
 
@@ -528,7 +632,7 @@ const CustomAutomationAccountsPage = () => {
         return statusMeta(account).label;
       }
       if (sortKey === 'spamblock') {
-        return account.is_spamblocked ? 1 : 0;
+        return restrictionMeta(account).label;
       }
       if (sortKey === 'constraint') {
         return constraintMeta(account).label;
@@ -538,6 +642,9 @@ const CustomAutomationAccountsPage = () => {
       }
       if (sortKey === 'proxy') {
         return account.proxy_label || '';
+      }
+      if (sortKey === 'sessions') {
+        return account.telegram_session_count ?? -1;
       }
       return '';
     };
@@ -827,21 +934,22 @@ const CustomAutomationAccountsPage = () => {
                   <th>Аватар</th>
                   <th><button type="button" onClick={() => toggleSort('name')}>Имя</button></th>
                   <th><button type="button" onClick={() => toggleSort('status')}>Статус</button></th>
-                  <th><button type="button" onClick={() => toggleSort('spamblock')}>Спамблок</button></th>
+                  <th><button type="button" onClick={() => toggleSort('spamblock')}>Ограничение</button></th>
                   <th><button type="button" onClick={() => toggleSort('constraint')}>Статус C</button></th>
                   <th><button type="button" onClick={() => toggleSort('tracking')}>Отлёжка</button></th>
                   <th><button type="button" onClick={() => toggleSort('proxy')}>Прокси</button></th>
+                  <th><button type="button" onClick={() => toggleSort('sessions')}>N сессий</button></th>
                   <th>Действия</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={9}>Загрузка...</td>
+                    <td colSpan={10}>Загрузка...</td>
                   </tr>
                 ) : sortedAccounts.length === 0 ? (
                   <tr>
-                    <td colSpan={9}>Ничего не найдено по текущим фильтрам.</td>
+                    <td colSpan={10}>Ничего не найдено по текущим фильтрам.</td>
                   </tr>
                 ) : (
                   sortedAccounts.map((account) => {
@@ -878,13 +986,23 @@ const CustomAutomationAccountsPage = () => {
                         </td>
                         <td><span className={`acc-chip acc-chip--${status.chip}`}>{status.label}</span></td>
                         <td>
-                          <span className={`acc-chip acc-chip--${account.is_spamblocked ? 'bad' : 'ok'}`}>
-                            {account.is_spamblocked ? 'Да' : 'Нет'}
+                          <span className={`acc-chip acc-chip--${restrictionMeta(account).chip}`}>
+                            {restrictionMeta(account).label}
                           </span>
                         </td>
                         <td><span className={`acc-chip acc-chip--${constraint.chip}`}>{constraint.label}</span></td>
                         <td>{formatRelative(account.last_used_at)}</td>
                         <td>{account.proxy_label || 'Авто'}</td>
+                        <td onClick={(event) => event.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="acc-session-count"
+                            title="Открыть список устройств"
+                            onClick={() => { setPanel(null); setDrawerId(account.id); }}
+                          >
+                            {account.telegram_session_count == null ? '—' : account.telegram_session_count}
+                          </button>
+                        </td>
                         <td onClick={(event) => event.stopPropagation()}>
                           <button type="button" className="acc-icon-btn" onClick={() => { setPanel(null); setDrawerId(account.id); }} title="Карточка">
                             <Ico><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></Ico>
@@ -1036,8 +1154,16 @@ const CustomAutomationAccountsPage = () => {
             <div className="acc-drawer-body">
               <div>
                 <span className={`acc-chip acc-chip--${statusMeta(drawerAccount).chip}`}>{statusMeta(drawerAccount).label}</span>
-                {drawerAccount.is_spamblocked ? <span className="acc-chip acc-chip--bad">Спамблок</span> : null}
-                {drawerAccount.is_channel_banned ? <span className="acc-chip acc-chip--bad">Бан в каналах</span> : null}
+                {restrictionMeta(drawerAccount).label !== 'Нет' ? (
+                  <span className={`acc-chip acc-chip--${restrictionMeta(drawerAccount).chip}`}>
+                    {restrictionMeta(drawerAccount).label}
+                  </span>
+                ) : null}
+                {constraintMeta(drawerAccount).label !== '—' ? (
+                  <span className={`acc-chip acc-chip--${constraintMeta(drawerAccount).chip}`}>
+                    {constraintMeta(drawerAccount).label}
+                  </span>
+                ) : null}
               </div>
               <div className="form-group">
                 <label htmlFor="acc-name">Имя</label>
@@ -1069,6 +1195,55 @@ const CustomAutomationAccountsPage = () => {
                   Аватар
                 </CustomFileButton>
               </div>
+              <div className="acc-sessions">
+                <div className="acc-sessions-head">
+                  <h3>Сессии Telegram</h3>
+                  <button
+                    type="button"
+                    className="acc-icon-btn"
+                    title="Обновить"
+                    onClick={() => loadSessions(drawerAccount.id)}
+                    disabled={sessionsLoading}
+                  >
+                    <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
+                  </button>
+                </div>
+                <p className="form-hint">
+                  Пока аккаунт в работе, новые входы сразу обрываем. Код из Telegram даёт 5 минут на ваш вход.
+                  После перевязки почты и 2FA нажмите «Перевести в общий пул» — текущие устройства станут своими.
+                  {guardPauseLabel(drawerAccount) ? ` Пауза до ${guardPauseLabel(drawerAccount)}.` : ''}
+                </p>
+                {sessionsLoading ? <p className="form-hint">Загружаем устройства...</p> : null}
+                {sessionsError ? <p className="acc-flash acc-flash--error">{sessionsError}</p> : null}
+                {!sessionsLoading && !sessionsError && sessionItems.length === 0 ? (
+                  <p className="form-hint">Список устройств пока пуст.</p>
+                ) : null}
+                <ul className="acc-session-list">
+                  {sessionItems.map((item) => (
+                    <li key={item.hash} className={`acc-session-row${item.current ? ' is-current' : ''}`}>
+                      <div>
+                        <b>{item.title}</b>
+                        <small>
+                          {item.current ? 'Эта сессия · ' : ''}
+                          {item.subtitle ? `${item.subtitle} · ` : ''}
+                          {item.ip || 'без IP'}
+                          {item.place ? ` · ${item.place}` : ''}
+                          {item.active_at ? ` · ${formatRelative(item.active_at)}` : ''}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="acc-icon-btn"
+                        title={item.can_terminate ? 'Завершить сессию' : 'Текущую сессию завершить нельзя'}
+                        disabled={!item.can_terminate || terminatingHash === item.hash}
+                        onClick={() => handleTerminateSession(item)}
+                      >
+                        <Ico d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
               <p className="form-hint">
                 Прокси: {drawerAccount.proxy_label || 'авто из пула'}. Отлёжка: {formatRelative(drawerAccount.last_used_at)}.
                 {drawerAccount.warmup_status && drawerAccount.warmup_status !== 'idle'
@@ -1086,6 +1261,12 @@ const CustomAutomationAccountsPage = () => {
                 </button>
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleTelegramCode(drawerAccount)}>
                   {loginCodes[drawerAccount.id]?.loading ? 'Читаем...' : 'Код из Telegram'}
+                </button>
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handlePauseSessionGuard(drawerAccount)}>
+                  Я вхожу сам (15 мин)
+                </button>
+                <button type="button" className="acc-btn acc-btn--dark" onClick={() => handleAdoptSessions(drawerAccount)}>
+                  Перевести в общий пул
                 </button>
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleDeleteAccount(drawerAccount)}>
                   Удалить

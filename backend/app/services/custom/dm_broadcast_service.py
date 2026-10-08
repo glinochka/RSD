@@ -12,8 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import (
-    STAGE_CAUTIOUS,
-    account_humanization_stage,
+    activity_interval_scale,
     account_should_idle,
     farm_overlap_active_hours,
 )
@@ -304,7 +303,7 @@ async def run_dm_broadcast_pass(automation_id: int, run_config: dict[str, Any] |
                     continue
                 if account_should_idle(picked):
                     continue
-                factor = 2 if account_humanization_stage(picked) == STAGE_CAUTIOUS else 1
+                factor = activity_interval_scale(picked)
                 chain = list(messages)
                 if first_mode == "ai":
                     hint = chain[0]["text"] if chain else ""

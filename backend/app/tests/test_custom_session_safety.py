@@ -443,22 +443,38 @@ def test_channel_posts_ignore_old_history():
     assert reason is None
 
 
-def test_accounts_sleep_at_night_and_rest_longer_first_week():
+def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
     from datetime import datetime, timedelta
     from types import SimpleNamespace
     from zoneinfo import ZoneInfo
 
+    monkeypatch.setattr("app.services.custom.account_pacing.SETTLE_HOURS", 24)
+
     from app.services.custom.account_pacing import (
         CAUTIOUS_TARGET_REST_MAX_SECONDS,
         CAUTIOUS_TARGET_REST_MIN_SECONDS,
+        PHASE_OBSERVE,
+        PHASE_REPLY,
+        PHASE_SETTLE,
         TARGET_REST_MAX_SECONDS,
         TARGET_REST_MIN_SECONDS,
+        activity_interval_scale,
+        activity_ramp_factor,
         account_humanization_stage,
         account_in_first_week,
+        account_in_settle_rest,
+        account_may_do_work,
+        account_may_first_write_dm,
+        account_may_keep_alive,
+        account_may_reply_dm,
+        account_should_idle,
+        account_upload_phase,
         humanization_ramp_factor,
+        account_humanization_should_idle,
         humanization_session_action_budget,
         humanization_session_seconds,
         in_account_active_hours,
+        join_daily_cap,
         rest_seconds_for_account,
     )
 
@@ -469,9 +485,34 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week():
     assert in_account_active_hours(night) is False
 
     now = datetime(2026, 9, 21, 12, 0, 0)
-    fresh = SimpleNamespace(created_at=now - timedelta(days=2))
-    aged = SimpleNamespace(created_at=now - timedelta(days=10))
-    veteran = SimpleNamespace(created_at=now - timedelta(days=40))
+    settling = SimpleNamespace(id=1, created_at=now - timedelta(hours=12), flood_quarantined_until=None, next_action_at=None, next_humanization_at=None)
+    day_one = SimpleNamespace(id=2, created_at=now - timedelta(hours=30), flood_quarantined_until=None, next_action_at=None, next_humanization_at=None)
+    day_two = SimpleNamespace(id=3, created_at=now - timedelta(hours=50), flood_quarantined_until=None, next_action_at=None, next_humanization_at=None)
+    fresh = SimpleNamespace(id=4, created_at=now - timedelta(days=4))
+    aged = SimpleNamespace(id=5, created_at=now - timedelta(days=10))
+    veteran = SimpleNamespace(id=6, created_at=now - timedelta(days=40))
+    assert account_upload_phase(settling, now=now) == PHASE_SETTLE
+    assert account_upload_phase(day_one, now=now) == PHASE_OBSERVE
+    assert account_upload_phase(day_two, now=now) == PHASE_REPLY
+    assert account_in_settle_rest(settling, now=now) is True
+    assert account_in_settle_rest(day_one, now=now) is False
+    assert activity_ramp_factor(settling, now=now) == 0.0
+    assert activity_ramp_factor(day_one, now=now) == 0.0
+    assert activity_ramp_factor(day_two, now=now) == 0.0
+    assert account_may_do_work(day_two, now=now) is False
+    assert account_may_first_write_dm(day_two, now=now) is False
+    assert account_may_reply_dm(day_two, now=now) is True
+    assert account_may_keep_alive(day_one, now=now) is False
+    assert account_may_keep_alive(fresh, now=now) is True
+    assert abs(humanization_ramp_factor(day_one, now=now) - 0.10) < 0.001
+    assert abs(humanization_ramp_factor(day_two, now=now) - 0.20) < 0.001
+    assert 0.24 <= activity_ramp_factor(fresh, now=now) <= 0.50
+    assert activity_ramp_factor(veteran, now=now) == 1.0
+    assert account_should_idle(settling, now=now, ignore_hours=True) is True
+    assert account_should_idle(day_one, now=now, ignore_hours=True) is True
+    assert account_humanization_should_idle(settling, now=now, ignore_hours=True) is True
+    assert account_humanization_should_idle(day_one, now=now, ignore_hours=True) is False
+    assert join_daily_cap(day_one, now=now) in {2, 3}
     assert account_in_first_week(fresh, now=now) is True
     assert account_in_first_week(aged, now=now) is False
     assert account_humanization_stage(fresh, now=now) == "cautious"
@@ -479,14 +520,36 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week():
     assert account_humanization_stage(veteran, now=now) == "trusted"
     first_week = rest_seconds_for_account(fresh, now=now)
     later = rest_seconds_for_account(aged, now=now)
-    assert CAUTIOUS_TARGET_REST_MIN_SECONDS <= first_week <= CAUTIOUS_TARGET_REST_MAX_SECONDS
+    scale = activity_interval_scale(fresh, now=now)
+    assert CAUTIOUS_TARGET_REST_MIN_SECONDS * scale <= first_week <= CAUTIOUS_TARGET_REST_MAX_SECONDS * scale
     assert TARGET_REST_MIN_SECONDS <= later <= TARGET_REST_MAX_SECONDS
-    assert 0.29 <= humanization_ramp_factor(fresh, now=now) <= 0.55
     assert humanization_ramp_factor(veteran, now=now) == 1.0
-    assert 90 <= humanization_session_seconds(fresh, now=now) <= 180
+    assert 40 <= humanization_session_seconds(day_one, now=now) <= 90
+    assert 60 <= humanization_session_seconds(day_two, now=now) <= 140
     assert 240 <= humanization_session_seconds(veteran, now=now) <= 420
-    assert 2 <= humanization_session_action_budget(fresh, now=now) <= 5
+    assert 2 <= humanization_session_action_budget(day_one, now=now) <= 3
     assert 7 <= humanization_session_action_budget(veteran, now=now) <= 10
+    assert humanization_session_action_budget(settling, now=now) == 0
+
+
+def test_peer_opener_is_always_the_veteran(monkeypatch):
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+
+    import app.services.custom.account_pacing as pacing
+    from app.services.custom.account_peer_dialog_service import _peer_opener
+
+    monkeypatch.setattr(pacing, "SETTLE_HOURS", 24)
+    now = datetime.utcnow().replace(tzinfo=None)
+    young = SimpleNamespace(id=1, created_at=now - timedelta(hours=50), username="new_acc")
+    veteran = SimpleNamespace(id=2, created_at=now - timedelta(days=20), username="old_acc")
+    ordered = _peer_opener(young, veteran)
+    assert ordered is not None
+    assert ordered[0] is veteran
+    assert ordered[1] is young
+    assert pacing.account_may_first_write_dm(young, now=now) is False
+    assert pacing.account_may_first_write_dm(veteran, now=now) is True
+    assert _peer_opener(young, SimpleNamespace(id=3, created_at=now - timedelta(hours=52), username="also_new")) is None
 
 
 def test_peer_dialog_does_not_park_public_writes():

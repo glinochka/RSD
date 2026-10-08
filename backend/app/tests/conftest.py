@@ -154,6 +154,12 @@ def _wire_test_booking_service(factory):
 
 
 @pytest.fixture(autouse=True)
+def _disable_upload_settle_rest(monkeypatch):
+    """Unit tests create accounts 'now'; production still rests newly uploaded ones 24h."""
+    monkeypatch.setattr("app.services.custom.account_pacing.SETTLE_HOURS", 0)
+
+
+@pytest.fixture(autouse=True)
 def _reset_booking_service_singletons():
     import app.services.admin_booking.payment_service as payment_module
     import app.services.admin_booking.service as booking_module

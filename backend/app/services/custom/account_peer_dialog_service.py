@@ -12,7 +12,16 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_humanization_should_idle as account_should_idle
+from .account_pacing import (
+    activity_interval_scale,
+    account_age_days,
+    account_humanization_should_idle,
+    account_in_settle_rest,
+    account_may_first_write_dm,
+    account_may_receive_peer,
+    account_may_reply_dm,
+    humanization_ramp_factor,
+)
 from .conversation_guard import peer_dialog_text_ok, sanitize_public_text, text_contains_product_pitch
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
@@ -28,7 +37,7 @@ DAILY_MIN_MESSAGES = 5
 DAILY_MAX_MESSAGES = 10
 HISTORY_KEEP = 12
 MAX_PEER_SENDS_PER_PASS = 1
-MAX_PEER_STARTS_PER_PASS = 2
+MAX_PEER_STARTS_PER_PASS = 1
 
 _OPENERS = (
     "Привет, как день?",
@@ -85,8 +94,10 @@ def moscow_day_key(value: datetime | None = None) -> str:
     return current.astimezone(tz).date().isoformat()
 
 
-def peer_gap_seconds() -> int:
-    return random.randint(PEER_GAP_MIN_SECONDS, PEER_GAP_MAX_SECONDS)
+def peer_gap_seconds(account=None) -> int:
+    from .account_pacing import activity_interval_scale
+
+    return int(random.randint(PEER_GAP_MIN_SECONDS, PEER_GAP_MAX_SECONDS) * activity_interval_scale(account))
 
 
 def peer_start_delay_seconds() -> int:
@@ -94,8 +105,26 @@ def peer_start_delay_seconds() -> int:
     return random.randint(10 * 60, PEER_GAP_MAX_SECONDS)
 
 
-def daily_message_target() -> int:
-    return random.randint(DAILY_MIN_MESSAGES, DAILY_MAX_MESSAGES)
+def daily_message_target(account=None) -> int:
+    raw = random.randint(DAILY_MIN_MESSAGES, DAILY_MAX_MESSAGES)
+    if account is None:
+        return raw
+    factor = humanization_ramp_factor(account)
+    if factor <= 0:
+        return 0
+    return max(1, int(round(raw * factor)))
+
+
+def _peer_opener(left: SocialAccount, right: SocialAccount) -> tuple[SocialAccount, SocialAccount] | None:
+    """Older account writes first. New accounts only receive until day 3."""
+    pairs: list[tuple[SocialAccount, SocialAccount]] = []
+    if account_may_first_write_dm(left) and account_may_receive_peer(right):
+        pairs.append((left, right))
+    if account_may_first_write_dm(right) and account_may_receive_peer(left):
+        pairs.append((right, left))
+    if not pairs:
+        return None
+    return max(pairs, key=lambda item: account_age_days(item[0]))
 
 
 def ordered_pair(left_id: int, right_id: int) -> tuple[int, int]:
@@ -201,12 +230,21 @@ async def generate_peer_text(history: list[dict[str, Any]], *, opener: bool) -> 
     return random.choice(_FALLBACK_REPLIES)
 
 
-def _reset_dialog_if_new_day(dialog: CustomAccountPeerDialog, today: str) -> None:
+def _younger_account(*accounts):
+    living = [item for item in accounts if item is not None]
+    if not living:
+        return None
+    from .account_pacing import account_age_days
+
+    return min(living, key=lambda item: account_age_days(item))
+
+
+def _reset_dialog_if_new_day(dialog: CustomAccountPeerDialog, today: str, account=None) -> None:
     if dialog.day_key == today:
         return
     dialog.day_key = today
     dialog.messages_today = 0
-    dialog.daily_target = daily_message_target()
+    dialog.daily_target = daily_message_target(account)
     dialog.status = "idle"
     dialog.next_send_at = None
     dialog.next_sender_id = None
@@ -250,6 +288,10 @@ async def _load_alive_accounts(
     for account, pool in result.all():
         if account.id in seen or not _account_can_peer(account):
             continue
+        if account_in_settle_rest(account):
+            continue
+        if not account_may_receive_peer(account) and not account_may_first_write_dm(account):
+            continue
         if cfg is not None and not account_allowed(cfg, account.id):
             continue
         if skip_account_for_module(cfg, account, pool):
@@ -282,7 +324,7 @@ async def _get_or_create_dialog(
         account_high_id=high_id,
         status="idle",
         day_key=moscow_day_key(),
-        daily_target=daily_message_target(),
+        daily_target=daily_message_target(_younger_account(left, right)),
         messages_today=0,
         history=[],
         created_at=now,
@@ -337,7 +379,15 @@ async def _advance_dialog(
     *,
     opener: bool,
 ) -> bool:
-    if account_should_idle(sender):
+    if opener and not account_may_first_write_dm(sender):
+        dialog.next_send_at = _utc_now() + timedelta(minutes=20)
+        dialog.updated_at = _utc_now()
+        return False
+    if not opener and not account_may_reply_dm(sender):
+        dialog.next_send_at = _utc_now() + timedelta(minutes=20)
+        dialog.updated_at = _utc_now()
+        return False
+    if account_humanization_should_idle(sender):
         dialog.next_send_at = _utc_now() + timedelta(minutes=12)
         dialog.updated_at = _utc_now()
         return False
@@ -362,7 +412,7 @@ async def _advance_dialog(
         dialog.next_send_at = None
     else:
         dialog.next_sender_id = recipient.id
-        dialog.next_send_at = _utc_now() + timedelta(seconds=peer_gap_seconds())
+        dialog.next_send_at = _utc_now() + timedelta(seconds=peer_gap_seconds(sender))
     dialog.updated_at = _utc_now()
     return True
 
@@ -398,7 +448,11 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
             ).scalars().all()
         )
         for dialog in rows:
-            _reset_dialog_if_new_day(dialog, today)
+            _reset_dialog_if_new_day(
+                dialog,
+                today,
+                _younger_account(by_id.get(dialog.account_low_id), by_id.get(dialog.account_high_id)),
+            )
 
         now = _utc_now()
         for dialog in rows:
@@ -432,15 +486,21 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
                 break
             if left.id in busy and right.id in busy:
                 continue
+            ordered = _peer_opener(left, right)
+            if ordered is None:
+                continue
+            opener_acc, recipient_acc = ordered
             dialog = await _get_or_create_dialog(session, automation_id, left, right)
-            _reset_dialog_if_new_day(dialog, today)
+            _reset_dialog_if_new_day(dialog, today, _younger_account(left, right))
             if dialog.status == "active":
                 continue
             if int(dialog.messages_today or 0) >= int(dialog.daily_target or DAILY_MIN_MESSAGES):
                 continue
             dialog.status = "active"
-            dialog.next_sender_id = left.id
-            dialog.next_send_at = now + timedelta(seconds=peer_start_delay_seconds())
+            dialog.next_sender_id = opener_acc.id
+            dialog.next_send_at = now + timedelta(
+                seconds=int(peer_start_delay_seconds() * activity_interval_scale(recipient_acc))
+            )
             dialog.updated_at = _utc_now()
             started += 1
             started_this_pass += 1

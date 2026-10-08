@@ -19,11 +19,24 @@ def default_roles_for_class(_account_class=None) -> list[str]:
     return []
 
 
-def is_warmup_blocked(pool_account: PoolAccount | None, action_type: str) -> bool:
+def is_warmup_blocked(
+    pool_account: PoolAccount | None,
+    action_type: str,
+    social: SocialAccount | None = None,
+) -> bool:
     if action_type in WARMUP_OPEN_ACTIONS:
         return False
+    from .account_pacing import SETTLE_HOURS, account_may_do_work
+
+    if social is not None and not account_may_do_work(social):
+        return True
     status = (getattr(pool_account, "warmup_status", None) or "idle").strip().lower()
-    return status in WARMUP_BLOCKED_STATUSES
+    if status not in WARMUP_BLOCKED_STATUSES:
+        return False
+    # Production day 3+: work may start even if the warmup card still says warming.
+    if social is not None and SETTLE_HOURS > 0 and account_may_do_work(social):
+        return False
+    return True
 
 
 def account_matches_action(
@@ -31,12 +44,8 @@ def account_matches_action(
     social: SocialAccount | None,
     action_type: str,
 ) -> bool:
-    """True unless warmup is blocking this target action.
-
-    Who actually runs a job is the module's selected ``account_ids``.
-    """
-    del social
-    return not is_warmup_blocked(pool_account, action_type)
+    """True unless warmup / upload calendar is blocking this target action."""
+    return not is_warmup_blocked(pool_account, action_type, social)
 
 
 def account_is_live(social: SocialAccount | None) -> bool:
@@ -62,6 +71,23 @@ def account_is_task_ready(
 ) -> bool:
     if not account_is_live(social):
         return False
-    if exclude_spamblocked and getattr(social, "is_spamblocked", False):
+    from .account_pacing import account_may_do_work
+
+    if action_type not in WARMUP_OPEN_ACTIONS and not account_may_do_work(social):
         return False
+    from .account_restriction import restriction_blocks_action
+
+    if restriction_blocks_action(social, action_type):
+        return False
+    if exclude_spamblocked and action_type in {
+        "dm",
+        "dmp",
+        "dmp_outreach",
+        "warmup_dm",
+        "lead_warmup",
+        "peer_dialog",
+        "account_warmup",
+    }:
+        if getattr(social, "is_spamblocked", False):
+            return False
     return account_matches_action(pool_account, social, action_type)
