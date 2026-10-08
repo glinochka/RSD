@@ -106,6 +106,9 @@ const KeyIcon = () => (
     <path d="M21 2l-2 2m-7.6 7.6a5 5 0 1 1-2.8 2.8L3 21h3v-3h3v-3h3z" />
   </Ico>
 );
+const ShieldIcon = () => (
+  <Ico d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+);
 const SlidersIcon = () => (
   <Ico>
     <line x1="4" y1="21" x2="4" y2="14" />
@@ -184,6 +187,7 @@ const MenuIcon = () => (
 
 const UBT_ICONS = {
   accounts: UsersIcon,
+  intercept: ShieldIcon,
   tasks: ListIcon,
   stats: ChartIcon,
   neurocommenting: CommentIcon,

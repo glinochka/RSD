@@ -14,8 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import CustomAutomation, PoolAccount, SocialAccount
-from .account_pacing import account_may_keep_alive
+from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
+from .account_pacing import account_is_intercept, account_may_keep_alive
 from .account_roles import account_is_live
 from .telegram_account_client import TelegramAccountClient
 from .work_mode import apply_work_mode, in_configured_work_hours, in_daily_idle_gap, reset_work_mode
@@ -131,15 +131,27 @@ def _session_should_sleep(account: SocialAccount) -> bool:
 async def _load_accounts(session: AsyncSession, automation_id: int) -> list[SocialAccount]:
     rows = (
         await session.execute(
-            select(SocialAccount, PoolAccount)
+            select(SocialAccount, PoolAccount, AccountPool)
             .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
             .where(
                 PoolAccount.custom_automation_id == automation_id,
                 PoolAccount.removed_at.is_(None),
             )
         )
     ).all()
-    return [account for account, _pool in rows if account_is_live(account)]
+    live: list[SocialAccount] = []
+    for account, _pool, account_pool in rows:
+        if not account_is_live(account):
+            continue
+        purpose = getattr(account_pool, "purpose", "farm")
+        if purpose == "intercept" or account_is_intercept(account):
+            live.append(account)
+            continue
+        if purpose != "farm" and not account_pool.is_default:
+            continue
+        live.append(account)
+    return live
 
 
 def _module_on(blob: dict[str, Any], key: str, fallback: bool = False) -> bool:
@@ -183,12 +195,11 @@ def _enabled_streams(automation: CustomAutomation) -> list[tuple[str, StreamFn]]
     from .warmup_module_service import runtime_warmup_cfg, warmup_scheduler_active
 
     wu = runtime_warmup_cfg(automation)
-    if warmup_scheduler_active(automation):
-        if wu.get("do_warmup_dms") is not False:
-            streams.append(("account_warmup", run_account_warmup_pass))
-        streams.append(("idle_browse", run_idle_browse_pass))
-        if wu.get("do_peer_dialogs") is not False:
-            streams.append(("peer_dialog", run_peer_dialog_pass))
+    streams.append(("idle_browse", run_idle_browse_pass))
+    if wu.get("do_peer_dialogs") is not False:
+        streams.append(("peer_dialog", run_peer_dialog_pass))
+    if warmup_scheduler_active(automation) and wu.get("do_warmup_dms") is not False:
+        streams.append(("account_warmup", run_account_warmup_pass))
     return streams
 
 
@@ -220,8 +231,7 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
         gated: list[tuple[str, StreamFn]] = []
         for name, fn in streams:
             if name == "join":
-                if active & JOIN_JOB_TYPES:
-                    gated.append((name, fn))
+                gated.append((name, fn))
                 continue
             mapped = STREAM_JOB_TYPES.get(name)
             if mapped and mapped not in active:

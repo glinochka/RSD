@@ -19,6 +19,7 @@ from app.services.custom.telegram_error_handler import (
 from app.services.telegram_userbot_auth import (
     _TELEGRAM_ANDROID_API_ID,
     _TELEGRAM_DESKTOP_API_ID,
+    _TELEGRAM_IOS_API_ID,
     iter_api_credential_candidates,
 )
 
@@ -72,6 +73,12 @@ def test_api_fallback_includes_official_desktop_and_android():
     assert ids[0] == 12345
     assert _TELEGRAM_DESKTOP_API_ID in ids
     assert _TELEGRAM_ANDROID_API_ID in ids
+    assert _TELEGRAM_IOS_API_ID in ids
+
+
+def test_api_fallback_prefers_ios_family():
+    pairs = iter_api_credential_candidates(family="ios")
+    assert pairs[0][0] == _TELEGRAM_IOS_API_ID
 
 
 def _write_pyrogram_session(path: Path, *, api_id: int = 2040, dc_id: int = 2) -> None:
@@ -465,12 +472,14 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
         account_in_settle_rest,
         account_may_do_work,
         account_may_first_write_dm,
+        account_may_humanize,
         account_may_keep_alive,
         account_may_reply_dm,
         account_should_idle,
         account_upload_phase,
         humanization_ramp_factor,
         account_humanization_should_idle,
+        humanization_rest_seconds,
         humanization_session_action_budget,
         humanization_session_seconds,
         in_account_active_hours,
@@ -507,6 +516,7 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
     assert abs(humanization_ramp_factor(day_one, now=now) - 0.10) < 0.001
     assert abs(humanization_ramp_factor(day_two, now=now) - 0.20) < 0.001
     assert 0.24 <= activity_ramp_factor(fresh, now=now) <= 0.50
+    assert humanization_ramp_factor(fresh, now=now) == 1.0
     assert activity_ramp_factor(veteran, now=now) == 1.0
     assert account_should_idle(settling, now=now, ignore_hours=True) is True
     assert account_should_idle(day_one, now=now, ignore_hours=True) is True
@@ -530,6 +540,21 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
     assert 2 <= humanization_session_action_budget(day_one, now=now) <= 3
     assert 7 <= humanization_session_action_budget(veteran, now=now) <= 10
     assert humanization_session_action_budget(settling, now=now) == 0
+    for _ in range(8):
+        rest = humanization_rest_seconds(veteran, now=now)
+        assert 15 * 60 <= rest <= 30 * 60
+    stolen = SimpleNamespace(
+        id=9,
+        origin="intercept",
+        created_at=now,
+        flood_quarantined_until=None,
+        next_action_at=None,
+        next_humanization_at=None,
+    )
+    assert account_in_settle_rest(stolen, now=now) is False
+    assert account_may_keep_alive(stolen, now=now) is True
+    assert account_may_do_work(stolen, now=now) is False
+    assert account_may_humanize(stolen, now=now) is False
 
 
 def test_peer_opener_is_always_the_veteran(monkeypatch):

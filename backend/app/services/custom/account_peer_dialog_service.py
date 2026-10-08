@@ -17,6 +17,7 @@ from .account_pacing import (
     account_age_days,
     account_humanization_should_idle,
     account_in_settle_rest,
+    account_is_intercept,
     account_may_first_write_dm,
     account_may_receive_peer,
     account_may_reply_dm,
@@ -26,7 +27,7 @@ from .conversation_guard import peer_dialog_text_ok, sanitize_public_text, text_
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import CustomAccountPeerDialog, CustomAutomation, PoolAccount, SocialAccount
+from ...alembic.models import AccountPool, CustomAccountPeerDialog, CustomAutomation, PoolAccount, SocialAccount
 from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
@@ -272,9 +273,11 @@ async def _load_alive_accounts(
     result = await session.execute(
         select(SocialAccount, PoolAccount)
         .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
         .where(
             PoolAccount.custom_automation_id == automation_id,
             PoolAccount.removed_at.is_(None),
+            AccountPool.is_default.is_(True),
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
             SocialAccount.is_frozen.is_(False),
@@ -286,6 +289,8 @@ async def _load_alive_accounts(
     accounts = []
     seen: set[int] = set()
     for account, pool in result.all():
+        if account_is_intercept(account):
+            continue
         if account.id in seen or not _account_can_peer(account):
             continue
         if account_in_settle_rest(account):
@@ -429,11 +434,13 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
         from .warmup_module_service import runtime_warmup_cfg
 
         cfg = runtime_warmup_cfg(automation)
-        if not automation.account_warmup_enabled:
-            return {"status": "skipped", "reason": "warmup_off", "sent": 0}
-        if cfg.get("do_peer_dialogs") is False:
+        if automation.account_warmup_enabled and cfg.get("do_peer_dialogs") is False:
             return {"status": "skipped", "reason": "peer_dialogs_off", "sent": 0}
-        accounts = await _load_alive_accounts(session, automation_id, cfg)
+        accounts = await _load_alive_accounts(
+            session,
+            automation_id,
+            cfg if automation.account_warmup_enabled else None,
+        )
         if len(accounts) < 2:
             return {"status": "skipped", "reason": "need_two_accounts", "sent": 0}
         by_id = {account.id: account for account in accounts}

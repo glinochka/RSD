@@ -16,9 +16,11 @@ from ...utils.scoped_auth_token import custom_account_qr_auth_token, custom_acco
 from ..account_pool_service import add_account_from_session_string
 from ..telegram_userbot_auth import (
     TelegramUserbotAuthError,
+    _LEGACY_DEVICE_MODELS,
     complete_qr_2fa,
     create_telegram_client,
     get_qr_status,
+    pick_device_profile,
     start_qr_login,
 )
 
@@ -136,6 +138,15 @@ async def _load_persisted(
     if int(pool_account.custom_automation_id) != int(automation_id):
         return None
     return pool_account, social_account
+
+
+def _bind_login_device(social, *, kind: str, seed: str) -> None:
+    existing = getattr(social, "telegram_device", None)
+    if isinstance(existing, dict):
+        model = str(existing.get("device_model") or "").strip()
+        if model and model not in _LEGACY_DEVICE_MODELS:
+            return
+    social.telegram_device = pick_device_profile(seed=f"{kind}:{seed}", mix=True)
 
 
 async def persist_authorized_session(
@@ -258,6 +269,8 @@ async def start_account_qr(
             preferred_proxy_id=proxy_id,
             lock_preferred=proxy_locked,
         )
+        _bind_login_device(social_account, kind="qr", seed=auth_id)
+        await session.commit()
         payload["pool_account"] = pool_account
         payload["social_account"] = social_account
         payload["created"] = created
@@ -301,6 +314,8 @@ async def poll_account_qr(
             preferred_proxy_id=_token_proxy_id(token_data),
             lock_preferred=_token_proxy_locked(token_data),
         )
+        _bind_login_device(social_account, kind="qr", seed=auth_id)
+        await session.commit()
         payload["pool_account"] = pool_account
         payload["social_account"] = social_account
         payload["created"] = created
@@ -353,6 +368,8 @@ async def verify_account_qr_2fa(
         preferred_proxy_id=proxy_id,
         lock_preferred=_token_proxy_locked(token_data),
     )
+    _bind_login_device(social_account, kind="qr", seed=auth_id)
+    await session.commit()
     return pool_account, social_account
 
 
@@ -383,7 +400,12 @@ async def request_account_sms(
         phone=phone_number.strip(),
     )
     await session.commit()
-    client, api_id, api_hash = create_telegram_client(prefer_desktop=True, proxy=proxy)
+    device = pick_device_profile(seed=f"sms:{phone_number.strip()}", mix=True)
+    client, api_id, api_hash = create_telegram_client(
+        family=device["family"],
+        device_profile=device,
+        proxy=proxy,
+    )
     phone_code_hash = None
     pending_session_string = ""
     try:
@@ -457,11 +479,13 @@ async def verify_account_sms(
         _token_proxy_id(token_data),
         automation_id=automation_id,
     )
+    device = pick_device_profile(seed=f"sms:{phone_number}", mix=True)
     client, api_id, api_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
         session_string=pending_session or "",
-        prefer_desktop=True,
+        family=device["family"],
+        device_profile=device,
         proxy=proxy,
     )
 
@@ -553,4 +577,6 @@ async def verify_account_sms(
         preferred_proxy_id=proxy_id,
         lock_preferred=proxy_locked,
     )
+    _bind_login_device(social_account, kind="sms", seed=phone_number)
+    await session.commit()
     return pool_account, social_account

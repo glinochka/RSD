@@ -2394,6 +2394,9 @@ class SocialAccount(Base):
     spare_telegram_device: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     telegram_session_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    origin: Mapped[str] = mapped_column(
+        String(32), default="farm", server_default="farm", nullable=False, index=True
+    )
     restriction_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     restriction_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     restriction_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2446,6 +2449,9 @@ class AccountPool(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    purpose: Mapped[str] = mapped_column(
+        String(32), default="farm", server_default="farm", nullable=False, index=True
+    )
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)

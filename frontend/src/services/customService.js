@@ -809,13 +809,16 @@ const customService = {
     return handleResponse(response);
   },
 
-  async getAutomationAccounts(automationId, { status, search, limit, offset } = {}) {
+  async getAutomationAccounts(automationId, { status, search, limit, offset, pool } = {}) {
     const params = new URLSearchParams();
     if (status) {
       params.set('status', status);
     }
     if (search) {
       params.set('search', search);
+    }
+    if (pool) {
+      params.set('pool', pool);
     }
     if (limit !== undefined) {
       params.set('limit', String(limit));
@@ -840,11 +843,19 @@ const customService = {
     return handleResponse(response);
   },
 
-  async getAutomationAccountBanStats(automationId) {
-    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_BAN_STATS(automationId)}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    });
+  async getAutomationAccountBanStats(automationId, { pool } = {}) {
+    const params = new URLSearchParams();
+    if (pool) {
+      params.set('pool', pool);
+    }
+    const query = params.toString();
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_BAN_STATS(automationId)}${query ? `?${query}` : ''}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
     return handleResponse(response);
   },
 
@@ -878,7 +889,7 @@ const customService = {
     return handleResponse(response);
   },
 
-  async bulkUploadAccounts(automationId, file, { proxyId, proxyLine } = {}) {
+  async bulkUploadAccounts(automationId, file, { proxyId, proxyLine, pool } = {}) {
     const formData = new FormData();
     formData.append('archive', file);
     const line = (proxyLine || '').trim();
@@ -886,6 +897,9 @@ const customService = {
       formData.append('proxy_line', line);
     } else if (proxyId) {
       formData.append('proxy_id', String(proxyId));
+    }
+    if (pool) {
+      formData.append('pool', pool);
     }
     const token = getCustomToken();
     const headers = {};

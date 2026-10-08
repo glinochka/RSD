@@ -6,6 +6,7 @@ import pytest
 
 from app.services.custom.account_pacing import (
     PHASE_OBSERVE,
+    PHASE_RAMP,
     PHASE_REPLY,
     STAGE_CAUTIOUS,
     STAGE_NORMAL,
@@ -167,6 +168,10 @@ def test_action_catalog_withholds_writes_from_new_accounts():
     assert "react" in normal
     assert "draft" in normal
     assert "comment_contact" in normal
+    ramp_new = {name for name, _fn in _action_catalog(STAGE_CAUTIOUS, phase=PHASE_RAMP)}
+    assert "react" in ramp_new
+    assert "comment_contact" in ramp_new
+    assert "typing_idle" in ramp_new
     assert "forward_saved" in normal
     assert "saved" not in normal
     assert "saved" in trusted
@@ -219,6 +224,28 @@ async def test_humanization_session_opens_dialogs_in_lab():
     assert "get_dialogs" in client.calls
     assert "offline" not in outcome["actions"]
     assert "idle_hold" not in outcome["actions"]
+
+
+@pytest.mark.asyncio
+async def test_humanization_session_stays_online_after_primary_warmup(monkeypatch):
+    calls: list[bool] = []
+
+    async def fake_presence(client, *, offline, lab_mode=False):
+        del client, lab_mode
+        calls.append(offline)
+        return True
+
+    monkeypatch.setattr("app.services.custom.humanization_session.set_presence", fake_presence)
+    outcome = await run_humanization_session(
+        FakeClient(),
+        _account(days=40),
+        lab_mode=True,
+        stay_online=True,
+    )
+    assert calls == [False]
+    assert "offline" not in outcome["actions"]
+    assert "idle_hold" not in outcome["actions"]
+    assert "online" in outcome["actions"]
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 
 export const UBT_MODULES = [
   { id: 'accounts', label: 'Менеджер аккаунтов' },
+  { id: 'intercept', label: 'Перехват аккаунтов' },
   { id: 'tasks', label: 'Задачи' },
   { id: 'stats', label: 'Моя статистика' },
   { id: 'neurocommenting', label: 'Нейрокомментинг' },

@@ -50,7 +50,7 @@ from .telegram_error_handler import (
     spambot_verdict_from_messages,
 )
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
-from ..telegram_userbot_auth import create_telegram_client, iter_api_credential_candidates
+from ..telegram_userbot_auth import create_telegram_client, device_family_of, iter_api_credential_candidates
 
 logger = getLogger(__name__)
 
@@ -329,11 +329,13 @@ def _make_client(
     device_model: str | None = None,
     device_profile: dict | None = None,
 ):
+    family = device_family_of(device_profile)
     client, resolved_id, resolved_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
         session_path=session_path,
-        prefer_desktop=True,
+        prefer_desktop=family == "desktop",
+        family=family,
         proxy=proxy,
         device_model=device_model,
         device_profile=device_profile,
@@ -407,7 +409,13 @@ class TelegramAccountClient:
 
         rel = (getattr(account, "session_file_path", None) or "").strip()
         path = Path(settings.MEDIA_ROOT).resolve() / rel
-        profile = ensure_account_device(account)
+        detected = None
+        if path.is_file():
+            try:
+                detected = inspect_session_file(path).get("api_id")
+            except Exception:
+                detected = None
+        profile = ensure_account_device(account, api_id=detected)
         return cls(
             str(path),
             api_id=api_id,
@@ -505,6 +513,7 @@ class TelegramAccountClient:
             self._api_id,
             self._api_hash,
             extra_api_id=self._detected_api_id,
+            family=device_family_of(self._device_profile, api_id=self._detected_api_id),
         )
         for api_id, api_hash in candidates or [(self._api_id, self._api_hash)]:
             self._prepare_work_copy()

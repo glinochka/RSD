@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable
 
 from .account_pacing import (
     PHASE_OBSERVE,
+    PHASE_RAMP,
     PHASE_REPLY,
     PHASE_SETTLE,
     STAGE_CAUTIOUS,
@@ -28,6 +29,7 @@ from .account_pacing import (
     STAGE_TRUSTED,
     account_humanization_stage,
     account_in_settle_rest,
+    account_may_keep_alive,
     account_may_humanize,
     account_upload_phase,
     humanization_session_action_budget,
@@ -1022,6 +1024,24 @@ def _observe_catalog() -> list[tuple[str, Callable[..., Awaitable[bool]]]]:
     ]
 
 
+def _session_mix_stage(stage: str, phase: str | None) -> str:
+    """After primary warmup, first-week accounts still get the full non-spam mix."""
+    if phase == PHASE_RAMP and stage == STAGE_CAUTIOUS:
+        return STAGE_NORMAL
+    return stage
+
+
+def _inter_action_pause_range(stage: str, phase: str | None) -> tuple[float, float]:
+    """Seconds between gestures. Slow on purpose — people do not tap every 2s."""
+    if phase in {PHASE_OBSERVE, PHASE_REPLY}:
+        return (8.0, 24.0)
+    if stage == STAGE_TRUSTED:
+        return (16.0, 48.0)
+    if stage == STAGE_NORMAL:
+        return (12.0, 38.0)
+    return (10.0, 28.0)
+
+
 def _action_catalog(
     stage: str,
     *,
@@ -1036,6 +1056,7 @@ def _action_catalog(
         if allowed is not None:
             actions = [(name, fn) for name, fn in actions if name in allowed]
         return actions
+    stage = _session_mix_stage(stage, phase)
     actions: list[tuple[str, Callable[..., Awaitable[bool]]]] = [
         ("scroll_channels", scroll_subscribed_channels),
         ("stories", glance_stories),
@@ -1083,8 +1104,9 @@ async def run_humanization_session(
     intensity: str | None = None,
     session_minutes: int = 0,
     farm_questions: list[dict[str, Any]] | None = None,
+    stay_online: bool | None = None,
 ) -> dict[str, Any]:
-    """Keep one socket open, look alive, then go offline."""
+    """Keep one socket open and look alive. Ramp accounts stay online for the work day."""
     phase = account_upload_phase(account)
     if not lab_mode and (account_in_settle_rest(account) or phase == PHASE_SETTLE or not account_may_humanize(account)):
         return {
@@ -1097,11 +1119,13 @@ async def run_humanization_session(
             "chat_reply": None,
         }
     stage = intensity if intensity in {STAGE_CAUTIOUS, STAGE_NORMAL, STAGE_TRUSTED} else account_humanization_stage(account)
-    budget = humanization_session_action_budget(account, stage=stage)
+    mix_stage = _session_mix_stage(stage, phase)
+    keep_presence = account_may_keep_alive(account) if stay_online is None else bool(stay_online)
+    budget = humanization_session_action_budget(account, stage=mix_stage)
     if session_minutes and not lab_mode:
         target_seconds = float(max(60, min(15 * 60, int(session_minutes) * 60)))
     else:
-        target_seconds = 0.0 if lab_mode else humanization_session_seconds(account, stage=stage)
+        target_seconds = 0.0 if lab_mode else humanization_session_seconds(account, stage=mix_stage)
     started = time.monotonic()
     done: list[str] = []
     client._comment_contact = None
@@ -1120,10 +1144,11 @@ async def run_humanization_session(
     if restriction_kind(account) in LIMITED_KINDS:
         catalog = [(name, fn) for name, fn in catalog if name not in {"react_dm", "pin_dm"}]
     random.shuffle(catalog)
+    pause_lo, pause_hi = _inter_action_pause_range(mix_stage, phase)
     for name, fn in catalog:
         if content >= budget:
             break
-        await _pause(lab_mode, 6.0, 22.0)
+        await _pause(lab_mode, pause_lo, pause_hi)
         try:
             if name == "comment_contact":
                 ok = await fn(client, lab_mode=lab_mode, account=account, policy=policy)
@@ -1142,12 +1167,13 @@ async def run_humanization_session(
 
     elapsed = time.monotonic() - started
     leftover = target_seconds - elapsed
-    if leftover > 4 and not lab_mode:
-        await asyncio.sleep(min(leftover, 240.0))
+    if leftover > 4 and not lab_mode and not keep_presence:
+        await asyncio.sleep(min(leftover, 90.0))
         done.append("idle_hold")
 
-    if await set_presence(client, offline=True, lab_mode=lab_mode):
-        done.append("offline")
+    if not keep_presence:
+        if await set_presence(client, offline=True, lab_mode=lab_mode):
+            done.append("offline")
 
     return {
         "stage": stage,

@@ -48,6 +48,8 @@ PHASE_SETTLE = "settle"
 PHASE_OBSERVE = "observe"
 PHASE_REPLY = "reply"
 PHASE_RAMP = "ramp"
+ORIGIN_FARM = "farm"
+ORIGIN_INTERCEPT = "intercept"
 RAMP_FULL_DAYS = 7
 RAMP_START_FACTOR = 0.10      # tests / SETTLE_HOURS=0: 10% from day 0
 WORK_RAMP_START_FACTOR = 0.25  # production: 25% work at 72h → 100% on day 7
@@ -331,6 +333,10 @@ def profile_edit_allowed(
     return (current - created) >= timedelta(hours=extra_hours)
 
 
+def account_is_intercept(account: SocialAccount | None) -> bool:
+    return str(getattr(account, "origin", None) or ORIGIN_FARM).strip().lower() == ORIGIN_INTERCEPT
+
+
 def account_created_at(account: SocialAccount | None) -> datetime | None:
     return _naive_utc(getattr(account, "created_at", None) if account else None)
 
@@ -377,6 +383,8 @@ def account_upload_age_hours(account: SocialAccount | None, *, now: datetime | N
 
 def account_upload_phase(account: SocialAccount | None, *, now: datetime | None = None) -> str:
     """Upload calendar: settle 24h → observe day 1 → reply day 2 → ramp."""
+    if account_is_intercept(account):
+        return PHASE_SETTLE
     if SETTLE_HOURS <= 0:
         return PHASE_RAMP
     created = account_created_at(account)
@@ -393,17 +401,29 @@ def account_upload_phase(account: SocialAccount | None, *, now: datetime | None 
 
 
 def account_in_settle_rest(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
-    """First 24 hours after upload: no work, no humanization, stay offline."""
+    """First 24 hours after farm upload: no work, no humanization, stay offline.
+
+    Intercept accounts skip this: they must connect immediately to drop extra devices.
+    """
+    if account_is_intercept(account):
+        return False
     return account_upload_phase(account, now=now) == PHASE_SETTLE
 
 
 def account_may_keep_alive(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
-    """Persistent hub online only after day 2. Days 1–2 use short connect/disconnect."""
+    """Persistent hub online only after day 2. Days 1–2 use short connect/disconnect.
+
+    Intercept accounts stay connected so session-guard can kick extra devices.
+    """
+    if account_is_intercept(account):
+        return True
     return account_upload_phase(account, now=now) == PHASE_RAMP
 
 
 def account_may_do_work(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     """Comments, shilling, broadcasts, cold DMs — from day 3."""
+    if account_is_intercept(account):
+        return False
     return account_upload_phase(account, now=now) == PHASE_RAMP
 
 
@@ -431,6 +451,8 @@ def account_uses_seed_channel_joins(account: SocialAccount | None, *, now: datet
 
 
 def account_may_humanize(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    if account_is_intercept(account):
+        return False
     return account_upload_phase(account, now=now) in {PHASE_OBSERVE, PHASE_REPLY, PHASE_RAMP}
 
 
@@ -466,7 +488,11 @@ def activity_ramp_factor(account: SocialAccount | None, *, now: datetime | None 
 
 
 def humanization_ramp_factor(account: SocialAccount | None, *, now: datetime | None = None) -> float:
-    """Read/type/react frequency. Sparse on day 1–2, then follows work ramp."""
+    """Read/type/react frequency. Sparse on day 1–2, then full after primary warmup.
+
+    Work comments still follow activity_ramp_factor (25% → 100%). Humanization
+    does not: a warmed account browses like a person even with no warmup task.
+    """
     if SETTLE_HOURS <= 0:
         return activity_ramp_factor(account, now=now)
     phase = account_upload_phase(account, now=now)
@@ -476,12 +502,12 @@ def humanization_ramp_factor(account: SocialAccount | None, *, now: datetime | N
         return OBSERVE_HUMANIZATION_FACTOR
     if phase == PHASE_REPLY:
         return REPLY_HUMANIZATION_FACTOR
-    return activity_ramp_factor(account, now=now)
+    return 1.0
 
 
 def activity_interval_scale(account: SocialAccount | None, *, now: datetime | None = None) -> float:
-    """Stretch gaps so 10% frequency waits ~10× longer. Unknown age stays 1×."""
-    factor = humanization_ramp_factor(account, now=now)
+    """Stretch work-task gaps so 25% frequency waits ~4× longer. Unknown age stays 1×."""
+    factor = activity_ramp_factor(account, now=now)
     if factor <= 0:
         return 1.0 / max(OBSERVE_HUMANIZATION_FACTOR, RAMP_START_FACTOR)
     return min(1.0 / max(OBSERVE_HUMANIZATION_FACTOR, RAMP_START_FACTOR), 1.0 / factor)
@@ -705,17 +731,15 @@ def schedule_account_rest(account: SocialAccount, *, seconds: float | None = Non
 # ---------------------------------------------------------------------------
 
 def humanization_rest_seconds(account: SocialAccount | None = None, *, now: datetime | None = None) -> float:
-    """15–30 min rest after a warmup DM, idle-browse or reaction; 2–4 h on day 1."""
+    """15–30 min rest after browse; 2–4 h on day 1. Not stretched by work ramp."""
     phase = account_upload_phase(account, now=now)
     if phase == PHASE_OBSERVE:
         return random.uniform(*_OBSERVE_HUMANIZATION_REST)
     if phase == PHASE_REPLY:
         return random.uniform(*_REPLY_HUMANIZATION_REST)
     if account_humanization_stage(account, now=now) == STAGE_CAUTIOUS:
-        base = random.uniform(CAUTIOUS_HUMANIZATION_REST_MIN_SECONDS, CAUTIOUS_HUMANIZATION_REST_MAX_SECONDS)
-    else:
-        base = random.uniform(HUMANIZATION_REST_MIN_SECONDS, HUMANIZATION_REST_MAX_SECONDS)
-    return base * activity_interval_scale(account, now=now)
+        return random.uniform(CAUTIOUS_HUMANIZATION_REST_MIN_SECONDS, CAUTIOUS_HUMANIZATION_REST_MAX_SECONDS)
+    return random.uniform(HUMANIZATION_REST_MIN_SECONDS, HUMANIZATION_REST_MAX_SECONDS)
 
 
 def account_humanization_is_resting(account: SocialAccount | None, *, now: datetime | None = None) -> bool:

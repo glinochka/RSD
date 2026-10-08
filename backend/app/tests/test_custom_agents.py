@@ -5161,6 +5161,93 @@ class TestAccountAuthorizations:
         assert account.session_guard_paused_until is None
         assert account.known_auth_hashes == ["0"]
 
+    async def test_intercept_pool_stays_out_of_farm_until_adopt(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+        monkeypatch,
+    ):
+        from types import SimpleNamespace
+
+        from app.services.account_pool_service import get_or_create_default_pool, get_or_create_intercept_pool
+        from app.services.custom import account_session_guard_service as guard_svc
+
+        farm = await get_or_create_default_pool(test_session, custom_automation.id)
+        intercept = await get_or_create_intercept_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000993",
+            username="stolen",
+            encrypted_session="x",
+            session_file_path="sessions/stolen.session",
+            is_active=True,
+            origin="intercept",
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=intercept.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+
+        farm_list = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        intercept_list = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts?pool=intercept",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert farm_list.status_code == 200
+        assert intercept_list.status_code == 200
+        assert account.id not in {item["id"] for item in farm_list.json()["items"]}
+        assert account.id in {item["id"] for item in intercept_list.json()["items"]}
+
+        auths = [
+            SimpleNamespace(hash=0, current=True, device_model="UBT", platform="Desktop",
+                            app_name="UBT", app_version="1", ip="1.1.1.1", country="FI",
+                            region="", date_created=1, date_active=2),
+        ]
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def __call__(self, request):
+                if type(request).__name__ == "GetAuthorizationsRequest":
+                    return SimpleNamespace(authorizations=list(auths))
+                raise AssertionError(type(request).__name__)
+
+        monkeypatch.setattr(guard_svc.TelegramAccountClient, "for_account", lambda *_args, **_kwargs: FakeClient())
+
+        adopted = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/session-guard/adopt",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert adopted.status_code == 200, adopted.text
+        await test_session.refresh(account)
+        assert account.origin == "farm"
+        farm_after = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        intercept_after = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts?pool=intercept",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert account.id in {item["id"] for item in farm_after.json()["items"]}
+        assert account.id not in {item["id"] for item in intercept_after.json()["items"]}
+
     async def test_list_authorizations_without_session(
         self,
         client: AsyncClient,
@@ -8584,7 +8671,8 @@ class TestWarmupModule:
         off = SimpleNamespace(account_warmup_enabled=False, module_settings={"warmup": {"mode": "auto"}}, **base)
         jobs = CustomAutomationScheduler._enabled_jobs(off)
         assert "account_warmup" not in jobs
-        assert stream_names(off).isdisjoint({"account_warmup", "idle_browse", "peer_dialog"})
+        assert "account_warmup" not in stream_names(off)
+        assert {"idle_browse", "peer_dialog"} <= stream_names(off)
         assert CustomAutomationScheduler._has_modules_on(off) is False
 
         auto = SimpleNamespace(account_warmup_enabled=True, module_settings={"warmup": {"mode": "auto"}}, **base)
@@ -8615,7 +8703,8 @@ class TestWarmupModule:
             module_settings={"warmup": {"mode": "manual"}},
             **base,
         )
-        assert stream_names(manual).isdisjoint({"account_warmup", "idle_browse", "peer_dialog"})
+        assert "account_warmup" not in stream_names(manual)
+        assert {"idle_browse", "peer_dialog"} <= stream_names(manual)
         assert CustomAutomationScheduler._has_modules_on(manual) is False
 
     def test_picker_filters_hide_in_work_and_proxy(self):

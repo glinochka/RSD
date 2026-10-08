@@ -825,9 +825,9 @@ async def join_next_seed_channel(
 
     automation = await session.get(CustomAutomation, automation_id)
     warmup = ((automation.module_settings or {}).get("warmup") or {}) if automation else {}
-    if not automation or not getattr(automation, "account_warmup_enabled", False):
+    if not automation:
         return None
-    if warmup.get("do_joins") is False:
+    if getattr(automation, "account_warmup_enabled", False) and warmup.get("do_joins") is False:
         return None
     blocked = set(exclude_account_ids or set())
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1303,13 +1303,16 @@ async def join_pending_chats(
         await process_due_pending_actions(session, automation_id)
         automation = await session.get(CustomAutomation, automation_id)
         warmup = ((automation.module_settings or {}).get("warmup") or {}) if automation else {}
-        if not (
+        warmup_joins = bool(
             automation
             and getattr(automation, "account_warmup_enabled", False)
             and warmup.get("do_joins") is not False
-        ):
-            return []
-        await ensure_memberships_for_automation(session, automation_id)
+        )
+        if warmup_joins:
+            await ensure_memberships_for_automation(session, automation_id)
+        else:
+            seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
+            return [seed] if seed else []
     await recover_stale_joining_memberships(session, automation_id)
     await process_due_pending_actions(session, automation_id)
     if rate_limit and not farm_overlap_active_hours():

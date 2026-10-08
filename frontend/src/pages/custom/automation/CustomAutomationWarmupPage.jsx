@@ -227,7 +227,7 @@ const CustomAutomationWarmupPage = () => {
         <div className="nc-card-head">
           <div>
             <h2>Прогрев аккаунтов</h2>
-            <p className="nc-intro">Имитирует естественную активность, чтобы сессии выглядели живыми: диалог с доверенными, чтение ленты и редкая переписка между своими аккаунтами.</p>
+            <p className="nc-intro">После первичного прогрева аккаунт сам живёт рабочий день: онлайн, перерывы, чтение, тайпинг, реакции, контакты. Модуль не нужен для этого — он только добавляет диалоги с доверенными юзернеймами и отдельные чаты.</p>
           </div>
           <FeatureToggle compact title={enabled ? 'Модуль включён' : 'Модуль выключен'} checked={enabled} onChange={(value) => { setEnabled(value); persist({ enabled: value }); }} />
         </div>

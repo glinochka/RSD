@@ -149,3 +149,19 @@ def test_session_guard_kills_newcomers_except_during_pause():
     assert paused["action"] == "pause_adopt"
     assert paused["terminate"] == []
     assert "999" in paused["keep"]
+
+
+def test_session_guard_takeover_drops_every_extra_device():
+    live = [
+        {"hash": "0", "current": True},
+        {"hash": "111", "current": False},
+        {"hash": "999", "current": False},
+    ]
+    takeover = plan_session_guard(set(), live, paused=False, takeover=True)
+    assert takeover["action"] == "takeover"
+    assert takeover["terminate"] == ["111", "999"]
+    assert takeover["keep"] == {"0"}
+
+    hold = plan_session_guard(set(), [{"hash": "0", "current": True}], paused=False, takeover=True)
+    assert hold["action"] == "hold"
+    assert hold["terminate"] == []

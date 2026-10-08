@@ -1,8 +1,8 @@
-"""Idle browsing humanization: one connected session of mixed read-activity.
+"""Idle browsing humanization: connected sessions of mixed read-activity.
 
 Uses the HUMANIZATION rest queue (next_humanization_at) so this never blocks
-target actions. One account per tick — the session itself is minutes, not a
-connect/disconnect flash.
+target actions. Independent of the warmup module — any account past primary
+warmup keeps browsing during the work day.
 """
 from __future__ import annotations
 
@@ -16,8 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
-from .account_pacing import account_humanization_should_idle, moscow_now, schedule_account_humanization_rest
+from ...alembic.models import AccountPool, AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
+from .account_pacing import (
+    account_humanization_should_idle,
+    account_is_intercept,
+    account_may_keep_alive,
+    account_may_humanize,
+    moscow_now,
+    schedule_account_humanization_rest,
+)
 from .humanization_session import (
     CHAT_QUESTION_ACTION,
     CHAT_REPLY_ACTION,
@@ -30,7 +37,7 @@ from .telegram_account_client import TelegramAccountClient
 
 logger = logging.getLogger(__name__)
 
-ACCOUNTS_PER_PASS = 1
+ACCOUNTS_PER_PASS = 2
 
 
 def _naive(value: datetime | None) -> datetime | None:
@@ -108,8 +115,10 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int) -> list[
     result = await session.execute(
         select(PoolAccount, SocialAccount)
         .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
         .where(
             PoolAccount.custom_automation_id == automation_id,
+            AccountPool.is_default.is_(True),
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
             SocialAccount.is_frozen.is_(False),
@@ -119,7 +128,9 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int) -> list[
     return [
         (pool_account, social)
         for pool_account, social in result.all()
-        if not account_humanization_should_idle(social)
+        if not account_is_intercept(social)
+        and account_may_humanize(social)
+        and not account_humanization_should_idle(social)
     ]
 
 
@@ -131,25 +142,20 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "automation_not_found"}
-        from .module_account_filters import skip_account_for_module
-        from .warmup_module_service import account_allowed, runtime_warmup_cfg, session_action_allowlist
+        from .warmup_module_service import runtime_warmup_cfg
 
         cfg = runtime_warmup_cfg(automation)
-        if not automation.account_warmup_enabled:
-            return {"status": "skipped", "reason": "warmup_off", "browsed": 0, "errors": 0}
-
         rows = await _eligible_accounts(session, automation_id)
+        blocked = set(cfg.get("blacklisted_account_ids") or [])
         rows = [
             (pool_account, social)
             for pool_account, social in rows
-            if account_allowed(cfg, social.id) and not skip_account_for_module(cfg, social, pool_account)
+            if social.id not in blocked
         ]
         if not rows:
             return {"browsed": 0, "errors": 0}
 
         sample = rows if len(rows) <= ACCOUNTS_PER_PASS else random.sample(rows, ACCOUNTS_PER_PASS)
-        intensity = None if cfg.get("intensity") in (None, "auto") else cfg.get("intensity")
-        allow = session_action_allowlist(cfg)
         farm_questions = await _recent_farm_questions(session, automation_id)
         for pool_account, social in sample:
             try:
@@ -161,9 +167,7 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
                         social,
                         lab_mode=False,
                         contact_policy=policy,
-                        allowed_actions=allow,
-                        intensity=intensity,
-                        session_minutes=int(cfg.get("session_minutes") or 0),
+                        stay_online=account_may_keep_alive(social),
                         farm_questions=pending,
                     )
                 contact = outcome.get("comment_contact")

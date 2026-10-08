@@ -19,57 +19,175 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# Same application ids as opentele API.TelegramDesktop / API.TelegramAndroid (public client keys).
+# Official public client keys (opentele API.TelegramDesktop / Android / iOS).
 _TELEGRAM_DESKTOP_API_ID = 2040
 _TELEGRAM_DESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e627"
 _TELEGRAM_ANDROID_API_ID = 6
 _TELEGRAM_ANDROID_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+_TELEGRAM_IOS_API_ID = 8
+_TELEGRAM_IOS_API_HASH = "7245de8e747a0d6fbe11b8ca67533405"
 
 QR_WAIT_TIMEOUT_SECONDS = 180
 _QR_TTL_SECONDS = 600
 DEVICE_MODEL_MAIN = "RSD Platform"
 DEVICE_MODEL_SPARE = "RSD Spare"
+_LEGACY_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
 
-# Realistic Telegram Desktop fingerprints. "RSD Platform" is a farm tell.
+FAMILY_DESKTOP = "desktop"
+FAMILY_ANDROID = "android"
+FAMILY_IOS = "ios"
+_FAMILY_WEIGHTS = (FAMILY_DESKTOP, FAMILY_ANDROID, FAMILY_IOS)
+_FAMILY_WEIGHT_VALUES = (40, 35, 25)
+
+# Realistic Telegram fingerprints. "RSD Platform" is a farm tell.
+# device_model + api_id family must match: iPhone never rides Desktop api 2040.
 _DEVICE_PROFILES: tuple[dict[str, str], ...] = (
-    {"device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "4.16.8 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "Desktop", "system_version": "Windows 10", "app_version": "4.16.30 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.7.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.3.0 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "Laptop", "system_version": "Windows 11", "app_version": "5.6.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "Desktop", "system_version": "Windows 10", "app_version": "5.8.2 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.14.13 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "Laptop", "system_version": "Windows 10", "app_version": "5.5.5 x64", "lang_code": "ru", "system_lang_code": "ru"},
-    {"device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.9.0 x64", "lang_code": "en", "system_lang_code": "en-US"},
-    {"device_model": "PC 64bit", "system_version": "macOS 14.5", "app_version": "5.6.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"device_model": "MacBook Pro", "system_version": "macOS 15.0", "app_version": "5.8.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "4.16.8 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "4.16.30 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.7.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.3.0 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 11", "app_version": "5.6.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "5.8.2 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.14.13 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 10", "app_version": "5.5.5 x64", "lang_code": "ru", "system_lang_code": "ru"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.9.0 x64", "lang_code": "en", "system_lang_code": "en-US"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "macOS 14.5", "app_version": "5.6.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "MacBook Pro", "system_version": "macOS 15.0", "app_version": "5.8.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S941B", "system_version": "SDK 36", "app_version": "11.14.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S946B", "system_version": "SDK 36", "app_version": "11.13.2", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S938B", "system_version": "SDK 35", "app_version": "11.12.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S936B", "system_version": "SDK 35", "app_version": "11.11.4", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Google Pixel 9", "system_version": "SDK 35", "app_version": "11.12.3", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Google Pixel 10", "system_version": "SDK 36", "app_version": "11.14.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "Xiaomi 15", "system_version": "SDK 35", "app_version": "11.11.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_ANDROID, "device_model": "POCO F7", "system_version": "SDK 35", "app_version": "11.10.2", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 16", "system_version": "18.5", "app_version": "11.12.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 16 Pro", "system_version": "18.6.2", "app_version": "11.13.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 16 Pro Max", "system_version": "18.6.1", "app_version": "11.14.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 17", "system_version": "26.0", "app_version": "11.14.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 17 Pro", "system_version": "26.0.1", "app_version": "11.14.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 17 Pro Max", "system_version": "26.1", "app_version": "11.14.2", "lang_code": "ru", "system_lang_code": "ru-RU"},
 )
 
 
-def pick_device_profile(*, seed: str, exclude: dict[str, str] | None = None) -> dict[str, str]:
+def normalize_device_family(value: Any) -> str | None:
+    name = str(value or "").strip().lower()
+    if name in {FAMILY_DESKTOP, FAMILY_ANDROID, FAMILY_IOS}:
+        return name
+    if name in {"macos", "mac", "windows", "linux", "tdesktop"}:
+        return FAMILY_DESKTOP
+    return None
+
+
+def family_for_api_id(api_id: int | None) -> str | None:
+    try:
+        value = int(api_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if value == _TELEGRAM_ANDROID_API_ID:
+        return FAMILY_ANDROID
+    if value == _TELEGRAM_IOS_API_ID:
+        return FAMILY_IOS
+    if value == _TELEGRAM_DESKTOP_API_ID:
+        return FAMILY_DESKTOP
+    if value > 0:
+        return FAMILY_DESKTOP
+    return None
+
+
+def infer_device_family(device_model: str | None, *, api_id: int | None = None) -> str:
+    name = str(device_model or "").strip().lower()
+    if "iphone" in name or "ipad" in name or name.startswith("ios"):
+        return FAMILY_IOS
+    android_hints = (
+        "sm-", "samsung", "pixel", "xiaomi", "redmi", "poco", "huawei",
+        "honor", "oneplus", "oppo", "vivo", "realme", "motorola", "nokia", "sdk",
+    )
+    if any(hint in name for hint in android_hints):
+        return FAMILY_ANDROID
+    return family_for_api_id(api_id) or FAMILY_DESKTOP
+
+
+def _family_defaults(family: str | None) -> dict[str, str]:
+    resolved = normalize_device_family(family) or FAMILY_DESKTOP
+    if resolved == FAMILY_ANDROID:
+        return {"device_model": "Samsung SM-S938B", "system_version": "SDK 35", "app_version": "11.12.0"}
+    if resolved == FAMILY_IOS:
+        return {"device_model": "iPhone 16", "system_version": "18.6.1", "app_version": "11.14.1"}
+    return {"device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.8.2 x64"}
+
+
+def device_family_of(profile: dict[str, str] | None, *, api_id: int | None = None) -> str:
+    payload = profile or {}
+    return (
+        normalize_device_family(payload.get("family"))
+        or infer_device_family(str(payload.get("device_model") or ""), api_id=api_id)
+    )
+
+
+def normalize_device_profile(raw: dict[str, Any] | None, *, api_id: int | None = None) -> dict[str, str]:
+    data = raw if isinstance(raw, dict) else {}
+    family = device_family_of(data, api_id=api_id)
+    defaults = _family_defaults(family)
+    return {
+        "family": family,
+        "device_model": str(data.get("device_model") or defaults["device_model"]),
+        "system_version": str(data.get("system_version") or defaults["system_version"]),
+        "app_version": str(data.get("app_version") or defaults["app_version"]),
+        "lang_code": str(data.get("lang_code") or "ru"),
+        "system_lang_code": str(data.get("system_lang_code") or "ru-RU"),
+    }
+
+
+def _usable_device(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    model = str(payload.get("device_model") or "").strip()
+    return bool(model) and model not in _LEGACY_DEVICE_MODELS
+
+
+def pick_device_profile(
+    *,
+    seed: str,
+    family: str | None = None,
+    mix: bool = False,
+    exclude: dict[str, str] | None = None,
+) -> dict[str, str]:
     rng = random.Random(str(seed))
-    pool = list(_DEVICE_PROFILES)
+    wanted = normalize_device_family(family)
+    if wanted is None:
+        wanted = rng.choices(_FAMILY_WEIGHTS, weights=_FAMILY_WEIGHT_VALUES, k=1)[0] if mix else FAMILY_DESKTOP
+    pool = [item for item in _DEVICE_PROFILES if item["family"] == wanted]
+    if not pool:
+        pool = [item for item in _DEVICE_PROFILES if item["family"] == FAMILY_DESKTOP]
     excluded = (exclude or {}).get("device_model"), (exclude or {}).get("app_version")
     filtered = [item for item in pool if (item["device_model"], item["app_version"]) != excluded]
-    chosen = dict(rng.choice(filtered or pool))
-    return chosen
+    return normalize_device_profile(rng.choice(filtered or pool))
 
 
-def ensure_account_device(account: Any, *, spare: bool = False) -> dict[str, str]:
+def ensure_account_device(
+    account: Any,
+    *,
+    spare: bool = False,
+    api_id: int | None = None,
+    mix: bool = False,
+) -> dict[str, str]:
     field = "spare_telegram_device" if spare else "telegram_device"
     existing = getattr(account, field, None)
-    if isinstance(existing, dict) and str(existing.get("device_model") or "").strip():
-        return {
-            "device_model": str(existing.get("device_model") or "PC 64bit"),
-            "system_version": str(existing.get("system_version") or "Windows 10"),
-            "app_version": str(existing.get("app_version") or "4.16.8 x64"),
-            "lang_code": str(existing.get("lang_code") or "ru"),
-            "system_lang_code": str(existing.get("system_lang_code") or "ru-RU"),
-        }
+    if _usable_device(existing):
+        profile = normalize_device_profile(existing, api_id=api_id)
+        if profile != existing:
+            try:
+                setattr(account, field, profile)
+            except Exception:
+                pass
+        return profile
     main = getattr(account, "telegram_device", None) if spare else None
     profile = pick_device_profile(
         seed=f"{'spare' if spare else 'main'}:{getattr(account, 'id', 0)}:{getattr(account, 'phone_number', '')}",
+        family=family_for_api_id(api_id),
+        mix=mix and family_for_api_id(api_id) is None,
         exclude=main if isinstance(main, dict) else None,
     )
     try:
@@ -122,10 +240,31 @@ def _official_android_api():
     return API.TelegramAndroid.Generate(unique_id="rsd_userbot_phone")
 
 
-def _builtin_api_credentials(*, prefer_desktop: bool) -> tuple[int, str]:
-    if prefer_desktop:
-        return _TELEGRAM_DESKTOP_API_ID, _TELEGRAM_DESKTOP_API_HASH
-    return _TELEGRAM_ANDROID_API_ID, _TELEGRAM_ANDROID_API_HASH
+def _official_ios_api():
+    from opentele.api import API
+
+    spec = getattr(API, "TelegramIOS", None)
+    if spec is None:
+        raise AttributeError("opentele has no TelegramIOS")
+    return spec.Generate(unique_id="rsd_userbot_ios")
+
+
+def _official_api_for_family(family: str | None):
+    resolved = normalize_device_family(family) or FAMILY_DESKTOP
+    if resolved == FAMILY_ANDROID:
+        return _official_android_api()
+    if resolved == FAMILY_IOS:
+        return _official_ios_api()
+    return _official_desktop_api()
+
+
+def _builtin_api_credentials(*, prefer_desktop: bool = True, family: str | None = None) -> tuple[int, str]:
+    resolved = normalize_device_family(family) or (FAMILY_DESKTOP if prefer_desktop else FAMILY_ANDROID)
+    if resolved == FAMILY_ANDROID:
+        return _TELEGRAM_ANDROID_API_ID, _TELEGRAM_ANDROID_API_HASH
+    if resolved == FAMILY_IOS:
+        return _TELEGRAM_IOS_API_ID, _TELEGRAM_IOS_API_HASH
+    return _TELEGRAM_DESKTOP_API_ID, _TELEGRAM_DESKTOP_API_HASH
 
 
 def resolve_api_credentials(
@@ -133,6 +272,7 @@ def resolve_api_credentials(
     api_hash: str | None = None,
     *,
     prefer_desktop: bool = True,
+    family: str | None = None,
 ) -> tuple[int, str]:
     """Resolve MTProto app credentials (custom > env > opentele > Telethon builtin)."""
     custom_id = int(api_id) if api_id is not None and int(api_id) > 0 else 0
@@ -145,18 +285,16 @@ def resolve_api_credentials(
     if env_id > 0 and env_hash:
         return env_id, env_hash
 
+    resolved_family = normalize_device_family(family) or (FAMILY_DESKTOP if prefer_desktop else FAMILY_ANDROID)
     if opentele_available():
         try:
-            api = _official_desktop_api() if prefer_desktop else _official_android_api()
+            api = _official_api_for_family(resolved_family)
             return int(api.api_id), str(api.api_hash)
         except Exception as exc:
             logger.warning("opentele API resolve failed, using Telethon builtin: %s", exc)
 
-    creds = _builtin_api_credentials(prefer_desktop=prefer_desktop)
-    logger.debug(
-        "telegram userbot: using builtin %s API (opentele not installed)",
-        "desktop" if prefer_desktop else "android",
-    )
+    creds = _builtin_api_credentials(prefer_desktop=prefer_desktop, family=resolved_family)
+    logger.debug("telegram userbot: using builtin %s API (opentele not installed)", resolved_family)
     return creds
 
 
@@ -170,6 +308,8 @@ def official_api_hash_for_id(api_id: int | None) -> str | None:
         return _TELEGRAM_DESKTOP_API_HASH
     if value == _TELEGRAM_ANDROID_API_ID:
         return _TELEGRAM_ANDROID_API_HASH
+    if value == _TELEGRAM_IOS_API_ID:
+        return _TELEGRAM_IOS_API_HASH
     return None
 
 
@@ -179,10 +319,12 @@ def iter_api_credential_candidates(
     *,
     extra_api_id: int | None = None,
     prefer_desktop: bool = True,
+    family: str | None = None,
 ) -> list[tuple[int, str]]:
     """Ordered unique (api_id, api_hash) pairs to try for a purchased session."""
     seen: set[int] = set()
     pairs: list[tuple[int, str]] = []
+    resolved_family = normalize_device_family(family) or (FAMILY_DESKTOP if prefer_desktop else FAMILY_ANDROID)
 
     def add(candidate_id: int | None, candidate_hash: str | None) -> None:
         try:
@@ -197,22 +339,24 @@ def iter_api_credential_candidates(
 
     add(api_id, api_hash)
     add(extra_api_id, official_api_hash_for_id(extra_api_id))
-    add(*resolve_api_credentials(prefer_desktop=prefer_desktop))
+    add(*resolve_api_credentials(prefer_desktop=prefer_desktop, family=resolved_family))
     add(_TELEGRAM_DESKTOP_API_ID, _TELEGRAM_DESKTOP_API_HASH)
     add(_TELEGRAM_ANDROID_API_ID, _TELEGRAM_ANDROID_API_HASH)
+    add(_TELEGRAM_IOS_API_ID, _TELEGRAM_IOS_API_HASH)
     return pairs
 
 
 def _build_api_data(api_id: int, api_hash: str, *, profile: dict[str, str] | None = None, device_model: str | None = None):
     from opentele.api import APIData
 
-    data = profile or {}
+    data = normalize_device_profile(profile)
+    defaults = _family_defaults(data["family"])
     return APIData(
         api_id=int(api_id),
         api_hash=str(api_hash).strip(),
-        device_model=device_model or data.get("device_model") or pick_device_profile(seed=str(uuid.uuid4()))["device_model"],
-        system_version=str(data.get("system_version") or "Windows 10"),
-        app_version=str(data.get("app_version") or "4.16.8 x64"),
+        device_model=device_model or data.get("device_model") or defaults["device_model"],
+        system_version=str(data.get("system_version") or defaults["system_version"]),
+        app_version=str(data.get("app_version") or defaults["app_version"]),
         lang_code=str(data.get("lang_code") or "ru"),
         system_lang_code=str(data.get("system_lang_code") or "ru-RU"),
     )
@@ -225,20 +369,33 @@ def create_telegram_client(
     session_string: str = "",
     session_path: str | None = None,
     prefer_desktop: bool = True,
+    family: str | None = None,
     proxy: dict | None = None,
     device_model: str | None = None,
     device_profile: dict[str, str] | None = None,
 ):
     """TelegramClient with opentele when installed, otherwise Telethon."""
-    resolved_id, resolved_hash = resolve_api_credentials(
-        api_id, api_hash, prefer_desktop=prefer_desktop
-    )
     profile = dict(device_profile or {})
     if device_model:
         profile["device_model"] = device_model
+    resolved_family = (
+        normalize_device_family(family)
+        or device_family_of(profile)
+        or (FAMILY_DESKTOP if prefer_desktop else FAMILY_ANDROID)
+    )
     if not str(profile.get("device_model") or "").strip():
-        profile = pick_device_profile(seed=session_path or session_string or str(uuid.uuid4()))
+        profile = pick_device_profile(
+            seed=session_path or session_string or str(uuid.uuid4()),
+            family=resolved_family,
+        )
+    else:
+        profile = normalize_device_profile(profile)
+        resolved_family = profile["family"]
+    resolved_id, resolved_hash = resolve_api_credentials(
+        api_id, api_hash, prefer_desktop=prefer_desktop, family=resolved_family
+    )
     model = str(profile["device_model"])
+    defaults = _family_defaults(resolved_family)
     if session_path:
         session = session_path
     else:
@@ -246,8 +403,8 @@ def create_telegram_client(
 
         session = StringSession((session_string or "").strip())
     client_kwargs: dict[str, Any] = {
-        "system_version": str(profile.get("system_version") or "Windows 10"),
-        "app_version": str(profile.get("app_version") or "4.16.8 x64"),
+        "system_version": str(profile.get("system_version") or defaults["system_version"]),
+        "app_version": str(profile.get("app_version") or defaults["app_version"]),
         "lang_code": str(profile.get("lang_code") or "ru"),
         "system_lang_code": str(profile.get("system_lang_code") or "ru-RU"),
     }
@@ -393,10 +550,12 @@ async def start_qr_login(
 ) -> dict[str, Any]:
     await _purge_stale_qr_states()
     auth_id = uuid.uuid4().hex
+    profile = pick_device_profile(seed=f"qr:{auth_id}", mix=True)
     client, resolved_id, resolved_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
-        prefer_desktop=True,
+        family=profile["family"],
+        device_profile=profile,
         proxy=proxy,
     )
     try:
@@ -521,10 +680,13 @@ async def complete_qr_2fa(
         client = live_client
         resolved_id, resolved_hash = int(api_id), str(api_hash)
     else:
+        profile = pick_device_profile(seed=f"qr:{auth_id}", mix=True) if auth_id else pick_device_profile(seed=session_string or "qr", mix=True)
         client, resolved_id, resolved_hash = create_telegram_client(
             api_id=api_id,
             api_hash=api_hash,
             session_string=session_string,
+            family=profile["family"],
+            device_profile=profile,
             proxy=proxy,
         )
         await client.connect()

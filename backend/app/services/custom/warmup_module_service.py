@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
+    AccountPool,
     AutomationActionLog,
     ChatTarget,
     CustomAutomation,
@@ -189,6 +190,7 @@ def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
         and account.is_active
         and not account.is_banned
         and not account.is_frozen
+        and str(getattr(account, "origin", "farm") or "farm") != "intercept"
     )
     return {
         "id": account.id,
@@ -272,7 +274,11 @@ async def get_warmup_module(session: AsyncSession, automation_id: int, *, is_adm
         await session.execute(
             select(SocialAccount, PoolAccount)
             .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
-            .where(PoolAccount.custom_automation_id == automation_id)
+            .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
+            .where(
+                PoolAccount.custom_automation_id == automation_id,
+                AccountPool.is_default.is_(True),
+            )
             .order_by(SocialAccount.updated_at.desc())
             .limit(300)
         )
@@ -343,12 +349,20 @@ async def enroll_warmup_accounts(session: AsyncSession, automation_id: int, acco
     wanted = set(_as_int_list(account_ids))
     rows = (
         await session.execute(
-            select(PoolAccount).where(PoolAccount.custom_automation_id == automation_id)
+            select(PoolAccount, SocialAccount)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
+            .where(
+                PoolAccount.custom_automation_id == automation_id,
+                AccountPool.is_default.is_(True),
+            )
         )
-    ).scalars().all()
+    ).all()
     enrolled = 0
-    for pool in rows:
+    for pool, social in rows:
         if wanted and pool.social_account_id not in wanted:
+            continue
+        if str(getattr(social, "origin", "farm") or "farm") == "intercept":
             continue
         if enroll_pool_account(automation, pool):
             enrolled += 1

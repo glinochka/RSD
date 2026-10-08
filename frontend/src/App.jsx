@@ -245,6 +245,7 @@ const App = () => {
                   <Route path="errors" element={<CustomAutomationErrorsPage />} />
                   <Route path="accounts" element={<Navigate to="../ubt/accounts" replace />} />
                   <Route path="ubt/accounts" element={<CustomAutomationAccountsPage />} />
+                  <Route path="ubt/intercept" element={<CustomAutomationAccountsPage pool="intercept" />} />
                   <Route path="ubt/tasks" element={<CustomAutomationTasksPage />} />
                   <Route path="ubt/stats" element={<CustomAutomationStatsPage />} />
                   <Route path="ubt/neurocommenting" element={<CustomAutomationNeurocommentingPage />} />

@@ -135,7 +135,12 @@ from .schemas import (
     TelegramBotSettingsUpdate,
 )
 from .dependencies import get_current_custom_admin, get_current_custom_automation, optional_is_custom_admin
-from ..services.account_pool_service import bulk_upload_sessions, delete_pool_account
+from ..services.account_pool_service import (
+    POOL_INTERCEPT,
+    bulk_upload_sessions,
+    delete_pool_account,
+    normalize_pool_purpose,
+)
 from ..services.custom.lead_keywords import normalize_lead_keywords
 from ..services.custom.proxy_service import (
     ProxyChoiceError,
@@ -1571,6 +1576,7 @@ def _account_response(
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
         telegram_session_count=getattr(social_account, "telegram_session_count", None),
+        origin=getattr(social_account, "origin", None) or "farm",
     )
 
 
@@ -1661,6 +1667,24 @@ def _apply_account_query_filters(stmt, *, status: Optional[str] = None, search: 
     return stmt
 
 
+async def _accounts_pool(session, automation_id: int, pool: str | None):
+    purpose = normalize_pool_purpose(pool)
+    if purpose == POOL_INTERCEPT:
+        row = await session.scalar(
+            select(AccountPool).where(
+                AccountPool.custom_automation_id == automation_id,
+                AccountPool.purpose == POOL_INTERCEPT,
+            )
+        )
+        return row
+    return await session.scalar(
+        select(AccountPool).where(
+            AccountPool.custom_automation_id == automation_id,
+            AccountPool.is_default.is_(True),
+        )
+    )
+
+
 @router.get("/automations/{automation_id}/accounts", response_model=AccountListResponse)
 async def list_accounts(
     automation_id: int,
@@ -1668,29 +1692,25 @@ async def list_accounts(
     search: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    pool: Optional[str] = None,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        pool = await session.scalar(
-            select(AccountPool).where(
-                AccountPool.custom_automation_id == automation_id,
-                AccountPool.is_default.is_(True),
-            )
-        )
-        if not pool:
+        pool_row = await _accounts_pool(session, automation_id, pool)
+        if not pool_row:
             return AccountListResponse(items=[], total=0)
 
         stmt = (
             select(PoolAccount, SocialAccount)
             .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
-            .where(PoolAccount.account_pool_id == pool.id)
+            .where(PoolAccount.account_pool_id == pool_row.id)
         )
         stmt = _apply_account_query_filters(stmt, status=status, search=search)
         count_stmt = (
             select(func.count(PoolAccount.id))
             .select_from(PoolAccount)
             .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
-            .where(PoolAccount.account_pool_id == pool.id)
+            .where(PoolAccount.account_pool_id == pool_row.id)
         )
         count_stmt = _apply_account_query_filters(count_stmt, status=status, search=search)
         stmt = stmt.order_by(PoolAccount.added_at.desc()).limit(limit).offset(offset)
@@ -1709,15 +1729,11 @@ async def list_accounts(
 @router.get("/automations/{automation_id}/accounts/ban-stats", response_model=AccountBanStatsResponse)
 async def account_ban_stats(
     automation_id: int,
+    pool: Optional[str] = None,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        pool = await session.scalar(
-            select(AccountPool).where(
-                AccountPool.custom_automation_id == automation_id,
-                AccountPool.is_default.is_(True),
-            )
-        )
+        pool = await _accounts_pool(session, automation_id, pool)
         if not pool:
             return AccountBanStatsResponse(
                 total=0, active=0, banned=0, revoked=0, spamblocked=0, frozen=0, banned_percent=0.0, alert=False
@@ -2423,6 +2439,7 @@ async def bulk_upload_accounts(
     archive: UploadFile = File(...),
     proxy_id: int | None = Form(default=None),
     proxy_line: str | None = Form(default=None),
+    pool: str | None = Form(default=None),
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
@@ -2443,6 +2460,7 @@ async def bulk_upload_accounts(
             automation_id,
             archive,
             preferred_proxy_id=preferred_proxy_id,
+            pool_purpose=pool,
         )
     _queue_account_health_check(background_tasks, automation_id)
     return AccountUploadResponse(**result)

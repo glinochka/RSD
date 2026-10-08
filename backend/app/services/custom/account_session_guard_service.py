@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_authorizations_service import list_authorizations_via_client, serialize_authorization
 from .telegram_account_client import TelegramAccountClient
-from ...alembic.models import AccountPool, PoolAccount, SocialAccount
+from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ def plan_session_guard(
     live: list[dict[str, Any]],
     *,
     paused: bool,
+    takeover: bool = False,
 ) -> dict[str, Any]:
     hashes = {str(item.get("hash") or "") for item in live if item.get("hash") is not None}
     hashes.discard("")
@@ -76,11 +77,19 @@ def plan_session_guard(
         for item in live
         if item.get("current") or str(item.get("hash") or "") == "0"
     }
+    if paused:
+        return {"action": "pause_adopt", "keep": (known or set()) | hashes, "terminate": []}
+    if takeover:
+        terminate = [item for item in sorted(hashes) if item not in currents]
+        keep = hashes - set(terminate)
+        return {
+            "action": "takeover" if terminate else "hold",
+            "keep": keep,
+            "terminate": terminate,
+        }
     if not known:
         return {"action": "snapshot", "keep": hashes, "terminate": []}
     newcomers = hashes - known
-    if paused:
-        return {"action": "pause_adopt", "keep": known | hashes, "terminate": []}
     terminate = [item for item in sorted(newcomers) if item not in currents]
     keep = hashes - set(terminate)
     return {"action": "enforce", "keep": keep, "terminate": terminate}
@@ -127,7 +136,7 @@ async def _load_pool_account(
 async def enforce_authorizations(client: Any, account: SocialAccount, *, force: bool = False) -> dict[str, Any]:
     if getattr(account, "session_guard_enabled", True) is False:
         return {"status": "disabled", "terminated": []}
-    from .account_pacing import account_may_keep_alive
+    from .account_pacing import account_is_intercept, account_may_keep_alive
 
     if not force and not account_may_keep_alive(account):
         return {"status": "skipped", "terminated": []}
@@ -141,6 +150,7 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
         _hash_set(getattr(account, "known_auth_hashes", None)),
         live,
         paused=guard_is_paused(account),
+        takeover=account_is_intercept(account),
     )
     terminated: list[str] = []
     for hash_value in plan["terminate"]:
@@ -260,11 +270,29 @@ async def adopt_account_sessions(
     social_account.session_guard_paused_until = None
     social_account.session_guard_checked_at = _utc_now()
     social_account.updated_at = _utc_now()
+    moved = False
+    from .account_pacing import ORIGIN_FARM, account_is_intercept
+    from ..account_pool_service import get_or_create_default_pool
+
+    pool = await session.get(AccountPool, pool_account.account_pool_id)
+    if account_is_intercept(social_account) or getattr(pool, "purpose", ORIGIN_FARM) == "intercept":
+        farm = await get_or_create_default_pool(session, automation_id)
+        pool_account.account_pool_id = farm.id
+        social_account.origin = ORIGIN_FARM
+        social_account.created_at = _utc_now()
+        automation = await session.get(CustomAutomation, automation_id)
+        from .account_warmup_service import enroll_pool_account
+        from .chat_membership_service import ensure_memberships_for_account
+
+        enroll_pool_account(automation, pool_account)
+        await ensure_memberships_for_account(session, automation_id, social_account.id)
+        moved = True
     await session.commit()
     return {
         "status": "ok",
         "items": items,
         "count": len(items),
+        "moved": moved,
         "pool_account": pool_account,
         "social_account": social_account,
     }
