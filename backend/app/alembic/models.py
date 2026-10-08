@@ -2405,6 +2405,7 @@ class SocialAccount(Base):
     )
     session_guard_paused_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     session_guard_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cloud_password_reset_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     known_auth_hashes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     daily_messages_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     daily_messages_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

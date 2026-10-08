@@ -139,13 +139,12 @@ class AccountHealthWorker:
                                     info["telegram_session_count"] = await count_authorizations(client)
                                 except Exception:
                                     pass
-                            if intercept:
-                                try:
-                                    from .account_session_guard_service import guard_live_client
+                            try:
+                                from .account_session_guard_service import guard_live_client
 
-                                    await guard_live_client(session, social_account, client, force=True)
-                                except Exception:
-                                    pass
+                                await guard_live_client(session, social_account, client, force=True)
+                            except Exception:
+                                pass
                             if need_spam_check:
                                 spam_state = await client.check_spamblock(force=False)
                             blocked_now = bool(social_account.is_spamblocked) or (

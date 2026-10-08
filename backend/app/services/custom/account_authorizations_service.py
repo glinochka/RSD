@@ -62,6 +62,8 @@ def serialize_authorization(auth: Any) -> dict[str, Any]:
         "subtitle": subtitle or None,
         "created_at": _unix_iso(getattr(auth, "date_created", None)),
         "active_at": _unix_iso(getattr(auth, "date_active", None)),
+        "password_pending": bool(getattr(auth, "password_pending", False)),
+        "unconfirmed": bool(getattr(auth, "unconfirmed", False)),
         "can_terminate": not current,
     }
 

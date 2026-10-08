@@ -585,17 +585,6 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     }
   };
 
-  const handlePauseSessionGuard = async (account) => {
-    setError(null);
-    try {
-      await customService.pauseAccountSessionGuard(id, account.id, 15);
-      await loadAccounts();
-      await loadSessions(account.id);
-    } catch (err) {
-      setError(err.message || 'Не удалось поставить защиту сессий на паузу');
-    }
-  };
-
   const handleAdoptSessions = async (account) => {
     setError(null);
     try {
@@ -1237,8 +1226,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 </div>
                 <p className="form-hint">
                   {isIntercept
-                    ? 'Все чужие устройства обрываем сразу, оставляем только эту сессию. Пауза 15 минут — если входите с телефона, чтобы сменить почту и 2FA. Когда останется одна сессия, нажмите «Перевести в общий пул».'
-                    : 'Пока аккаунт в работе, новые входы сразу обрываем. Код из Telegram даёт 5 минут на ваш вход. «Зафиксировать устройства» запоминает текущий список как свои.'}
+                    ? 'Все чужие устройства обрываем сразу, оставляем только эту сессию. «Код из Telegram» ставит защиту на паузу 15 минут, чтобы войти с телефона. Когда останется одна сессия, нажмите «Перевести в общий пул».'
+                    : 'Старые устройства не трогаем. Новые входы и незавершённые попытки обрываем. «Код из Telegram» даёт 15 минут на ваш вход. «Зафиксировать устройства» запоминает текущий список как свои.'}
                   {guardPauseLabel(drawerAccount) ? ` Пауза до ${guardPauseLabel(drawerAccount)}.` : ''}
                 </p>
                 {sessionsLoading ? <p className="form-hint">Загружаем устройства...</p> : null}
@@ -1289,9 +1278,6 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 </button>
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleTelegramCode(drawerAccount)}>
                   {loginCodes[drawerAccount.id]?.loading ? 'Читаем...' : 'Код из Telegram'}
-                </button>
-                <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handlePauseSessionGuard(drawerAccount)}>
-                  Я вхожу сам (15 мин)
                 </button>
                 <button type="button" className="acc-btn acc-btn--dark" onClick={() => handleAdoptSessions(drawerAccount)}>
                   {isIntercept ? 'Перевести в общий пул' : 'Зафиксировать устройства'}

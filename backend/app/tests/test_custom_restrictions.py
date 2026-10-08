@@ -15,7 +15,14 @@ from app.services.custom.account_restriction import (
     restriction_kind,
     restriction_label,
 )
-from app.services.custom.account_session_guard_service import plan_session_guard
+import pytest
+
+from app.services.custom.account_session_guard_service import (
+    decline_pending_password_reset,
+    enforce_authorizations,
+    looks_like_login_alert,
+    plan_session_guard,
+)
 from app.services.custom.telegram_error_handler import parse_spambot_reply
 
 
@@ -165,3 +172,112 @@ def test_session_guard_takeover_drops_every_extra_device():
     hold = plan_session_guard(set(), [{"hash": "0", "current": True}], paused=False, takeover=True)
     assert hold["action"] == "hold"
     assert hold["terminate"] == []
+
+
+def test_farm_guard_kills_incomplete_but_keeps_old_devices():
+    live = [
+        {"hash": "0", "current": True},
+        {"hash": "111", "current": False},
+        {"hash": "222", "current": False, "unconfirmed": True},
+        {"hash": "333", "current": False, "password_pending": True},
+    ]
+    first = plan_session_guard(set(), live, paused=False)
+    assert "111" in first["keep"]
+    assert set(first["terminate"]) == {"222", "333"}
+
+    later = plan_session_guard({"0", "111"}, live, paused=False)
+    assert set(later["terminate"]) == {"222", "333"}
+    assert "111" not in later["terminate"]
+
+
+def test_login_alert_text_matches_new_and_incomplete_logins():
+    assert looks_like_login_alert("New login detected from Chrome")
+    assert looks_like_login_alert("Обнаружен новый вход в аккаунт")
+    assert looks_like_login_alert("Незавершенная попытка входа")
+    assert looks_like_login_alert("код для входа 12345") is False
+
+
+@pytest.mark.asyncio
+async def test_enforce_authorizations_drops_newcomer_on_farm():
+    auths = [
+        SimpleNamespace(
+            hash=0, current=True, device_model="PC", platform="Windows", app_name="A",
+            app_version="1", ip="1.1.1.1", country="RU", region="", date_created=1,
+            date_active=2, password_pending=False, unconfirmed=False,
+        ),
+        SimpleNamespace(
+            hash=111, current=False, device_model="iPhone", platform="iOS", app_name="Telegram",
+            app_version="1", ip="2.2.2.2", country="RU", region="", date_created=1,
+            date_active=2, password_pending=False, unconfirmed=False,
+        ),
+        SimpleNamespace(
+            hash=999, current=False, device_model="Chrome", platform="Web", app_name="Telegram",
+            app_version="1", ip="3.3.3.3", country="DE", region="", date_created=1,
+            date_active=2, password_pending=False, unconfirmed=True,
+        ),
+    ]
+    calls: list[str] = []
+
+    class FakeClient:
+        async def get_messages(self, peer, limit=8):
+            calls.append("get_messages")
+            return []
+
+        async def __call__(self, request):
+            name = type(request).__name__
+            calls.append(name)
+            if name == "GetAuthorizationsRequest":
+                return SimpleNamespace(authorizations=list(auths))
+            if name == "ResetAuthorizationRequest":
+                auths[:] = [item for item in auths if int(item.hash) != int(request.hash)]
+                return True
+            if name == "GetPasswordRequest":
+                return SimpleNamespace(pending_reset_date=None)
+            if name == "DeclinePasswordResetRequest":
+                return True
+            raise AssertionError(name)
+
+    account = SimpleNamespace(
+        id=4,
+        origin="farm",
+        session_guard_enabled=True,
+        session_guard_paused_until=None,
+        session_guard_checked_at=None,
+        cloud_password_reset_checked_at=None,
+        known_auth_hashes=["0", "111"],
+        telegram_session_count=None,
+        created_at=datetime.utcnow() - timedelta(days=10),
+        updated_at=None,
+    )
+    result = await enforce_authorizations(FakeClient(), account, force=True)
+    assert "999" in result["terminated"]
+    assert "111" not in result["terminated"]
+    assert "0" in account.known_auth_hashes
+    assert "111" in account.known_auth_hashes
+    assert "GetAuthorizationsRequest" in calls
+
+
+@pytest.mark.asyncio
+async def test_decline_pending_cloud_password_reset():
+    calls: list[str] = []
+
+    class FakeClient:
+        async def __call__(self, request):
+            name = type(request).__name__
+            calls.append(name)
+            if name == "GetPasswordRequest":
+                return SimpleNamespace(pending_reset_date=1_700_000_000)
+            if name == "DeclinePasswordResetRequest":
+                return True
+            raise AssertionError(name)
+
+    account = SimpleNamespace(
+        id=5,
+        cloud_password_reset_checked_at=None,
+        updated_at=None,
+    )
+    result = await decline_pending_password_reset(FakeClient(), account, force=True)
+    assert result["pending"] is True
+    assert result["declined"] is True
+    assert "DeclinePasswordResetRequest" in calls
+    assert account.cloud_password_reset_checked_at is not None

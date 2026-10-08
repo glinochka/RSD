@@ -2153,7 +2153,7 @@ async def get_account_telegram_code(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=str(result.get("error") or "Не удалось прочитать чат Telegram"),
             )
-        grace = " Защита сессий на паузе 5 минут — можно входить."
+        grace = " Защита сессий на паузе 15 минут — можно входить."
         if status_value == "empty":
             return AccountTelegramCodeResponse(
                 detail="В служебном чате Telegram кода пока нет." + grace,

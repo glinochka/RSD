@@ -354,6 +354,12 @@ async def _send_peer_message(
         return False
     try:
         async with TelegramAccountClient.for_account(sender) as client:
+            try:
+                from .account_session_guard_service import guard_live_client
+
+                await guard_live_client(session, sender, client, force=True)
+            except Exception:
+                pass
             await execute_with_telegram_retry(
                 session,
                 sender,

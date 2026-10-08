@@ -1,13 +1,19 @@
-"""Kill unexpected Telegram logins on regular pool accounts.
+"""Kill unexpected Telegram logins on farm and intercept pool accounts.
 
-Known hashes are snapshotted on first connect. Later newcomers are reset,
-except during operator grace after "Код из Telegram" / a manual pause.
-"Перевести в общий пул" adopts the current device list as the new baseline.
+Farm: snapshot devices on first connect, then reset only newcomers,
+unconfirmed logins and password-pending attempts. Old hashes stay.
+Intercept takeover still drops every extra device.
+
+On hub open / health / humanization we scan 777000 for "new login" mail
+and GetAuthorizations for sessions that appeared while we were offline.
+Every 3 days (and on connect if already pending) we decline a cloud
+password reset started from email.
 """
 from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -20,14 +26,22 @@ from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, Social
 
 logger = logging.getLogger(__name__)
 
-LOGIN_CODE_GRACE_SECONDS = 5 * 60
+LOGIN_CODE_GRACE_SECONDS = 15 * 60
 OPERATOR_PAUSE_SECONDS = 15 * 60
 GUARD_INTERVAL_SECONDS = 4 * 60
+ALERT_SCAN_SECONDS = 90
+PASSWORD_RESET_CHECK_SECONDS = 3 * 24 * 60 * 60
 
 _LOGIN_ALERT_RE = re.compile(
-    r"(new login|detected a login|новый вход|вход в аккаунт|login from a new|new device)",
+    r"("
+    r"new login|detected a login|login from a new|new device|"
+    r"новый вход|вход в аккаунт|вход с нового|"
+    r"попытка входа|незавершенн|unconfirmed login|incomplete login|"
+    r"someone tried to log in|кто[- ]то пытался войти"
+    r")",
     re.IGNORECASE,
 )
+_last_alert_scan: dict[int, float] = {}
 
 
 def _utc_now() -> datetime:
@@ -63,6 +77,14 @@ def looks_like_login_alert(text: str | None) -> bool:
     return bool(_LOGIN_ALERT_RE.search(str(text or "")))
 
 
+def _is_current_auth(item: dict[str, Any]) -> bool:
+    return bool(item.get("current")) or str(item.get("hash") or "") == "0"
+
+
+def _is_incomplete_auth(item: dict[str, Any]) -> bool:
+    return bool(item.get("unconfirmed") or item.get("password_pending"))
+
+
 def plan_session_guard(
     known: set[str],
     live: list[dict[str, Any]],
@@ -72,10 +94,11 @@ def plan_session_guard(
 ) -> dict[str, Any]:
     hashes = {str(item.get("hash") or "") for item in live if item.get("hash") is not None}
     hashes.discard("")
-    currents = {
+    currents = {str(item.get("hash") or "") for item in live if _is_current_auth(item)}
+    incomplete = {
         str(item.get("hash") or "")
         for item in live
-        if item.get("current") or str(item.get("hash") or "") == "0"
+        if str(item.get("hash") or "") and not _is_current_auth(item) and _is_incomplete_auth(item)
     }
     if paused:
         return {"action": "pause_adopt", "keep": (known or set()) | hashes, "terminate": []}
@@ -88,9 +111,15 @@ def plan_session_guard(
             "terminate": terminate,
         }
     if not known:
-        return {"action": "snapshot", "keep": hashes, "terminate": []}
+        terminate = [item for item in sorted(incomplete) if item not in currents]
+        keep = hashes - set(terminate)
+        return {
+            "action": "snapshot" if not terminate else "enforce",
+            "keep": keep,
+            "terminate": terminate,
+        }
     newcomers = hashes - known
-    terminate = [item for item in sorted(newcomers) if item not in currents]
+    terminate = [item for item in sorted(newcomers | incomplete) if item not in currents]
     keep = hashes - set(terminate)
     return {"action": "enforce", "keep": keep, "terminate": terminate}
 
@@ -112,6 +141,83 @@ def _needs_scan(account: SocialAccount, *, force: bool = False, now: datetime | 
     if checked is None:
         return True
     return (_naive(now) or _utc_now()) - checked >= timedelta(seconds=GUARD_INTERVAL_SECONDS)
+
+
+def _password_reset_due(account: SocialAccount, *, force: bool = False, now: datetime | None = None) -> bool:
+    if force:
+        return True
+    checked = _naive(getattr(account, "cloud_password_reset_checked_at", None))
+    if checked is None:
+        return True
+    return (_naive(now) or _utc_now()) - checked >= timedelta(seconds=PASSWORD_RESET_CHECK_SECONDS)
+
+
+def _alert_scan_due(account_id: int) -> bool:
+    last = _last_alert_scan.get(int(account_id or 0), 0.0)
+    return (time.monotonic() - last) >= float(ALERT_SCAN_SECONDS)
+
+
+async def recent_login_alert(client: Any, *, since: datetime | None = None) -> bool:
+    """True when Telegram mailed a new/incomplete login after `since`."""
+    telethon = getattr(client, "client", client)
+    if telethon is None:
+        return False
+    cutoff = _naive(since) or (_utc_now() - timedelta(days=2))
+    try:
+        messages = await telethon.get_messages(777000, limit=8)
+    except Exception:
+        return False
+    for msg in messages or []:
+        date = getattr(msg, "date", None)
+        if date is not None:
+            stamped = date.replace(tzinfo=None) if getattr(date, "tzinfo", None) else date
+            if stamped and stamped < cutoff:
+                continue
+        text = getattr(msg, "message", None) or getattr(msg, "text", None) or ""
+        if looks_like_login_alert(text):
+            return True
+    return False
+
+
+async def decline_pending_password_reset(
+    client: Any,
+    account: SocialAccount,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Cancel a 7-day cloud-password reset started from recovery email."""
+    three_day = _password_reset_due(account, force=False)
+    if not force and not three_day:
+        return {"status": "skipped", "declined": False, "pending": False}
+    telethon = getattr(client, "client", client)
+    pending = False
+    declined = False
+    try:
+        from telethon.tl.functions.account import DeclinePasswordResetRequest, GetPasswordRequest
+
+        try:
+            password = await telethon(GetPasswordRequest())
+            pending = bool(getattr(password, "pending_reset_date", None))
+        except Exception as exc:
+            logger.debug("GetPassword for reset-guard skipped on %s: %s", account.id, exc)
+            password = None
+        if pending or three_day or password is None:
+            try:
+                await telethon(DeclinePasswordResetRequest())
+                declined = True
+            except Exception as exc:
+                blob = f"{type(exc).__name__} {exc}".upper()
+                if "RESET_REQUEST_MISSING" not in blob and "PASSWORD_RESET" not in blob:
+                    logger.debug("DeclinePasswordReset skipped on %s: %s", account.id, exc)
+        if pending or three_day:
+            account.cloud_password_reset_checked_at = _utc_now()
+            account.updated_at = _utc_now()
+        if declined:
+            logger.info("Declined pending cloud-password reset on account %s", account.id)
+        return {"status": "declined" if declined else "clear", "declined": declined, "pending": pending}
+    except Exception as exc:
+        logger.debug("Cloud password reset guard failed on %s: %s", account.id, exc)
+        return {"status": "error", "declined": False, "pending": pending}
 
 
 async def _load_pool_account(
@@ -138,13 +244,30 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
         return {"status": "disabled", "terminated": []}
     from .account_pacing import account_is_intercept, account_may_keep_alive
 
-    if not force and not account_may_keep_alive(account):
+    telethon = getattr(client, "client", client)
+    alert = False
+    account_id = int(getattr(account, "id", 0) or 0)
+    if force or _alert_scan_due(account_id) or _needs_scan(account, force=force):
+        _last_alert_scan[account_id] = time.monotonic()
+        alert = await recent_login_alert(
+            telethon,
+            since=_naive(getattr(account, "session_guard_checked_at", None)),
+        )
+    password = None
+    if _password_reset_due(account, force=force or alert):
+        password = await decline_pending_password_reset(telethon, account, force=force or alert)
+
+    if not force and not alert and not account_may_keep_alive(account) and not account_is_intercept(account):
+        if password and password.get("declined"):
+            return {"status": "password_reset", "terminated": [], "password_reset": password}
         return {"status": "skipped", "terminated": []}
-    if not _needs_scan(account, force=force) and not guard_is_paused(account):
+    if not force and not alert and not _needs_scan(account) and not guard_is_paused(account):
+        if password and password.get("declined"):
+            return {"status": "password_reset", "terminated": [], "password_reset": password}
         return {"status": "skipped", "terminated": []}
     from telethon.tl.functions.account import ResetAuthorizationRequest
 
-    raw = await list_authorizations_via_client(client)
+    raw = await list_authorizations_via_client(telethon)
     live = [serialize_authorization(item) for item in raw]
     plan = plan_session_guard(
         _hash_set(getattr(account, "known_auth_hashes", None)),
@@ -155,12 +278,12 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
     terminated: list[str] = []
     for hash_value in plan["terminate"]:
         try:
-            await client(ResetAuthorizationRequest(hash=int(hash_value)))
+            await telethon(ResetAuthorizationRequest(hash=int(hash_value)))
             terminated.append(hash_value)
         except Exception as exc:
             logger.warning("Session guard could not reset %s on %s: %s", hash_value, account.id, exc)
     if terminated:
-        raw = await list_authorizations_via_client(client)
+        raw = await list_authorizations_via_client(telethon)
         live = [serialize_authorization(item) for item in raw]
         keep = {str(item.get("hash") or "") for item in live if item.get("hash") is not None}
         keep.discard("")
@@ -179,6 +302,8 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
         "count": len(live),
         "items": live,
         "paused": guard_is_paused(account),
+        "alert": alert,
+        "password_reset": password,
     }
 
 
@@ -209,7 +334,7 @@ async def maybe_guard_hub_clients(hub: Any) -> dict[str, int]:
             if account is None:
                 continue
             try:
-                result = await guard_live_client(session, account, wrapper)
+                result = await guard_live_client(session, account, wrapper, force=False)
             except Exception as exc:
                 logger.warning("Session guard tick failed for %s: %s", account_id, exc)
                 continue

@@ -162,6 +162,12 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
                 policy = await load_comment_contact_policy(session, social)
                 pending = [item for item in farm_questions if int(item.get("account_id") or 0) != social.id]
                 async with TelegramAccountClient.for_account(social) as client:
+                    try:
+                        from .account_session_guard_service import guard_live_client
+
+                        await guard_live_client(session, social, client, force=True)
+                    except Exception:
+                        pass
                     outcome = await run_humanization_session(
                         client,
                         social,
