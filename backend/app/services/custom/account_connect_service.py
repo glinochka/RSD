@@ -146,7 +146,11 @@ def _bind_login_device(social, *, kind: str, seed: str) -> None:
         model = str(existing.get("device_model") or "").strip()
         if model and model not in _LEGACY_DEVICE_MODELS:
             return
-    social.telegram_device = pick_device_profile(seed=f"{kind}:{seed}", mix=True)
+    social.telegram_device = pick_device_profile(
+        seed=f"{kind}:{seed}",
+        mix=True,
+        phone=getattr(social, "phone_number", None),
+    )
 
 
 async def persist_authorized_session(
@@ -400,7 +404,7 @@ async def request_account_sms(
         phone=phone_number.strip(),
     )
     await session.commit()
-    device = pick_device_profile(seed=f"sms:{phone_number.strip()}", mix=True)
+    device = pick_device_profile(seed=f"sms:{phone_number.strip()}", mix=True, phone=phone_number.strip())
     client, api_id, api_hash = create_telegram_client(
         family=device["family"],
         device_profile=device,
@@ -479,7 +483,7 @@ async def verify_account_sms(
         _token_proxy_id(token_data),
         automation_id=automation_id,
     )
-    device = pick_device_profile(seed=f"sms:{phone_number}", mix=True)
+    device = pick_device_profile(seed=f"sms:{phone_number}", mix=True, phone=phone_number)
     client, api_id, api_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,

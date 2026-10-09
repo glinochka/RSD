@@ -78,7 +78,16 @@ def test_api_fallback_includes_official_desktop_and_android():
 
 def test_api_fallback_prefers_ios_family():
     pairs = iter_api_credential_candidates(family="ios")
-    assert pairs[0][0] == _TELEGRAM_IOS_API_ID
+    ids = [item[0] for item in pairs]
+    assert ids[0] == _TELEGRAM_IOS_API_ID
+    assert _TELEGRAM_ANDROID_API_ID not in ids
+    assert _TELEGRAM_DESKTOP_API_ID not in ids
+
+
+def test_api_fallback_known_family_stays_on_that_client():
+    pairs = iter_api_credential_candidates(family="android")
+    ids = [item[0] for item in pairs]
+    assert ids == [_TELEGRAM_ANDROID_API_ID]
 
 
 def _write_pyrogram_session(path: Path, *, api_id: int = 2040, dc_id: int = 2) -> None:

@@ -12,13 +12,17 @@ from app.services.telegram_userbot_auth import (
     _TELEGRAM_DESKTOP_API_ID,
     _TELEGRAM_IOS_API_ID,
     _find_tdata_dir,
+    create_telegram_client,
     device_family_of,
     ensure_account_device,
     family_for_api_id,
+    lang_pack_for_family,
+    locale_for_phone,
     opentele_available,
     pick_device_profile,
     qr_url_to_data_url,
     resolve_api_credentials,
+    tz_offset_seconds,
 )
 
 
@@ -94,6 +98,80 @@ def test_ensure_account_device_keeps_existing_and_migrates_legacy():
     android = ensure_account_device(android_session, api_id=_TELEGRAM_ANDROID_API_ID)
     assert android["family"] == FAMILY_ANDROID
     assert device_family_of(android) == FAMILY_ANDROID
+
+
+def test_locale_follows_phone_country_not_forced_russian():
+    assert locale_for_phone("+79991234567") == ("ru", "ru-RU", "Europe/Moscow")
+    assert locale_for_phone("+380671234567")[:2] == ("uk", "uk-UA")
+    assert locale_for_phone("+491511234567")[:2] == ("de", "de-DE")
+    assert locale_for_phone("+12025550123")[:2] == ("en", "en-US")
+    ua = pick_device_profile(seed="ua-1", mix=True, phone="+380671234567")
+    assert ua["lang_code"] == "uk"
+    assert ua["system_lang_code"] == "uk-UA"
+    assert ua["lang_pack"] in {"tdesktop", "android", "ios"}
+    assert ua["tz_name"] == "Europe/Kyiv"
+    de = pick_device_profile(seed="de-1", family=FAMILY_ANDROID, phone="+491511234567")
+    assert de["lang_code"] == "de"
+    assert de["lang_pack"] == "android"
+    ru = pick_device_profile(seed="ru-1", family=FAMILY_IOS, phone="+79990001122")
+    assert ru["lang_code"] == "ru"
+    assert ru["system_lang_code"] == "ru-RU"
+    assert ru["lang_pack"] == "ios"
+
+
+def test_ensure_account_device_rewrites_forced_ru_for_foreign_numbers():
+    ua = SimpleNamespace(
+        id=9,
+        phone_number="+380671111111",
+        telegram_device={
+            "device_model": "Google Pixel 9",
+            "system_version": "SDK 35",
+            "app_version": "11.12.3",
+            "lang_code": "ru",
+            "system_lang_code": "ru-RU",
+        },
+    )
+    profile = ensure_account_device(ua)
+    assert profile["lang_code"] == "uk"
+    assert profile["system_lang_code"] == "uk-UA"
+    assert profile["device_model"] == "Google Pixel 9"
+    assert profile["lang_pack"] == "android"
+    ru = SimpleNamespace(
+        id=10,
+        phone_number="+79990000000",
+        telegram_device={
+            "device_model": "Google Pixel 9",
+            "system_version": "SDK 35",
+            "app_version": "11.12.3",
+            "lang_code": "ru",
+            "system_lang_code": "ru-RU",
+        },
+    )
+    kept = ensure_account_device(ru)
+    assert kept["lang_code"] == "ru"
+    assert kept["system_lang_code"] == "ru-RU"
+
+
+def test_create_telegram_client_stamps_official_lang_pack():
+    profile = pick_device_profile(seed="stamp-1", family=FAMILY_ANDROID, phone="+491511234567")
+    client, api_id, _hash = create_telegram_client(
+        family=FAMILY_ANDROID,
+        device_profile=profile,
+        session_string="",
+    )
+    req = client._init_request
+    assert api_id == _TELEGRAM_ANDROID_API_ID
+    assert req.lang_pack == "android"
+    assert req.lang_code == "de"
+    assert req.system_lang_code == "de-DE"
+    assert req.params is not None
+    assert "tz_offset" in [item.key for item in req.params.value]
+    assert tz_offset_seconds("Europe/Moscow") == 3 * 3600
+    assert lang_pack_for_family(FAMILY_DESKTOP) == "tdesktop"
+    assert lang_pack_for_family(FAMILY_IOS) == "ios"
+    closer = getattr(getattr(client, "session", None), "close", None)
+    if callable(closer):
+        closer()
 
 
 @pytest.mark.skipif(not opentele_available(), reason="opentele not installed")

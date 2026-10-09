@@ -41,34 +41,210 @@ _FAMILY_WEIGHT_VALUES = (40, 35, 25)
 
 # Realistic Telegram fingerprints. "RSD Platform" is a farm tell.
 # device_model + api_id family must match: iPhone never rides Desktop api 2040.
+# Locale is NOT stored here — it comes from the phone country at mint/normalize time.
 _DEVICE_PROFILES: tuple[dict[str, str], ...] = (
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "4.16.8 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "4.16.30 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.7.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.3.0 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 11", "app_version": "5.6.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "5.8.2 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.14.13 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 10", "app_version": "5.5.5 x64", "lang_code": "ru", "system_lang_code": "ru"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.9.0 x64", "lang_code": "en", "system_lang_code": "en-US"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "macOS 14.5", "app_version": "5.6.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_DESKTOP, "device_model": "MacBook Pro", "system_version": "macOS 15.0", "app_version": "5.8.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S941B", "system_version": "SDK 36", "app_version": "11.14.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S946B", "system_version": "SDK 36", "app_version": "11.13.2", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S938B", "system_version": "SDK 35", "app_version": "11.12.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S936B", "system_version": "SDK 35", "app_version": "11.11.4", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Google Pixel 9", "system_version": "SDK 35", "app_version": "11.12.3", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Google Pixel 10", "system_version": "SDK 36", "app_version": "11.14.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "Xiaomi 15", "system_version": "SDK 35", "app_version": "11.11.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_ANDROID, "device_model": "POCO F7", "system_version": "SDK 35", "app_version": "11.10.2", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_IOS, "device_model": "iPhone 16", "system_version": "18.5", "app_version": "11.12.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_IOS, "device_model": "iPhone 16 Pro", "system_version": "18.6.2", "app_version": "11.13.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_IOS, "device_model": "iPhone 16 Pro Max", "system_version": "18.6.1", "app_version": "11.14.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_IOS, "device_model": "iPhone 17", "system_version": "26.0", "app_version": "11.14.0", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_IOS, "device_model": "iPhone 17 Pro", "system_version": "26.0.1", "app_version": "11.14.1", "lang_code": "ru", "system_lang_code": "ru-RU"},
-    {"family": FAMILY_IOS, "device_model": "iPhone 17 Pro Max", "system_version": "26.1", "app_version": "11.14.2", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "4.16.8 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "4.16.30 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.7.3 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.3.0 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 11", "app_version": "5.6.1 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "5.8.2 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.14.13 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 10", "app_version": "5.5.5 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.9.0 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "macOS 14.5", "app_version": "5.6.3 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "MacBook Pro", "system_version": "macOS 15.0", "app_version": "5.8.1 x64"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S941B", "system_version": "SDK 36", "app_version": "11.14.1"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S946B", "system_version": "SDK 36", "app_version": "11.13.2"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S938B", "system_version": "SDK 35", "app_version": "11.12.0"},
+    {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S936B", "system_version": "SDK 35", "app_version": "11.11.4"},
+    {"family": FAMILY_ANDROID, "device_model": "Google Pixel 9", "system_version": "SDK 35", "app_version": "11.12.3"},
+    {"family": FAMILY_ANDROID, "device_model": "Google Pixel 10", "system_version": "SDK 36", "app_version": "11.14.0"},
+    {"family": FAMILY_ANDROID, "device_model": "Xiaomi 15", "system_version": "SDK 35", "app_version": "11.11.1"},
+    {"family": FAMILY_ANDROID, "device_model": "POCO F7", "system_version": "SDK 35", "app_version": "11.10.2"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 16", "system_version": "18.5", "app_version": "11.12.1"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 16 Pro", "system_version": "18.6.2", "app_version": "11.13.0"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 16 Pro Max", "system_version": "18.6.1", "app_version": "11.14.1"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 17", "system_version": "26.0", "app_version": "11.14.0"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 17 Pro", "system_version": "26.0.1", "app_version": "11.14.1"},
+    {"family": FAMILY_IOS, "device_model": "iPhone 17 Pro Max", "system_version": "26.1", "app_version": "11.14.2"},
 )
+
+# Official client lang packs. Empty lang_pack is a Telethon tell.
+_LANG_PACK = {
+    FAMILY_DESKTOP: "tdesktop",
+    FAMILY_ANDROID: "android",
+    FAMILY_IOS: "ios",
+}
+_DEFAULT_LANG = "en"
+_DEFAULT_SYSTEM_LANG = "en-US"
+_DEFAULT_TZ = "UTC"
+# lang_code, system_lang_code, IANA timezone — typical phone locale, not "ru-RU everywhere".
+_COUNTRY_LOCALE: dict[str, tuple[str, str, str]] = {
+    "RU": ("ru", "ru-RU", "Europe/Moscow"),
+    "BY": ("ru", "ru-BY", "Europe/Minsk"),
+    "KZ": ("ru", "ru-KZ", "Asia/Almaty"),
+    "KG": ("ru", "ru-KG", "Asia/Bishkek"),
+    "UZ": ("uz", "uz-UZ", "Asia/Tashkent"),
+    "TJ": ("ru", "ru-TJ", "Asia/Dushanbe"),
+    "TM": ("ru", "ru-TM", "Asia/Ashgabat"),
+    "AM": ("hy", "hy-AM", "Asia/Yerevan"),
+    "AZ": ("az", "az-AZ", "Asia/Baku"),
+    "GE": ("ka", "ka-GE", "Asia/Tbilisi"),
+    "UA": ("uk", "uk-UA", "Europe/Kyiv"),
+    "MD": ("ro", "ro-MD", "Europe/Chisinau"),
+    "US": ("en", "en-US", "America/New_York"),
+    "CA": ("en", "en-CA", "America/Toronto"),
+    "GB": ("en", "en-GB", "Europe/London"),
+    "IE": ("en", "en-IE", "Europe/Dublin"),
+    "AU": ("en", "en-AU", "Australia/Sydney"),
+    "NZ": ("en", "en-NZ", "Pacific/Auckland"),
+    "SG": ("en", "en-SG", "Asia/Singapore"),
+    "IN": ("en", "en-IN", "Asia/Kolkata"),
+    "PH": ("en", "en-PH", "Asia/Manila"),
+    "NG": ("en", "en-NG", "Africa/Lagos"),
+    "ZA": ("en", "en-ZA", "Africa/Johannesburg"),
+    "DE": ("de", "de-DE", "Europe/Berlin"),
+    "AT": ("de", "de-AT", "Europe/Vienna"),
+    "CH": ("de", "de-CH", "Europe/Zurich"),
+    "FR": ("fr", "fr-FR", "Europe/Paris"),
+    "BE": ("fr", "fr-BE", "Europe/Brussels"),
+    "ES": ("es", "es-ES", "Europe/Madrid"),
+    "MX": ("es", "es-MX", "America/Mexico_City"),
+    "AR": ("es", "es-AR", "America/Argentina/Buenos_Aires"),
+    "CO": ("es", "es-CO", "America/Bogota"),
+    "CL": ("es", "es-CL", "America/Santiago"),
+    "PE": ("es", "es-PE", "America/Lima"),
+    "VE": ("es", "es-VE", "America/Caracas"),
+    "IT": ("it", "it-IT", "Europe/Rome"),
+    "PT": ("pt", "pt-PT", "Europe/Lisbon"),
+    "BR": ("pt", "pt-BR", "America/Sao_Paulo"),
+    "PL": ("pl", "pl-PL", "Europe/Warsaw"),
+    "NL": ("nl", "nl-NL", "Europe/Amsterdam"),
+    "TR": ("tr", "tr-TR", "Europe/Istanbul"),
+    "RO": ("ro", "ro-RO", "Europe/Bucharest"),
+    "HU": ("hu", "hu-HU", "Europe/Budapest"),
+    "CZ": ("cs", "cs-CZ", "Europe/Prague"),
+    "SK": ("sk", "sk-SK", "Europe/Bratislava"),
+    "BG": ("bg", "bg-BG", "Europe/Sofia"),
+    "GR": ("el", "el-GR", "Europe/Athens"),
+    "RS": ("sr", "sr-RS", "Europe/Belgrade"),
+    "HR": ("hr", "hr-HR", "Europe/Zagreb"),
+    "SI": ("sl", "sl-SI", "Europe/Ljubljana"),
+    "LT": ("lt", "lt-LT", "Europe/Vilnius"),
+    "LV": ("lv", "lv-LV", "Europe/Riga"),
+    "EE": ("et", "et-EE", "Europe/Tallinn"),
+    "FI": ("fi", "fi-FI", "Europe/Helsinki"),
+    "SE": ("sv", "sv-SE", "Europe/Stockholm"),
+    "NO": ("nb", "nb-NO", "Europe/Oslo"),
+    "DK": ("da", "da-DK", "Europe/Copenhagen"),
+    "IL": ("he", "he-IL", "Asia/Jerusalem"),
+    "AE": ("ar", "ar-AE", "Asia/Dubai"),
+    "SA": ("ar", "ar-SA", "Asia/Riyadh"),
+    "EG": ("ar", "ar-EG", "Africa/Cairo"),
+    "IQ": ("ar", "ar-IQ", "Asia/Baghdad"),
+    "JO": ("ar", "ar-JO", "Asia/Amman"),
+    "LB": ("ar", "ar-LB", "Asia/Beirut"),
+    "KW": ("ar", "ar-KW", "Asia/Kuwait"),
+    "QA": ("ar", "ar-QA", "Asia/Qatar"),
+    "BH": ("ar", "ar-BH", "Asia/Bahrain"),
+    "OM": ("ar", "ar-OM", "Asia/Muscat"),
+    "MA": ("ar", "ar-MA", "Africa/Casablanca"),
+    "DZ": ("ar", "ar-DZ", "Africa/Algiers"),
+    "TN": ("ar", "ar-TN", "Africa/Tunis"),
+    "IR": ("fa", "fa-IR", "Asia/Tehran"),
+    "CN": ("zh", "zh-CN", "Asia/Shanghai"),
+    "TW": ("zh", "zh-TW", "Asia/Taipei"),
+    "HK": ("zh", "zh-HK", "Asia/Hong_Kong"),
+    "JP": ("ja", "ja-JP", "Asia/Tokyo"),
+    "KR": ("ko", "ko-KR", "Asia/Seoul"),
+    "VN": ("vi", "vi-VN", "Asia/Ho_Chi_Minh"),
+    "TH": ("th", "th-TH", "Asia/Bangkok"),
+    "ID": ("id", "id-ID", "Asia/Jakarta"),
+    "MY": ("ms", "ms-MY", "Asia/Kuala_Lumpur"),
+    "PK": ("ur", "ur-PK", "Asia/Karachi"),
+    "BD": ("bn", "bn-BD", "Asia/Dhaka"),
+}
+
+
+def lang_pack_for_family(family: str | None) -> str:
+    resolved = normalize_device_family(family) or FAMILY_DESKTOP
+    return _LANG_PACK.get(resolved) or _LANG_PACK[FAMILY_DESKTOP]
+
+
+def locale_for_country(country: str | None) -> tuple[str, str, str]:
+    """Return (lang_code, system_lang_code, tz_name) for an ISO country."""
+    code = str(country or "").strip().upper()
+    if code == "UK":
+        code = "GB"
+    if code in _COUNTRY_LOCALE:
+        return _COUNTRY_LOCALE[code]
+    if len(code) == 2 and code.isalpha():
+        return (_DEFAULT_LANG, f"{_DEFAULT_LANG}-{code}", _DEFAULT_TZ)
+    return (_DEFAULT_LANG, _DEFAULT_SYSTEM_LANG, _DEFAULT_TZ)
+
+
+def locale_for_phone(phone: Any) -> tuple[str, str, str]:
+    from .custom.proxy_geo import country_from_phone
+
+    return locale_for_country(country_from_phone(phone))
+
+
+def tz_offset_seconds(tz_name: str | None) -> int:
+    name = str(tz_name or "").strip() or _DEFAULT_TZ
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        delta = datetime.now(ZoneInfo(name)).utcoffset()
+        if delta is None:
+            return 0
+        return int(delta.total_seconds())
+    except Exception:
+        return 0
+
+
+def _looks_like_forced_ru_locale(lang_code: str, system_lang_code: str) -> bool:
+    lang = (lang_code or "").strip().lower()
+    system = (system_lang_code or "").strip().replace("_", "-")
+    return lang in {"", "ru"} and system.lower() in {"", "ru", "ru-ru"}
+
+
+def _apply_phone_locale(
+    data: dict[str, Any],
+    family: str,
+    *,
+    phone: Any = None,
+    country: str | None = None,
+) -> tuple[str, str, str]:
+    """Pick interface language from the SIM country, not a hardcoded ru-RU."""
+    if country:
+        wanted_lang, wanted_system, tz_name = locale_for_country(country)
+    elif phone:
+        wanted_lang, wanted_system, tz_name = locale_for_phone(phone)
+    else:
+        stored_tz = str(data.get("tz_name") or "").strip()
+        stored_lang = str(data.get("lang_code") or "").strip()
+        stored_system = str(data.get("system_lang_code") or "").strip()
+        if stored_lang and stored_system:
+            return stored_lang, stored_system, stored_tz or _DEFAULT_TZ
+        return _DEFAULT_LANG, _DEFAULT_SYSTEM_LANG, stored_tz or _DEFAULT_TZ
+
+    stored_lang = str(data.get("lang_code") or "").strip()
+    stored_system = str(data.get("system_lang_code") or "").strip()
+    stored_tz = str(data.get("tz_name") or "").strip()
+    if stored_lang and stored_system and not _looks_like_forced_ru_locale(stored_lang, stored_system):
+        return stored_lang, stored_system, stored_tz or tz_name
+    if (
+        stored_lang
+        and stored_system
+        and _looks_like_forced_ru_locale(stored_lang, stored_system)
+        and wanted_lang == "ru"
+        and wanted_system.lower() == "ru-ru"
+    ):
+        return "ru", "ru-RU", stored_tz or tz_name
+    return wanted_lang, wanted_system, tz_name
 
 
 def normalize_device_family(value: Any) -> str | None:
@@ -126,17 +302,28 @@ def device_family_of(profile: dict[str, str] | None, *, api_id: int | None = Non
     )
 
 
-def normalize_device_profile(raw: dict[str, Any] | None, *, api_id: int | None = None) -> dict[str, str]:
+def normalize_device_profile(
+    raw: dict[str, Any] | None,
+    *,
+    api_id: int | None = None,
+    phone: Any = None,
+    country: str | None = None,
+) -> dict[str, str]:
     data = raw if isinstance(raw, dict) else {}
     family = device_family_of(data, api_id=api_id)
     defaults = _family_defaults(family)
+    lang_code, system_lang_code, tz_name = _apply_phone_locale(
+        data, family, phone=phone, country=country
+    )
     return {
         "family": family,
         "device_model": str(data.get("device_model") or defaults["device_model"]),
         "system_version": str(data.get("system_version") or defaults["system_version"]),
         "app_version": str(data.get("app_version") or defaults["app_version"]),
-        "lang_code": str(data.get("lang_code") or "ru"),
-        "system_lang_code": str(data.get("system_lang_code") or "ru-RU"),
+        "lang_code": lang_code,
+        "system_lang_code": system_lang_code,
+        "lang_pack": str(data.get("lang_pack") or lang_pack_for_family(family)),
+        "tz_name": tz_name,
     }
 
 
@@ -153,6 +340,8 @@ def pick_device_profile(
     family: str | None = None,
     mix: bool = False,
     exclude: dict[str, str] | None = None,
+    phone: Any = None,
+    country: str | None = None,
 ) -> dict[str, str]:
     rng = random.Random(str(seed))
     wanted = normalize_device_family(family)
@@ -163,7 +352,11 @@ def pick_device_profile(
         pool = [item for item in _DEVICE_PROFILES if item["family"] == FAMILY_DESKTOP]
     excluded = (exclude or {}).get("device_model"), (exclude or {}).get("app_version")
     filtered = [item for item in pool if (item["device_model"], item["app_version"]) != excluded]
-    return normalize_device_profile(rng.choice(filtered or pool))
+    return normalize_device_profile(
+        rng.choice(filtered or pool),
+        phone=phone,
+        country=country,
+    )
 
 
 def ensure_account_device(
@@ -174,9 +367,10 @@ def ensure_account_device(
     mix: bool = False,
 ) -> dict[str, str]:
     field = "spare_telegram_device" if spare else "telegram_device"
+    phone = getattr(account, "phone_number", None)
     existing = getattr(account, field, None)
     if _usable_device(existing):
-        profile = normalize_device_profile(existing, api_id=api_id)
+        profile = normalize_device_profile(existing, api_id=api_id, phone=phone)
         if profile != existing:
             try:
                 setattr(account, field, profile)
@@ -185,10 +379,11 @@ def ensure_account_device(
         return profile
     main = getattr(account, "telegram_device", None) if spare else None
     profile = pick_device_profile(
-        seed=f"{'spare' if spare else 'main'}:{getattr(account, 'id', 0)}:{getattr(account, 'phone_number', '')}",
+        seed=f"{'spare' if spare else 'main'}:{getattr(account, 'id', 0)}:{phone or ''}",
         family=family_for_api_id(api_id),
         mix=mix and family_for_api_id(api_id) is None,
         exclude=main if isinstance(main, dict) else None,
+        phone=phone,
     )
     try:
         setattr(account, field, profile)
@@ -321,10 +516,15 @@ def iter_api_credential_candidates(
     prefer_desktop: bool = True,
     family: str | None = None,
 ) -> list[tuple[int, str]]:
-    """Ordered unique (api_id, api_hash) pairs to try for a purchased session."""
+    """Ordered unique (api_id, api_hash) pairs to try for a purchased session.
+
+    When the device family is known, do not hop Desktop ↔ Android ↔ iOS on a
+    live auth key. Cross-family fallback is only for unidentified sessions.
+    """
     seen: set[int] = set()
     pairs: list[tuple[int, str]] = []
-    resolved_family = normalize_device_family(family) or (FAMILY_DESKTOP if prefer_desktop else FAMILY_ANDROID)
+    resolved_family = normalize_device_family(family)
+    extra_family = family_for_api_id(extra_api_id)
 
     def add(candidate_id: int | None, candidate_hash: str | None) -> None:
         try:
@@ -339,7 +539,13 @@ def iter_api_credential_candidates(
 
     add(api_id, api_hash)
     add(extra_api_id, official_api_hash_for_id(extra_api_id))
-    add(*resolve_api_credentials(prefer_desktop=prefer_desktop, family=resolved_family))
+    known_family = resolved_family or extra_family
+    if known_family:
+        add(*resolve_api_credentials(prefer_desktop=prefer_desktop, family=known_family))
+        if extra_family and extra_family != known_family:
+            add(*_builtin_api_credentials(family=extra_family))
+        return pairs
+    add(*resolve_api_credentials(prefer_desktop=prefer_desktop, family=FAMILY_DESKTOP if prefer_desktop else FAMILY_ANDROID))
     add(_TELEGRAM_DESKTOP_API_ID, _TELEGRAM_DESKTOP_API_HASH)
     add(_TELEGRAM_ANDROID_API_ID, _TELEGRAM_ANDROID_API_HASH)
     add(_TELEGRAM_IOS_API_ID, _TELEGRAM_IOS_API_HASH)
@@ -351,15 +557,53 @@ def _build_api_data(api_id: int, api_hash: str, *, profile: dict[str, str] | Non
 
     data = normalize_device_profile(profile)
     defaults = _family_defaults(data["family"])
-    return APIData(
-        api_id=int(api_id),
-        api_hash=str(api_hash).strip(),
-        device_model=device_model or data.get("device_model") or defaults["device_model"],
-        system_version=str(data.get("system_version") or defaults["system_version"]),
-        app_version=str(data.get("app_version") or defaults["app_version"]),
-        lang_code=str(data.get("lang_code") or "ru"),
-        system_lang_code=str(data.get("system_lang_code") or "ru-RU"),
-    )
+    kwargs = {
+        "api_id": int(api_id),
+        "api_hash": str(api_hash).strip(),
+        "device_model": device_model or data.get("device_model") or defaults["device_model"],
+        "system_version": str(data.get("system_version") or defaults["system_version"]),
+        "app_version": str(data.get("app_version") or defaults["app_version"]),
+        "lang_code": str(data.get("lang_code") or _DEFAULT_LANG),
+        "system_lang_code": str(data.get("system_lang_code") or _DEFAULT_SYSTEM_LANG),
+    }
+    lang_pack = str(data.get("lang_pack") or lang_pack_for_family(data["family"]))
+    try:
+        return APIData(**kwargs, lang_pack=lang_pack)
+    except TypeError:
+        return APIData(**kwargs)
+
+
+def stamp_init_connection(client: Any, profile: dict[str, str] | None) -> Any:
+    """Fill official-client InitConnection fields Telethon leaves empty."""
+    req = getattr(client, "_init_request", None)
+    data = profile or {}
+    if req is None:
+        return client
+    family = device_family_of(data)
+    lang_pack = str(data.get("lang_pack") or lang_pack_for_family(family))
+    lang_code = str(data.get("lang_code") or _DEFAULT_LANG)
+    system_lang = str(data.get("system_lang_code") or _DEFAULT_SYSTEM_LANG)
+    try:
+        req.lang_pack = lang_pack
+        req.lang_code = lang_code
+        req.system_lang_code = system_lang
+    except Exception:
+        logger.debug("Could not stamp InitConnection locale")
+    tz_name = str(data.get("tz_name") or "").strip()
+    try:
+        from telethon.tl.types import JsonNumber, JsonObject, JsonObjectValue
+
+        req.params = JsonObject(
+            value=[
+                JsonObjectValue(
+                    key="tz_offset",
+                    value=JsonNumber(value=float(tz_offset_seconds(tz_name))),
+                )
+            ]
+        )
+    except Exception:
+        logger.debug("Could not stamp InitConnection tz_offset")
+    return client
 
 
 def create_telegram_client(
@@ -405,8 +649,8 @@ def create_telegram_client(
     client_kwargs: dict[str, Any] = {
         "system_version": str(profile.get("system_version") or defaults["system_version"]),
         "app_version": str(profile.get("app_version") or defaults["app_version"]),
-        "lang_code": str(profile.get("lang_code") or "ru"),
-        "system_lang_code": str(profile.get("system_lang_code") or "ru-RU"),
+        "lang_code": str(profile.get("lang_code") or _DEFAULT_LANG),
+        "system_lang_code": str(profile.get("system_lang_code") or _DEFAULT_SYSTEM_LANG),
     }
     if proxy:
         client_kwargs["proxy"] = proxy
@@ -415,14 +659,13 @@ def create_telegram_client(
 
         api = _build_api_data(resolved_id, resolved_hash, profile=profile, device_model=model)
         extra = {key: value for key, value in client_kwargs.items() if key == "proxy"}
-        return TelegramClient(session, api=api, **extra), resolved_id, resolved_hash
-    from telethon import TelegramClient
+        client = TelegramClient(session, api=api, **extra)
+    else:
+        from telethon import TelegramClient
 
-    return (
-        TelegramClient(session, resolved_id, resolved_hash, device_model=model, **client_kwargs),
-        resolved_id,
-        resolved_hash,
-    )
+        client = TelegramClient(session, resolved_id, resolved_hash, device_model=model, **client_kwargs)
+    stamp_init_connection(client, profile)
+    return client, resolved_id, resolved_hash
 
 
 def qr_url_to_data_url(qr_url: str) -> str:

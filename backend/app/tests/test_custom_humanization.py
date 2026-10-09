@@ -20,14 +20,17 @@ from app.services.custom.account_warmup_service import (
 )
 from app.services.custom.humanization_session import (
     CommentContactPolicy,
+    PUBLIC_SEARCH_QUERIES,
     SEED_CHANNEL_QUERIES,
     _action_catalog,
     add_commenter_contact,
     comment_contact_policy,
+    glance_stories,
     is_comment_contact_day,
     lifetime_comment_contact_cap,
     pick_seed_channel,
     run_humanization_session,
+    search_public_channels,
     settle_after_join,
     typing_without_send,
 )
@@ -204,6 +207,35 @@ def test_seed_channel_search_picks_the_named_channels():
     assert pick_seed_channel([magazine, topor], "Топор Live") is topor
     assert pick_seed_channel([kazan], "Казань на максималках") is kazan
     assert pick_seed_channel([magazine], "Топор Live") is None
+    assert "MDK" in PUBLIC_SEARCH_QUERIES
+    assert "Лентач" in PUBLIC_SEARCH_QUERIES
+    assert set(SEED_CHANNEL_QUERIES) <= set(PUBLIC_SEARCH_QUERIES)
+
+
+@pytest.mark.asyncio
+async def test_search_public_channels_uses_public_pool(monkeypatch):
+    seen: list[list[str]] = []
+
+    def fake_choice(seq):
+        items = list(seq)
+        seen.append(items)
+        return items[0]
+
+    monkeypatch.setattr("app.services.custom.humanization_session.random.choice", fake_choice)
+    ok = await search_public_channels(FakeClient(), lab_mode=True)
+    assert ok is True
+    assert seen
+    assert "MDK" in seen[0]
+    assert "Лентач" in seen[0]
+    assert "Пикабу" in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_glance_stories_lab_does_not_mark_read():
+    client = FakeClient()
+    ok = await glance_stories(client, lab_mode=True)
+    assert ok is True
+    assert "ReadStoriesRequest" not in client.calls
 
 
 @pytest.mark.asyncio

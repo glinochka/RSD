@@ -50,13 +50,14 @@ SEED_CHANNEL_QUERIES = (
     "Топор Live",
     "Казань на максималках",
 )
-_PUBLIC_SEARCH = SEED_CHANNEL_QUERIES + (
+PUBLIC_SEARCH_QUERIES = SEED_CHANNEL_QUERIES + (
     "MDK",
     "Лентач",
     "Пикабу",
     "Подслушано",
     "Нетипичная Махачкала",
 )
+_PUBLIC_SEARCH = PUBLIC_SEARCH_QUERIES
 SEED_CHANNEL_JOIN_ACTION = "seed_channel_join"
 _CHAT_QUESTIONS = (
     "А как у вас обычно с этим бывает, кто недавно проходил?",
@@ -420,17 +421,24 @@ async def load_peer_stories(client: Any, entity: Any) -> tuple[Any, list[Any]]:
 
 
 async def glance_stories(client: Any, *, lab_mode: bool = False) -> bool:
+    """Open the story tray like a person: one peer, slowly. Not a feed sweep."""
     peers = await load_feed_peer_stories(client)
     if not peers:
         return True
-    viewed = 0
-    for peer_stories in random.sample(peers, min(2, len(peers))):
-        stories = list(getattr(peer_stories, "stories", None) or [])
-        peer = getattr(peer_stories, "peer", None)
-        counted = await mark_peer_stories_read(client, peer, stories, lab_mode=lab_mode)
-        if counted:
-            viewed += 1
-    return viewed > 0 or True
+    if lab_mode:
+        return True
+    await _pause(False, 2.0, 7.0)
+    # Sometimes just open the tray and leave — people skip stories.
+    if random.random() < 0.30:
+        return True
+    packed = random.choice(peers)
+    stories = list(getattr(packed, "stories", None) or [])
+    peer = getattr(packed, "peer", None)
+    await _pause(False, 6.0, 18.0)
+    counted = await mark_peer_stories_read(client, peer, stories, lab_mode=False)
+    if counted:
+        await _pause(False, 2.0, 8.0)
+    return True
 
 
 async def react_in_subscriptions(client: Any, *, lab_mode: bool = False) -> bool:
@@ -812,7 +820,7 @@ async def search_public_channels(client: Any, *, lab_mode: bool = False) -> bool
     try:
         from telethon.tl.functions.contacts import SearchRequest
 
-        query = random.choice(SEED_CHANNEL_QUERIES)
+        query = random.choice(_PUBLIC_SEARCH)
         await _pause(lab_mode, 1.2, 3.5)
         result = await telethon(SearchRequest(q=query, limit=8))
         chats = list(getattr(result, "chats", None) or [])
