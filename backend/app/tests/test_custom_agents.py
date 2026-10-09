@@ -4872,6 +4872,58 @@ class TestAccountHealthSpamblockAndDelete:
         )
         assert response.status_code == 422
 
+    async def test_manual_spamblock_check_session_error_is_not_500(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.telegram_error_handler import SessionInvalidError
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000017",
+            username="spamcrash",
+            encrypted_session="x",
+            session_file_path="sessions/spamcrash.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        account_id = account.id
+        automation_id = custom_automation.id
+
+        class _BoomClient:
+            async def __aenter__(self):
+                raise SessionInvalidError("session dead")
+
+            async def __aexit__(self, *args):
+                return False
+
+        mock_cls = MagicMock()
+        mock_cls.for_account.return_value = _BoomClient()
+        with patch("app.services.custom.account_health_worker.TelegramAccountClient", mock_cls):
+            response = await client.post(
+                f"/api/custom/automations/{automation_id}/accounts/{account_id}/spamblock-check",
+                headers={"Authorization": f"Bearer {client_token}"},
+            )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["detail"]
+        assert data["account"]["id"] == account_id
+
 
 class TestAccountProfile:
     async def test_account_list_includes_avatar_and_bio(

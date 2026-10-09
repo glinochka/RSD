@@ -421,6 +421,7 @@ class AccountResponse(BaseModel):
     last_used_at: Optional[datetime] = None
     max_daily_messages_per_account: int = 50
     added_at: datetime
+    created_at: Optional[datetime] = None
     last_health_check_at: Optional[datetime] = None
     spamblock_checked_at: Optional[datetime] = None
     frozen_at: Optional[datetime] = None

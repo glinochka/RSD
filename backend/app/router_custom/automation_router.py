@@ -1569,6 +1569,7 @@ def _account_response(
         last_used_at=social_account.last_used_at,
         max_daily_messages_per_account=max_daily,
         added_at=pool_account.added_at,
+        created_at=getattr(social_account, "created_at", None) or pool_account.added_at,
         last_health_check_at=social_account.last_health_check_at,
         spamblock_checked_at=getattr(social_account, "spamblock_checked_at", None),
         frozen_at=getattr(social_account, "frozen_at", None),
@@ -2086,6 +2087,12 @@ def _spamblock_check_detail(result: dict) -> str:
         return "Ограничений нет."
     if status_value == "ok":
         return "SpamBot не дал однозначный ответ."
+    if status_value == "session_busy":
+        return "Сессия уже занята другой задачей. Подождите секунду и проверьте снова."
+    if status_value == "proxy":
+        return "Прокси аккаунта не отвечает, до SpamBot не достучались."
+    if status_value == "frozen":
+        return "Заморозка: любые записи запрещены, только чтение."
     return "Не удалось проверить спамблок."
 
 
@@ -2099,7 +2106,14 @@ async def check_account_spamblock(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        result = await AccountHealthWorker().check_account_spamblock(session, automation_id, account_id)
+        try:
+            result = await AccountHealthWorker().check_account_spamblock(session, automation_id, account_id)
+        except Exception as exc:
+            logger.exception("spamblock-check crashed for account %s", account_id)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Не удалось проверить спамблок: {exc}",
+            ) from exc
         if result.get("status") == "not_found":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
         if result.get("status") == "no_session":
@@ -2108,16 +2122,23 @@ async def check_account_spamblock(
                 detail=_spamblock_check_detail(result),
             )
         classification = result.get("classification") if isinstance(result.get("classification"), dict) else {}
+        pool_account = result.get("pool_account")
+        social_account = result.get("social_account")
+        if pool_account is None or social_account is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=_spamblock_check_detail(result),
+            )
         return AccountSpamblockCheckResponse(
             account=_account_response(
-                result["pool_account"],
-                result["social_account"],
+                pool_account,
+                social_account,
                 automation.max_daily_messages_per_account,
             ),
             spamblocked=result.get("spamblocked"),
             source=result.get("source"),
             detail=_spamblock_check_detail(result),
-            restriction_kind=(classification or {}).get("kind") or getattr(result.get("social_account"), "restriction_kind", None),
+            restriction_kind=(classification or {}).get("kind") or getattr(social_account, "restriction_kind", None),
         )
 
 

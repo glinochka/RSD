@@ -101,6 +101,34 @@ const formatRelative = (value) => {
   return date.toLocaleDateString('ru-RU');
 };
 
+const uploadAgeAt = (account) => account?.created_at || account?.added_at || null;
+
+const formatUploadAge = (value) => {
+  if (!value) {
+    return '—';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) {
+    return 'только что';
+  }
+  if (minutes < 60) {
+    return `${minutes} мин`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours} ч`;
+  }
+  const days = Math.round(hours / 24);
+  if (days < 60) {
+    return `${days} дн`;
+  }
+  return date.toLocaleDateString('ru-RU');
+};
+
 const accountTitle = (account) =>
   account.display_name || (account.username ? `@${account.username}` : null) || account.phone_number || `ID ${account.id}`;
 
@@ -653,7 +681,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
         return constraintMeta(account).label;
       }
       if (sortKey === 'tracking') {
-        return account.last_used_at || '';
+        return uploadAgeAt(account) || '';
       }
       if (sortKey === 'proxy') {
         return account.proxy_label || '';
@@ -969,7 +997,11 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   <th><button type="button" onClick={() => toggleSort('status')}>Статус</button></th>
                   <th><button type="button" onClick={() => toggleSort('spamblock')}>Ограничение</button></th>
                   <th><button type="button" onClick={() => toggleSort('constraint')}>Статус C</button></th>
-                  <th><button type="button" onClick={() => toggleSort('tracking')}>Отлёжка</button></th>
+                  <th>
+                    <button type="button" onClick={() => toggleSort('tracking')} title="С момента залива сессии в пул">
+                      Отлёжка
+                    </button>
+                  </th>
                   <th><button type="button" onClick={() => toggleSort('proxy')}>Прокси</button></th>
                   <th><button type="button" onClick={() => toggleSort('sessions')}>N сессий</button></th>
                   <th>Действия</th>
@@ -1024,7 +1056,9 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                           </span>
                         </td>
                         <td><span className={`acc-chip acc-chip--${constraint.chip}`}>{constraint.label}</span></td>
-                        <td>{formatRelative(account.last_used_at)}</td>
+                        <td title={uploadAgeAt(account) ? new Date(uploadAgeAt(account)).toLocaleString('ru-RU') : undefined}>
+                          {formatUploadAge(uploadAgeAt(account))}
+                        </td>
                         <td>{account.proxy_label || 'Авто'}</td>
                         <td onClick={(event) => event.stopPropagation()}>
                           <button
@@ -1295,7 +1329,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 </ul>
               </div>
               <p className="form-hint">
-                Прокси: {drawerAccount.proxy_label || 'авто из пула'}. Отлёжка: {formatRelative(drawerAccount.last_used_at)}.
+                Прокси: {drawerAccount.proxy_label || 'авто из пула'}. В пуле: {formatUploadAge(uploadAgeAt(drawerAccount))}.
                 {drawerAccount.warmup_status && drawerAccount.warmup_status !== 'idle'
                   ? ` ${WARMUP_STATUS_LABELS[drawerAccount.warmup_status] || drawerAccount.warmup_status}.`
                   : ''}

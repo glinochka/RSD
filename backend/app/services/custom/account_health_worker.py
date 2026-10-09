@@ -355,12 +355,11 @@ class AccountHealthWorker:
                     social_account.spamblock_appealed_at = _utc_now()
                     spam_state = {**spam_state, **lifted}
         except Exception as exc:
+            logger.warning("Manual spamblock check failed for account %s: %s", account_id, exc)
             error_kind = await update_account_after_telegram_error(session, social_account, exc)
-            social_account.last_health_check_at = _utc_now()
-            social_account.updated_at = _utc_now()
-            await session.commit()
-            await session.refresh(social_account)
-            await session.refresh(pool_account)
+            pool_account, social_account = await self._reload_and_stamp_health(
+                session, pool_account, social_account, reload_first=True
+            )
             return {
                 "status": error_kind or "error",
                 "spamblocked": True if error_kind == "spamblock" else None,
@@ -370,11 +369,26 @@ class AccountHealthWorker:
                 "social_account": social_account,
             }
 
-        self._apply_spam_state(social_account, spam_state or {})
-        social_account.last_health_check_at = _utc_now()
-        await session.commit()
-        await session.refresh(social_account)
-        await session.refresh(pool_account)
+        try:
+            self._apply_spam_state(social_account, spam_state or {})
+            pool_account, social_account = await self._reload_and_stamp_health(
+                session, pool_account, social_account
+            )
+        except Exception as exc:
+            logger.exception("Could not persist spamblock check for account %s: %s", account_id, exc)
+            await session.rollback()
+            pool_account, social_account = await self._reload_and_stamp_health(
+                session, pool_account, social_account, reload_first=True, stamp=False
+            )
+            return {
+                "status": "error",
+                "spamblocked": None if spam_state is None else spam_state.get("spamblocked"),
+                "source": (spam_state or {}).get("source") or "error",
+                "detail": str(exc),
+                "classification": (spam_state or {}).get("classification"),
+                "pool_account": pool_account,
+                "social_account": social_account,
+            }
         blocked = None if spam_state is None else spam_state.get("spamblocked")
         return {
             "status": "ok",
@@ -385,6 +399,40 @@ class AccountHealthWorker:
             "pool_account": pool_account,
             "social_account": social_account,
         }
+
+    async def _reload_and_stamp_health(
+        self,
+        session: AsyncSession,
+        pool_account: PoolAccount,
+        social_account: SocialAccount,
+        *,
+        stamp: bool = True,
+        reload_first: bool = False,
+    ) -> tuple[PoolAccount, SocialAccount]:
+        """Commit health stamp without async lazy-refresh on expired rows."""
+        if reload_first:
+            try:
+                await session.refresh(social_account)
+                await session.refresh(pool_account)
+            except Exception:
+                loaded = await session.execute(
+                    select(PoolAccount, SocialAccount)
+                    .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+                    .where(
+                        PoolAccount.id == pool_account.id,
+                        SocialAccount.id == social_account.id,
+                    )
+                )
+                row = loaded.one_or_none()
+                if row:
+                    pool_account, social_account = row
+        if stamp:
+            social_account.last_health_check_at = _utc_now()
+            social_account.updated_at = _utc_now()
+            await session.commit()
+            await session.refresh(social_account)
+            await session.refresh(pool_account)
+        return pool_account, social_account
 
     async def process_accounts(
         self, automation_id: int, account_ids: list[int], *, force: bool = False
