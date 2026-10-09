@@ -740,6 +740,77 @@ a.acc-icon-btn {
   clip: rect(0 0 0 0);
 }
 
+.acc-proxy-purity {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #e8ecf0;
+  background: #fff;
+}
+
+.acc-proxy-purity-score {
+  grid-row: 1 / span 2;
+  min-width: 44px;
+  font-size: 1.6rem;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.acc-proxy-purity-copy strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.acc-proxy-purity-copy p {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: #6b7280;
+}
+
+.acc-proxy-purity-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  border-radius: 999px;
+  background: #eef1f4;
+  overflow: hidden;
+}
+
+.acc-proxy-purity-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.acc-proxy-purity--good .acc-proxy-purity-score {
+  color: #059669;
+}
+
+.acc-proxy-purity--good .acc-proxy-purity-bar span {
+  background: #10b981;
+}
+
+.acc-proxy-purity--mid .acc-proxy-purity-score {
+  color: #d97706;
+}
+
+.acc-proxy-purity--mid .acc-proxy-purity-bar span {
+  background: #f59e0b;
+}
+
+.acc-proxy-purity--bad .acc-proxy-purity-score {
+  color: #dc2626;
+}
+
+.acc-proxy-purity--bad .acc-proxy-purity-bar span {
+  background: #ef4444;
+}
+
 @media (max-width: 720px) {
   .acc-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -638,6 +638,27 @@ async def _account_country_for_pick(
     return await _dominant_account_country(session, automation_id)
 
 
+def proxy_purity_stats(
+    *,
+    accounts_with_proxy: int,
+    distribution: list[dict[str, Any]],
+) -> dict[str, int]:
+    """0–100: how little the same proxy is reused across assigned accounts."""
+    assigned = int(accounts_with_proxy or 0)
+    used = [int(item.get("account_count") or 0) for item in distribution if int(item.get("account_count") or 0) > 0]
+    unique_used = len(used)
+    peak = max(used) if used else 0
+    if assigned <= 0:
+        score = 100
+    else:
+        score = max(0, min(100, int(round(100.0 * unique_used / assigned))))
+    return {
+        "proxy_purity": score,
+        "proxy_unique_used": unique_used,
+        "proxy_peak_load": peak,
+    }
+
+
 def _best_proxy_for_account(
     rows: list[CustomProxy],
     account: SocialAccount | None,
@@ -903,12 +924,14 @@ async def proxy_settings_payload(session: AsyncSession, automation: CustomAutoma
         }
         for row in pool
     ]
-    return {
+    payload = {
         "proxy_list_text": automation.proxy_list_text or "",
         "proxy_count": len(pool),
         "accounts_with_proxy": assigned,
         "proxy_distribution": distribution,
     }
+    payload.update(proxy_purity_stats(accounts_with_proxy=assigned, distribution=distribution))
+    return payload
 
 
 async def account_proxy_picker_payload(session: AsyncSession, automation_id: int) -> dict[str, Any]:

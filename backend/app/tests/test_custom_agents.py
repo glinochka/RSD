@@ -6513,6 +6513,29 @@ class TestAccountProxies:
         assert chosen.host == "10.11.11.2"
         assert chosen.country_code is None
 
+    async def test_proxy_purity_stats_from_reuse(self):
+        from app.services.custom.proxy_service import proxy_purity_stats
+
+        empty = proxy_purity_stats(accounts_with_proxy=0, distribution=[])
+        assert empty["proxy_purity"] == 100
+        one_each = proxy_purity_stats(
+            accounts_with_proxy=5,
+            distribution=[{"account_count": 1} for _ in range(5)],
+        )
+        assert one_each["proxy_purity"] == 100
+        shared = proxy_purity_stats(
+            accounts_with_proxy=5,
+            distribution=[{"account_count": 2}, {"account_count": 3}, {"account_count": 0}],
+        )
+        assert shared["proxy_purity"] == 40
+        assert shared["proxy_unique_used"] == 2
+        assert shared["proxy_peak_load"] == 3
+        piled = proxy_purity_stats(
+            accounts_with_proxy=10,
+            distribution=[{"account_count": 10}, {"account_count": 0}],
+        )
+        assert piled["proxy_purity"] == 10
+
     async def test_settings_roundtrip_even_distribution(
         self,
         client: AsyncClient,
@@ -6541,6 +6564,9 @@ class TestAccountProxies:
         assert data["accounts_with_proxy"] == 5
         counts = sorted(item["account_count"] for item in data["proxy_distribution"])
         assert counts == [2, 3]
+        assert data["proxy_purity"] == 40
+        assert data["proxy_unique_used"] == 2
+        assert data["proxy_peak_load"] == 3
         assert "10.1.1.1:1080" in (data["proxy_list_text"] or "")
 
         automation_id = custom_automation.id

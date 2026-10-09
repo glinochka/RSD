@@ -247,6 +247,9 @@ class CustomAutomationSettingsResponse(BaseModel):
     proxy_list_text: str | None = None
     proxy_count: int = 0
     accounts_with_proxy: int = 0
+    proxy_purity: int = 100
+    proxy_unique_used: int = 0
+    proxy_peak_load: int = 0
     proxy_distribution: list[ProxyDistributionItem] = Field(default_factory=list)
     work_hour_start: int = 8
     work_hour_end: int = 20

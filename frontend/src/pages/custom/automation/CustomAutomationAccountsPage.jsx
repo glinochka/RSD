@@ -69,6 +69,12 @@ const KPI_CARDS = [
   { key: 'channel_banned', stat: 'channel_banned', label: 'Бан в каналах', tone: 'slate', icon: <Ico d="M5 15H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1m14 9h1a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1M8 20h8M9 8v8a3 3 0 0 0 6 0V8" /> },
 ];
 
+const proxyPurityTone = (score) => {
+  if (score >= 75) return 'good';
+  if (score >= 40) return 'mid';
+  return 'bad';
+};
+
 const formatRelative = (value) => {
   if (!value) {
     return '—';
@@ -202,6 +208,10 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   const [proxyCountry, setProxyCountry] = useState('');
   const [proxySaving, setProxySaving] = useState(false);
   const [proxyMessage, setProxyMessage] = useState(null);
+  const [proxyPurity, setProxyPurity] = useState(100);
+  const [proxyUniqueUsed, setProxyUniqueUsed] = useState(0);
+  const [proxyPeakLoad, setProxyPeakLoad] = useState(0);
+  const [proxyAccountsBound, setProxyAccountsBound] = useState(0);
   const [sessionItems, setSessionItems] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState(null);
@@ -302,6 +312,10 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
       .then((data) => {
         setWarmupEnabled(Boolean(data.account_warmup_enabled));
         setProxyText(data.proxy_list_text || '');
+        setProxyPurity(typeof data.proxy_purity === 'number' ? data.proxy_purity : 100);
+        setProxyUniqueUsed(data.proxy_unique_used || 0);
+        setProxyPeakLoad(data.proxy_peak_load || 0);
+        setProxyAccountsBound(data.accounts_with_proxy || 0);
       })
       .catch(() => {});
   }, [id]);
@@ -604,10 +618,15 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     setProxySaving(true);
     setProxyMessage(null);
     try {
-      await customService.updateAutomationSettings(id, {
+      const data = await customService.updateAutomationSettings(id, {
         proxy_list_text: proxyText,
         proxy_country: proxyCountry || null,
       });
+      setProxyText(data.proxy_list_text || proxyText);
+      setProxyPurity(typeof data.proxy_purity === 'number' ? data.proxy_purity : 100);
+      setProxyUniqueUsed(data.proxy_unique_used || 0);
+      setProxyPeakLoad(data.proxy_peak_load || 0);
+      setProxyAccountsBound(data.accounts_with_proxy || 0);
       await loadPoolProxies();
       setProxyMessage('Пул прокси сохранён');
     } catch (err) {
@@ -1107,8 +1126,22 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   <p className="form-hint">
                     В пуле сейчас: {poolProxies.length || 'пусто'}. Можно socks5/http, IPv4/IPv6.
                     Если поставщик пишет HTTP-порт 1xxxx для SOCKS5 — первую цифру поднимаем сами, когда без этого порт мёртвый.
-                    Автоподстановка берёт ближайшее гео по номеру аккаунта (для РФ — Финляндия, а не Индия).
+                    Новому аккаунту берём живой прокси с наименьшей загрузкой и ближайшим гео (для РФ — Финляндия, а не Индия).
                   </p>
+                  <div className={`acc-proxy-purity acc-proxy-purity--${proxyPurityTone(proxyPurity)}`}>
+                    <div className="acc-proxy-purity-score">{proxyPurity}</div>
+                    <div className="acc-proxy-purity-copy">
+                      <strong>Чистота прокси</strong>
+                      <p>
+                        {proxyAccountsBound > 0
+                          ? `${proxyUniqueUsed} разных IP на ${proxyAccountsBound} аккаунтах. Пик — ${proxyPeakLoad} на одном.`
+                          : 'Пока никто не сидит на прокси — чистота полная.'}
+                      </p>
+                    </div>
+                    <div className="acc-proxy-purity-bar" aria-hidden="true">
+                      <span style={{ width: `${Math.max(0, Math.min(100, proxyPurity))}%` }} />
+                    </div>
+                  </div>
                   {proxyMessage ? <p className="form-hint">{proxyMessage}</p> : null}
                   <div className="form-group">
                     <label htmlFor="acc-proxy-country">Страна этого списка</label>
