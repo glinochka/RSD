@@ -99,8 +99,6 @@ FLOOD_QUARANTINE_MAX_SECONDS = 24 * 60 * 60
 # ---------------------------------------------------------------------------
 ACTIVE_START_HOUR = 8
 ACTIVE_END_HOUR = 20
-FARM_EARLIEST_START = 7.0
-FARM_LATEST_END = 21.5
 
 # Target-action rest days (Monday=0): Saturday and Sunday, Moscow.
 TARGET_REST_WEEKDAYS = {5, 6}
@@ -259,13 +257,13 @@ def in_account_active_hours(
     return in_configured_work_hours(now, account_id=aid)
 
 
-def farm_overlap_active_hours(now: datetime | None = None) -> bool:
-    """True when at least some accounts may be awake."""
+def farm_overlap_active_hours(now: datetime | None = None, *, mode: dict | None = None) -> bool:
+    """True while the farm is inside the configured Moscow work window."""
     if now is None and os.environ.get("PYTEST_CURRENT_TEST"):
         return True
     from .work_mode import farm_work_overlap
 
-    return farm_work_overlap(now)
+    return farm_work_overlap(now, mode=mode)
 
 
 def account_in_target_rest_day(

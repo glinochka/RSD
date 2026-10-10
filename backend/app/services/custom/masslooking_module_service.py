@@ -15,7 +15,7 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .job_service import list_jobs
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .chat_folder_service import folder_payloads
 from .masslooking_service import normalize_story_targets
 from .account_roles import account_is_task_ready
@@ -35,6 +35,8 @@ DEFAULT_LOOK_SETTINGS: dict[str, Any] = {
     "skip_hours": 24,
     "delay_min": 2,
     "delay_max": 6,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "max_per_hour": 30,
     "respect_night_hours": True,
     "limit_rate": True,
@@ -90,6 +92,7 @@ def normalize_look_settings(raw: Any) -> dict[str, Any]:
         data["delay_min"],
         _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else 6, 6, lo=0, hi=DELAY_MAX_SECONDS),
     )
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["max_per_hour"] = _clamp_int(incoming.get("max_per_hour") if incoming.get("max_per_hour") is not None else 30, 30, lo=0, hi=500)
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     data["limit_rate"] = bool(incoming.get("limit_rate", True))

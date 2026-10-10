@@ -5,6 +5,7 @@ import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, toggleNumericId, ubtModulePath } from './customNav';
@@ -308,7 +309,7 @@ const CustomAutomationWarmupPage = () => {
         <div className="nc-split" style={{ marginTop: 14 }}>
           <div>
             <span className="nc-muted">Расписание активности</span>
-            <p className="nc-note">Москва, UTC+3. Окно фермы примерно 07:00–21:30, у каждого аккаунта свой сдвиг около 08:00–20:00. Сейчас {nowHour}.</p>
+            <p className="nc-note">Москва, UTC+3. Окно фермы по умолчанию 08:00–20:00, ночью действий нет. Сейчас {nowHour}.</p>
             <p className="nc-muted" style={{ marginTop: 8 }}>Случайные перерывы всегда включены: 15–30 мин после сессии, 20–40 мин в первую неделю. Диалоги с доверенными — раз в 1–2 часа, у новых 2–4 часа.</p>
           </div>
           <div>
@@ -362,6 +363,7 @@ const CustomAutomationWarmupPage = () => {
         </div>
         <div style={{ marginTop: 8 }}>
           <FeatureToggle compact title="Вступать в группы" description="Только цели из папок ниже. Случайные публичные чаты сами не ищем." checked={Boolean(settings.do_joins)} onChange={(value) => persistFlag({ do_joins: value })} />
+          {settings.do_joins ? <UbtJoinDelay settings={settings} onPatch={patch} /> : null}
         </div>
         <button type="button" className="acc-btn acc-btn--ghost" style={{ marginTop: 12 }} onClick={() => setFineOpen((prev) => !prev)}>{fineOpen ? 'Скрыть тонкую настройку' : 'Тонкая настройка действий'}</button>
         {fineOpen ? (

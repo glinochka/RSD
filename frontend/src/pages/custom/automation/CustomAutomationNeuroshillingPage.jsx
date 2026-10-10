@@ -5,6 +5,7 @@ import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -402,6 +403,7 @@ const CustomAutomationNeuroshillingPage = () => {
           <Stepper value={settings.delay_max} min={settings.delay_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_max: value })} />
           <span className="nc-muted">с</span>
         </div>
+        <UbtJoinDelay settings={settings} onPatch={patch} />
       </div>
 
       <div className="nc-card">

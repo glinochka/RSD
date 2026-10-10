@@ -22,7 +22,7 @@ from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
 from .discussion_service import DEFAULT_DISCUSSION_PROMPT
 from .job_service import list_jobs
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .lead_keywords import normalize_lead_keywords
 from .prompt_service import activate_prompt, create_named_prompt, list_prompts
 from .account_roles import account_is_task_ready
@@ -45,6 +45,8 @@ DEFAULT_CHAT_SETTINGS: dict[str, Any] = {
     "respect_night_hours": True,
     "delay_before_min": 42,
     "delay_before_max": 78,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "prompt_id": None,
     "require_proxy": False,
     "hide_in_work": False,
@@ -109,6 +111,7 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
         data["delay_before_min"],
         _clamp_int(incoming.get("delay_before_max") if incoming.get("delay_before_max") is not None else 78, 78, lo=0, hi=DELAY_MAX_SECONDS),
     )
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     try:
         prompt_id = incoming.get("prompt_id")
         data["prompt_id"] = int(prompt_id) if prompt_id else None

@@ -16,8 +16,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-FARM_EARLIEST_START = 7.0
-FARM_LATEST_END = 21.5
+# Keep-alive and writes stay inside the configured window (default 08–20 Moscow).
+# Stagger is 0–15 min after opening; nothing runs after closing hour.
 
 WORK_MODE_KEY = "work_mode"
 DEFAULT_HOUR_START = 8
@@ -147,13 +147,11 @@ def in_configured_work_hours(
 
 
 def farm_work_overlap(now: datetime | None = None, *, mode: dict[str, Any] | None = None) -> bool:
+    """True in the configured Moscow hour window. Weekends still overlap by hour;
+    night (after closing hour until next open) is always off."""
     data = normalize_work_mode(mode or current_work_mode())
-    if moscow_now(now).weekday() not in data["weekdays"]:
-        return False
     start, end = work_span_hours(data)
-    outer_start = min(FARM_EARLIEST_START, start)
-    outer_end = max(FARM_LATEST_END, end if end > start else 24.0)
-    return _in_hour_span(_hour_float(moscow_now(now)), outer_start, outer_end)
+    return _in_hour_span(_hour_float(moscow_now(now)), start, min(end, 24.0) if end > start else 24.0)
 
 
 def _stable_rng(account_id: int, day_key: str) -> random.Random:

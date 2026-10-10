@@ -364,7 +364,7 @@ const CustomAutomationDmBroadcastsPage = () => {
           <UbtCheck checked={Boolean(settings.skip_sent)} onChange={(value) => persistFlag({ skip_sent: value })}>Пропускать уже отправленные</UbtCheck>
           <UbtCheck checked={Boolean(settings.skip_errors)} onChange={(value) => persistFlag({ skip_errors: value })}>Пропускать ошибки</UbtCheck>
           <UbtCheck checked={Boolean(settings.limit_rate)} onChange={(value) => persistFlag({ limit_rate: value })}>Учитывать лимиты аккаунта</UbtCheck>
-          <UbtCheck checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })}>Ночной простой (21:30–07:00 МСК)</UbtCheck>
+          <UbtCheck checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })}>Ночной простой (вне окна фермы, по умолчанию 20:00–08:00 МСК)</UbtCheck>
         </div>
         {issues.length ? (
           <ul className="nc-issues">

@@ -1288,13 +1288,19 @@ async def join_pending_chats(
     from .chat_addlist_service import ensure_task_joins_for_automation, join_pending_addlists
 
     from .job_service import JOIN_JOB_TYPES, list_active_job_types
+    from .work_mode import work_mode_from_automation
+
+    automation = await session.get(CustomAutomation, automation_id)
+    mode = work_mode_from_automation(automation)
+    if rate_limit and not farm_overlap_active_hours(mode=mode):
+        return []
 
     active = await list_active_job_types(automation_id)
     need_task_joins = bool(active & JOIN_JOB_TYPES)
     if need_task_joins:
         await ensure_task_joins_for_automation(session, automation_id)
         await join_pending_addlists(session, automation_id)
-        if rate_limit and not farm_overlap_active_hours():
+        if rate_limit and not farm_overlap_active_hours(mode=mode):
             return []
         seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
         return [seed] if seed else []
@@ -1315,7 +1321,7 @@ async def join_pending_chats(
             return [seed] if seed else []
     await recover_stale_joining_memberships(session, automation_id)
     await process_due_pending_actions(session, automation_id)
-    if rate_limit and not farm_overlap_active_hours():
+    if rate_limit and not farm_overlap_active_hours(mode=mode):
         return []
     pairs = max_pairs if max_pairs is not None else (MAX_JOINS_PER_TICK if rate_limit else 10_000)
     from .rotation_service import list_alive_session_accounts

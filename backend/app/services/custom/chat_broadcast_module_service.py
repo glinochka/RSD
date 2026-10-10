@@ -20,7 +20,7 @@ from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
 from .job_service import list_jobs
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
@@ -44,6 +44,8 @@ DEFAULT_BC_SETTINGS: dict[str, Any] = {
     "max_messages": 100,
     "delay_group_min": 30,
     "delay_group_max": 90,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "delay_msg_min": 3,
     "delay_msg_max": 8,
     "errors_until_stop": 10,
@@ -128,6 +130,7 @@ def normalize_bc_settings(raw: Any) -> dict[str, Any]:
     data["delay_group_max"] = max(data["delay_group_min"], _clamp_int(incoming.get("delay_group_max") if incoming.get("delay_group_max") is not None else 90, 90, lo=0, hi=DELAY_MAX_SECONDS))
     data["delay_msg_min"] = _clamp_int(incoming.get("delay_msg_min") if incoming.get("delay_msg_min") is not None else 3, 3, lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_msg_max"] = max(data["delay_msg_min"], _clamp_int(incoming.get("delay_msg_max") if incoming.get("delay_msg_max") is not None else 8, 8, lo=0, hi=DELAY_MAX_SECONDS))
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["errors_until_stop"] = _clamp_int(incoming.get("errors_until_stop") or 10, 10, lo=1, hi=50)
     days: list[int] = []
     for item in incoming.get("weekdays") or []:

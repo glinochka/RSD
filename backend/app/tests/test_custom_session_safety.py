@@ -622,9 +622,10 @@ def test_active_hours_are_jittered_per_account():
     assert in_account_active_hours(night, left) is False
     start, _end = account_active_window(left)
     before_personal = datetime(2026, 9, 21, int(start), 0, tzinfo=moscow) - timedelta(minutes=20)
-    if before_personal.hour >= 7:
-        assert in_account_active_hours(before_personal, left) is False
-        assert farm_overlap_active_hours(early) is True
+    assert in_account_active_hours(before_personal, left) is False
+    assert farm_overlap_active_hours(early) is False
+    assert farm_overlap_active_hours(noon) is True
+    assert farm_overlap_active_hours(night) is False
 
     uploaded = SimpleNamespace(id=5, created_at=datetime(2026, 9, 21, 10, 0, 0))
     assert profile_edit_allowed(uploaded, now=datetime(2026, 9, 21, 18, 0, 0)) is False

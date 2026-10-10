@@ -5,6 +5,7 @@ import CustomFileButton from '../../../components/custom/CustomFileButton';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -459,6 +460,7 @@ const CustomAutomationParserPage = () => {
               <Stepper value={settings.delay_user} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_user: value })} />
               <span className="nc-muted">с</span>
             </div>
+            <UbtJoinDelay settings={settings} onPatch={patch} />
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">
@@ -470,7 +472,7 @@ const CustomAutomationParserPage = () => {
           <div className="nc-setting">
             <div className="nc-setting-copy">
               <strong>Ночной простой</strong>
-              <span>С 21:30 до 07:00 по Москве парсер не идёт.</span>
+              <span>Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) парсер не идёт.</span>
             </div>
             <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
           </div>

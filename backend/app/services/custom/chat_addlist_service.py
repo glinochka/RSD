@@ -106,6 +106,34 @@ def _log_job_type(task_key: str) -> str:
         "masslooking": "masslooking",
     }.get(task_key, "join")
 
+
+_TASK_SETTINGS_KEY = {
+    "neurocommenting": "neurocommenting",
+    "neurochatting": "neurochatting",
+    "neuroshilling": "neuroshilling",
+    "chat_broadcasts": "chat_broadcasts",
+    "parser": "parser",
+    "masslooking": "masslooking",
+    "warmup": "warmup",
+}
+
+
+def module_settings_for_task(automation: CustomAutomation | None, task_key: str) -> dict[str, Any]:
+    blob = getattr(automation, "module_settings", None) or {}
+    key = _TASK_SETTINGS_KEY.get(task_key, task_key)
+    data = blob.get(key) if isinstance(blob, dict) else None
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def task_join_delay_seconds(automation: CustomAutomation | None, task_key: str) -> float:
+    """Pause between task joins from join_delay_min/max — not comment delays."""
+    import random
+
+    from .module_delays import clamp_join_delay_pair
+
+    lo, hi = clamp_join_delay_pair(module_settings_for_task(automation, task_key))
+    return float(random.uniform(lo, hi))
+
 _ADDLIST_RE = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/addlist/([A-Za-z0-9_-]{8,64})",
     re.IGNORECASE,
@@ -472,7 +500,7 @@ async def ensure_task_join_plan(
     account_ids: list[int],
     chat_ids: list[int],
 ) -> dict[str, Any]:
-    """Split the attached folder into per-account pools, export an addlist per pool, join via addlist."""
+    """Host joins missing chats one-by-one, grows a shareable folder, workers join via addlist."""
     alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
     workers = [aid for aid in account_ids if aid in alive]
     chats = (
@@ -494,6 +522,8 @@ async def ensure_task_join_plan(
     await _upsert_actor_memberships(session, automation.id, assignment)
     stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
     stored_folders = (stored_task or {}).get("folders") if isinstance(stored_task, dict) else {}
+    if not isinstance(stored_folders, dict):
+        stored_folders = {}
     premium_cache = dict((stored_task or {}).get("premium") or {})
     pending_by_account: dict[int, list[int]] = {}
     union_pending: list[int] = []
@@ -528,9 +558,15 @@ async def ensure_task_join_plan(
             needed_ids=list(dict.fromkeys(union_pending)),
             folder_slugs=folder_slugs,
             job_type=job_type,
-            automation_id=automation.id,
+            automation=automation,
+            task_key=task_key,
+            stored_folders=stored_folders,
         )
     folders: dict[str, list[dict[str, Any]]] = {}
+    from .chat_membership_service import apply_account_join_cooldown
+    from .telegram_account_client import TelegramAccountClient
+    from .job_service import actor_label, log_active
+
     for account_id, assigned in assignment.items():
         account = alive.get(account_id)
         pending = list(pending_by_account.get(account_id) or [])
@@ -539,6 +575,9 @@ async def ensure_task_join_plan(
             folders[str(account_id)] = []
             continue
         reusable, covered = _reusable_folders(previous_folders, assigned)
+        if host and account.id == host.id:
+            folders[str(account_id)] = stored_folders.get(str(host.id)) or reusable or previous_folders
+            continue
         if not pending:
             folders[str(account_id)] = reusable or previous_folders
             continue
@@ -546,9 +585,7 @@ async def ensure_task_join_plan(
             folders[str(account_id)] = reusable or previous_folders
             continue
         try:
-            from .telegram_account_client import TelegramAccountClient
-            from .job_service import actor_label, log_active
-
+            delay = task_join_delay_seconds(automation, task_key)
             own_slugs = list(dict.fromkeys(
                 str(row.get("slug") or "") for row in reusable if row.get("slug")
             ))
@@ -565,7 +602,33 @@ async def ensure_task_join_plan(
                 joined += await _mark_joined(
                     session, account_id, [cid for cid in pending if cid in covered]
                 )
+                await apply_account_join_cooldown(
+                    session, automation.id, account_id, wait_seconds=delay
+                )
                 pending = [cid for cid in pending if cid not in covered]
+                folders[str(account_id)] = reusable
+                continue
+            host_row = _latest_folder_row(stored_folders.get(str(host.id))) if host else None
+            if pending and host_row and host_row.get("slug"):
+                host_cover = set(_int_list(host_row.get("chat_ids")))
+                hit = [cid for cid in pending if cid in host_cover]
+                if hit:
+                    async with TelegramAccountClient.for_account(account) as client:
+                        await _join_addlist(client, str(host_row["slug"]))
+                    joined += await _mark_joined(session, account_id, hit)
+                    reusable = [host_row]
+                    await log_active(
+                        automation.id,
+                        job_type,
+                        f"{actor_label(account)} вступил по addlist хоста "
+                        f"t.me/addlist/{host_row['slug']} "
+                        f"({len(hit)} чатов одним запросом)",
+                    )
+                    await apply_account_join_cooldown(
+                        session, automation.id, account_id, wait_seconds=delay
+                    )
+                    folders[str(account_id)] = reusable
+                    continue
             if not pending:
                 folders[str(account_id)] = reusable
                 continue
@@ -588,11 +651,14 @@ async def ensure_task_join_plan(
                 worker=account,
                 chats=[chat_map[cid] for cid in exportable if cid in chat_map],
                 batches=batches,
+                previous=stored_folders.get(str(host.id)) or reusable,
+                chat_map=chat_map,
             )
             created_folders += len(new_rows)
             exported_ids = [cid for row in new_rows for cid in _int_list(row.get("chat_ids"))]
             joined += await _mark_joined(session, account_id, exported_ids)
             if new_rows:
+                stored_folders[str(host.id)] = new_rows
                 slugs = [str(row.get("slug") or "") for row in new_rows if row.get("slug")]
                 await log_active(
                     automation.id,
@@ -601,12 +667,17 @@ async def ensure_task_join_plan(
                     f"({len(exported_ids)} чатов): "
                     + ", ".join(f"t.me/addlist/{slug}" for slug in slugs),
                 )
-            folders[str(account_id)] = reusable + new_rows
+                await apply_account_join_cooldown(
+                    session, automation.id, account_id, wait_seconds=delay
+                )
+            folders[str(account_id)] = new_rows or reusable
         except Exception as exc:
             if _is_flood_error(exc):
                 _park_join_flood(account, exc)
             logger.warning("Addlist join failed task=%s account=%s: %s", task_key, account_id, exc)
             folders[str(account_id)] = reusable
+    if host and stored_folders.get(str(host.id)):
+        folders[str(host.id)] = stored_folders[str(host.id)]
     plans[task_key] = {
         "assignments": {str(key): value for key, value in assignment.items()},
         "folders": folders,
@@ -627,21 +698,39 @@ async def _bootstrap_host_for_export(
     needed_ids: list[int],
     folder_slugs: dict[int, str],
     job_type: str,
-    automation_id: int,
+    automation: CustomAutomation,
+    task_key: str,
+    stored_folders: dict[str, Any],
 ) -> int:
-    """Host must already sit in chats to ExportChatlistInvite. Workers never JoinChannel here.
+    """Host joins chats it is not in, then grows a shareable folder for workers.
 
-    Prefer the original folder addlist (one request). Sequential JoinChannel is host-only
-    and only for chats that have no folder addlist yet (Excel links).
+    Telegram cannot mint an addlist from vacuum: the host must already sit in
+    the peers. After each JoinChannel we UpdateDialogFilter + export/edit the
+    invite so the next account joins the grown folder instead of starting over.
     """
     from .telegram_account_client import TelegramAccountClient
     from .job_service import actor_label, chat_label, log_active
+    from .account_pacing import account_membership_should_idle, farm_overlap_active_hours
+    from .work_mode import work_mode_from_automation
+    from .chat_membership_service import apply_account_join_cooldown
 
+    automation_id = automation.id
     if await _skip_join_for_flood(session, host):
+        return 0
+    if account_membership_should_idle(host):
+        return 0
+    if not farm_overlap_active_hours(mode=work_mode_from_automation(automation)):
         return 0
     marked = 0
     missing = [cid for cid in needed_ids if not await account_is_joined(session, cid, host.id)]
     if not missing:
+        await _grow_host_folder_after_join(
+            session,
+            host=host,
+            chat_map=chat_map,
+            needed_ids=needed_ids,
+            stored_folders=stored_folders,
+        )
         return 0
     slugs = list(dict.fromkeys(folder_slugs[cid] for cid in missing if folder_slugs.get(cid)))
     if slugs:
@@ -664,12 +753,32 @@ async def _bootstrap_host_for_export(
                 _park_join_flood(host, exc)
                 return marked
             logger.warning("Host folder addlist join failed account=%s: %s", host.id, exc)
+        if marked:
+            await _grow_host_folder_after_join(
+                session,
+                host=host,
+                chat_map=chat_map,
+                needed_ids=needed_ids,
+                stored_folders=stored_folders,
+            )
+            delay = task_join_delay_seconds(automation, task_key)
+            await apply_account_join_cooldown(
+                session, automation_id, host.id, wait_seconds=delay
+            )
+            return marked
     remaining = [
         cid
         for cid in missing
-        if not folder_slugs.get(cid) and not await account_is_joined(session, cid, host.id)
+        if not await account_is_joined(session, cid, host.id)
     ]
     if not remaining:
+        await _grow_host_folder_after_join(
+            session,
+            host=host,
+            chat_map=chat_map,
+            needed_ids=needed_ids,
+            stored_folders=stored_folders,
+        )
         return marked
     from .chat_join_service import _try_join_chat
 
@@ -691,10 +800,25 @@ async def _bootstrap_host_for_export(
                 session, host.id, [chat_id], automation_id=automation_id
             )
             joined_now += 1
+            grown = await _grow_host_folder_after_join(
+                session,
+                host=host,
+                chat_map=chat_map,
+                needed_ids=needed_ids,
+                stored_folders=stored_folders,
+            )
+            delay = task_join_delay_seconds(automation, task_key)
+            await apply_account_join_cooldown(
+                session, automation_id, host.id, wait_seconds=delay
+            )
+            extra = ""
+            if grown and grown.get("slug"):
+                extra = f", папка обновлена t.me/addlist/{grown['slug']} ({len(_int_list(grown.get('chat_ids')))} чатов)"
             await log_active(
                 automation_id,
                 job_type,
-                f"{actor_label(host)} вступил в {chat_label(chat)} (хост для экспорта addlist пула)",
+                f"{actor_label(host)} вступил в {chat_label(chat)} "
+                f"(хост, пауза {int(delay)}с{extra})",
             )
         except Exception as exc:
             if _is_flood_error(exc):
@@ -702,6 +826,67 @@ async def _bootstrap_host_for_export(
                 break
             logger.debug("Host bootstrap join skipped chat=%s: %s", chat_id, exc)
     return marked
+
+
+async def _grow_host_folder_after_join(
+    session: AsyncSession,
+    *,
+    host: SocialAccount,
+    chat_map: dict[int, ChatTarget],
+    needed_ids: list[int],
+    stored_folders: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Rebuild the host shareable folder from chats it already sits in."""
+    from .telegram_account_client import TelegramAccountClient
+
+    joined_ids = [
+        cid for cid in dict.fromkeys(needed_ids)
+        if cid in chat_map and await account_is_joined(session, cid, host.id)
+    ]
+    if not joined_ids:
+        return None
+    previous = _latest_folder_row(stored_folders.get(str(host.id)))
+    joined_ids = merge_folder_chat_ids(previous, joined_ids)
+    premium = await _account_is_premium(host)
+    per_folder, _cap = addlist_capacity(premium=premium)
+    chunk = [cid for cid in joined_ids[:per_folder] if cid in chat_map]
+    chats = [chat_map[cid] for cid in chunk]
+    try:
+        async with TelegramAccountClient.for_account(host) as client:
+            slug, filter_id = await _upsert_shareable_folder(
+                client,
+                chats,
+                filter_id=int(previous["filter_id"]) if previous and previous.get("filter_id") else None,
+                slug=str(previous["slug"]) if previous and previous.get("slug") else None,
+            )
+    except Exception as exc:
+        logger.warning("Host folder grow failed account=%s: %s", host.id, exc)
+        return None
+    if not slug:
+        return None
+    row = {
+        "slug": slug,
+        "url": addlist_url(slug),
+        "filter_id": filter_id,
+        "chat_ids": chunk,
+    }
+    for chat in chats:
+        set_chat_addlist_slug(chat, slug)
+    stored_folders[str(host.id)] = [row]
+    return row
+
+
+def _latest_folder_row(stored: Any) -> dict[str, Any] | None:
+    rows = stored if isinstance(stored, list) else []
+    for row in reversed(rows):
+        if isinstance(row, dict) and row.get("slug"):
+            return row
+    return None
+
+
+def merge_folder_chat_ids(previous: dict[str, Any] | None, extra: list[int]) -> list[int]:
+    """Grow a folder's chat set: keep what was already exported, append new joins."""
+    return list(dict.fromkeys(_int_list((previous or {}).get("chat_ids")) + list(extra or [])))
 
 
 async def _upsert_actor_memberships(
@@ -834,34 +1019,43 @@ async def _export_and_join_batches(
     worker: SocialAccount,
     chats: list[ChatTarget],
     batches: list[list[int]],
+    previous: list[dict[str, Any]] | None = None,
+    chat_map: dict[int, ChatTarget] | None = None,
 ) -> list[dict[str, Any]]:
     from .telegram_account_client import TelegramAccountClient
 
-    by_id = {chat.id: chat for chat in chats}
+    by_id = {**(chat_map or {}), **{chat.id: chat for chat in chats}}
     rows: list[dict[str, Any]] = []
     if not host:
         host = worker
+    prior = _latest_folder_row(previous)
     async with TelegramAccountClient.for_account(host) as host_client:
         for chunk in batches:
-            subset = [by_id[cid] for cid in chunk if cid in by_id]
+            union_ids = merge_folder_chat_ids(prior, chunk)
+            subset = [by_id[cid] for cid in union_ids if cid in by_id]
             if not subset:
                 continue
-            slug, filter_id = await _export_folder_for_chats(host_client, subset)
+            slug, filter_id = await _upsert_shareable_folder(
+                host_client,
+                subset,
+                filter_id=int(prior["filter_id"]) if prior and prior.get("filter_id") else None,
+                slug=str(prior["slug"]) if prior and prior.get("slug") else None,
+            )
             if not slug:
                 continue
             if host.id != worker.id:
                 async with TelegramAccountClient.for_account(worker) as worker_client:
                     await _join_addlist(worker_client, slug)
-            else:
-                await _join_addlist(host_client, slug)
-            rows.append(
-                {
-                    "slug": slug,
-                    "url": addlist_url(slug),
-                    "filter_id": filter_id,
-                    "chat_ids": [chat.id for chat in subset],
-                }
-            )
+            row = {
+                "slug": slug,
+                "url": addlist_url(slug),
+                "filter_id": filter_id,
+                "chat_ids": [chat.id for chat in subset],
+            }
+            rows.append(row)
+            prior = row
+            for chat in subset:
+                set_chat_addlist_slug(chat, slug)
     return rows
 
 
@@ -879,7 +1073,14 @@ async def _resolve_input_peers(client: Any, chats: list[ChatTarget]) -> list[Any
     return peers
 
 
-async def _export_folder_for_chats(client: Any, chats: list[ChatTarget]) -> tuple[str | None, int | None]:
+async def _upsert_shareable_folder(
+    client: Any,
+    chats: list[ChatTarget],
+    *,
+    filter_id: int | None = None,
+    slug: str | None = None,
+) -> tuple[str | None, int | None]:
+    """Create or grow a Telegram folder + addlist. Host must already be in `chats`."""
     from telethon.tl import types
     from telethon.tl.functions.chatlists import ExportChatlistInviteRequest
     from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
@@ -891,23 +1092,39 @@ async def _export_folder_for_chats(client: Any, chats: list[ChatTarget]) -> tupl
     filters = await telethon(GetDialogFiltersRequest())
     existing = list(getattr(filters, "filters", None) or [])
     used = {int(getattr(item, "id", 0) or 0) for item in existing}
-    filter_id = 2
-    while filter_id in used:
-        filter_id += 1
     title = f"UBT {chats[0].id}"[:12]
-    dialog_filter = _build_dialog_filter(filter_id, title, peers)
-    await telethon(UpdateDialogFilterRequest(id=filter_id, filter=dialog_filter))
+    if filter_id and filter_id in used:
+        chosen = int(filter_id)
+    else:
+        chosen = 2
+        while chosen in used:
+            chosen += 1
+    dialog_filter = _build_dialog_filter(chosen, title, peers)
+    await telethon(UpdateDialogFilterRequest(id=chosen, filter=dialog_filter))
+    chatlist = types.InputChatlistDialogFilter(filter_id=chosen)
+    if slug:
+        try:
+            from telethon.tl.functions.chatlists import EditExportedInviteRequest
+
+            edited = await telethon(
+                EditExportedInviteRequest(chatlist=chatlist, slug=slug, peers=peers, title=title)
+            )
+            invite = getattr(edited, "invite", edited)
+            url = str(getattr(invite, "url", "") or "")
+            kept = parse_addlist_slug(url) or slug
+            return kept, chosen
+        except Exception as exc:
+            logger.debug("EditExportedInvite failed slug=%s: %s", slug, exc)
     exported = await telethon(
-        ExportChatlistInviteRequest(
-            chatlist=types.InputChatlistDialogFilter(filter_id=filter_id),
-            title=title,
-            peers=peers,
-        )
+        ExportChatlistInviteRequest(chatlist=chatlist, title=title, peers=peers)
     )
     invite = getattr(exported, "invite", exported)
     url = str(getattr(invite, "url", "") or "")
-    slug = parse_addlist_slug(url)
-    return slug, filter_id
+    return parse_addlist_slug(url), chosen
+
+
+async def _export_folder_for_chats(client: Any, chats: list[ChatTarget]) -> tuple[str | None, int | None]:
+    return await _upsert_shareable_folder(client, chats)
 
 
 def _build_dialog_filter(filter_id: int, title: str, peers: list[Any]) -> Any:
@@ -952,33 +1169,43 @@ async def join_pending_addlists(session: AsyncSession, automation_id: int) -> di
     joined = 0
     alive = {account.id: account for account in await list_alive_session_accounts(session, automation_id)}
     from .telegram_account_client import TelegramAccountClient
+    from .chat_membership_service import apply_account_join_cooldown
 
-    for spec in plans.values():
+    for task_key, spec in plans.items():
         if not isinstance(spec, dict):
             continue
         folders = spec.get("folders") or {}
+        host_id = spec.get("host_account_id")
         for account_key, rows in folders.items():
             account = alive.get(int(account_key))
             if not account or not rows:
                 continue
+            if host_id and int(account_key) == int(host_id):
+                continue
             if await _skip_join_for_flood(session, account):
+                continue
+            row = _latest_folder_row(rows)
+            slug = str((row or {}).get("slug") or "")
+            if not slug:
                 continue
             try:
                 async with TelegramAccountClient.for_account(account) as client:
-                    for row in rows:
-                        slug = str(row.get("slug") or "")
-                        if not slug:
-                            continue
-                        await _join_addlist(client, slug)
-                        for chat_id in _int_list(row.get("chat_ids")):
-                            membership = await get_membership(session, chat_id, account.id)
-                            if membership and membership.join_status != ChatJoinStatus.JOINED.value:
-                                membership.join_status = ChatJoinStatus.JOINED.value
-                                membership.joined_at = _utc_now()
-                                membership.last_join_error = None
-                                membership.next_join_attempt_at = None
-                                membership.updated_at = _utc_now()
-                                joined += 1
+                    await _join_addlist(client, slug)
+                marked = 0
+                for chat_id in _int_list((row or {}).get("chat_ids")):
+                    membership = await get_membership(session, chat_id, account.id)
+                    if membership and membership.join_status != ChatJoinStatus.JOINED.value:
+                        membership.join_status = ChatJoinStatus.JOINED.value
+                        membership.joined_at = _utc_now()
+                        membership.last_join_error = None
+                        membership.next_join_attempt_at = None
+                        membership.updated_at = _utc_now()
+                        marked += 1
+                joined += marked
+                delay = task_join_delay_seconds(automation, str(task_key))
+                await apply_account_join_cooldown(
+                    session, automation_id, account.id, wait_seconds=delay
+                )
             except Exception as exc:
                 if _is_flood_error(exc):
                     _park_join_flood(account, exc)

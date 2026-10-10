@@ -17,7 +17,7 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .account_roles import account_is_task_ready
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .chat_addlist_service import import_chat_links
 from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
@@ -47,6 +47,8 @@ DEFAULT_SHILL_SETTINGS: dict[str, Any] = {
     "hide_in_work": False,
     "delay_min": int(REPLY_DELAY_MIN_SECONDS),
     "delay_max": int(REPLY_DELAY_MAX_SECONDS),
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "prompt_id": None,
     "blacklisted_account_ids": [],
     "presets": [],
@@ -95,6 +97,7 @@ def normalize_shill_settings(raw: Any) -> dict[str, Any]:
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
     data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else int(REPLY_DELAY_MIN_SECONDS), int(REPLY_DELAY_MIN_SECONDS), lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_max"] = max(data["delay_min"], _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else int(REPLY_DELAY_MAX_SECONDS), int(REPLY_DELAY_MAX_SECONDS), lo=0, hi=DELAY_MAX_SECONDS))
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     try:
         prompt_id = incoming.get("prompt_id")
         data["prompt_id"] = int(prompt_id) if prompt_id else None

@@ -5,6 +5,7 @@ import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -405,7 +406,7 @@ const CustomAutomationNeurochattingPage = () => {
         <label className="nc-muted" style={{ display: 'block', marginTop: 14 }}>Отвечать только если...</label>
         <textarea className="nc-area" style={{ marginTop: 8 }} value={settings.reply_condition || ''} onChange={(event) => patch({ reply_condition: event.target.value })} placeholder="Например: человек задаёт вопрос по теме чата. На рекламу и объявления не отвечать." />
         <div style={{ marginTop: 14 }}>
-          <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве ответы не отправляются." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
+          <FeatureToggle compact title="Ночной простой" description="Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) ответы не отправляются — как будто аккаунт спит." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>
         <div className="nc-slider" style={{ marginTop: 16 }}>
           <span className="nc-muted">Контекст разговора: {settings.context_depth === 0 ? 'без контекста' : `${settings.context_depth} сообщений`}</span>
@@ -431,6 +432,7 @@ const CustomAutomationNeurochattingPage = () => {
           <span className="nc-muted">сек</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Не отвечаем на слишком свежие сообщения — антибот-пауза. FloodWait Telegram обрабатывается сам.</p>
+        <UbtJoinDelay settings={settings} onPatch={patch} />
       </div>
 
       <div className="nc-card">

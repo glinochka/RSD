@@ -5,6 +5,7 @@ import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -374,7 +375,7 @@ const CustomAutomationNeurocommentingPage = () => {
           </div>
         </div>
         <div style={{ marginTop: 14 }}>
-          <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве комментарии не отправляются." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
+          <FeatureToggle compact title="Ночной простой" description="Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) комментарии не отправляются — как будто аккаунт спит." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>
       </div>
 
@@ -395,6 +396,7 @@ const CustomAutomationNeurocommentingPage = () => {
           <span className="nc-muted">сек</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Это антибот-пауза после публикации поста. FloodWait Telegram обрабатывается сам: короткие ждут на месте, длинные откладывают задачу.</p>
+        <UbtJoinDelay settings={settings} onPatch={patch} />
       </div>
 
       <div className="nc-card">

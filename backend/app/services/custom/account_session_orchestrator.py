@@ -15,10 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
-from .account_pacing import account_is_intercept, account_may_keep_alive
+from .account_pacing import account_is_intercept, account_may_keep_alive, farm_overlap_active_hours
 from .account_roles import account_is_live
 from .telegram_account_client import TelegramAccountClient
-from .work_mode import apply_work_mode, in_configured_work_hours, in_daily_idle_gap, reset_work_mode
+from .work_mode import (
+    apply_work_mode,
+    in_configured_work_hours,
+    in_daily_idle_gap,
+    reset_work_mode,
+    work_mode_from_automation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -225,8 +231,13 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             token = apply_work_mode(automation)
             accounts = await _load_accounts(session, automation_id)
             streams = _enabled_streams(automation)
-        from .job_service import JOIN_JOB_TYPES, STREAM_JOB_TYPES, list_active_job_types
+            asleep = not farm_overlap_active_hours(mode=work_mode_from_automation(automation))
+        from .job_service import STREAM_JOB_TYPES, list_active_job_types
 
+        hub = _hubs.setdefault(automation_id, AccountSessionHub(automation_id))
+        if asleep:
+            sync = await hub.sync(accounts)
+            return {"status": "sleeping", "reason": "night", **sync}
         active = await list_active_job_types(automation_id)
         gated: list[tuple[str, StreamFn]] = []
         for name, fn in streams:
@@ -238,7 +249,6 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
                 continue
             gated.append((name, fn))
         streams = gated
-        hub = _hubs.setdefault(automation_id, AccountSessionHub(automation_id))
         sync = await hub.sync(accounts)
         try:
             from .account_session_guard_service import maybe_guard_hub_clients

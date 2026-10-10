@@ -23,7 +23,7 @@ from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .job_service import list_jobs
 from .lead_keywords import normalize_lead_keywords
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .neurocommenting_service import (
     DEFAULT_NEUROCOMMENTING_PROMPT,
     POST_COMMENT_DELAY_MAX_SECONDS,
@@ -45,6 +45,8 @@ DEFAULT_NC_SETTINGS: dict[str, Any] = {
     "max_per_chat": 10,
     "delay_before_min": POST_COMMENT_DELAY_MIN_SECONDS,
     "delay_before_max": POST_COMMENT_DELAY_MAX_SECONDS,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "respect_night_hours": True,
     "prompt_id": None,
     "require_proxy": False,
@@ -106,6 +108,7 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
         data["delay_before_max"] = max(data["delay_before_min"], min(DELAY_MAX_SECONDS, int(incoming.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)))
     except (TypeError, ValueError):
         data["delay_before_max"] = max(data["delay_before_min"], POST_COMMENT_DELAY_MAX_SECONDS)
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     try:
         prompt_id = incoming.get("prompt_id")

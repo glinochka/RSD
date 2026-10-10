@@ -24,6 +24,7 @@ from .account_warmup_service import (
 from .chat_addlist_service import import_chat_links
 from .chat_folder_service import folder_payloads
 from .job_service import list_jobs
+from .module_delays import JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .proxy_service import proxy_label
 from .rotation_service import current_daily_messages_sent
 
@@ -40,6 +41,8 @@ DEFAULT_WARMUP_SETTINGS: dict[str, Any] = {
     "do_stories": True,
     "do_comment_contacts": True,
     "do_joins": True,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "session_minutes": 0,
     "require_proxy": False,
     "hide_in_work": False,
@@ -104,6 +107,7 @@ def normalize_warmup_settings(raw: Any) -> dict[str, Any]:
     data["do_stories"] = bool(incoming.get("do_stories", True))
     data["do_comment_contacts"] = bool(incoming.get("do_comment_contacts", True))
     data["do_joins"] = bool(incoming.get("do_joins", True))
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["session_minutes"] = _clamp_int(incoming.get("session_minutes") if incoming.get("session_minutes") is not None else 0, 0, lo=0, hi=15)
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))

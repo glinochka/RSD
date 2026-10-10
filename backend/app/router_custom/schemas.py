@@ -966,6 +966,8 @@ class NeurocommentingSettings(BaseModel):
     max_per_chat: int = 10
     delay_before_min: int = 180
     delay_before_max: int = 240
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     respect_night_hours: bool = True
     prompt_id: Optional[int] = None
     require_proxy: bool = False
@@ -1022,6 +1024,8 @@ class NeurochattingSettings(BaseModel):
     respect_night_hours: bool = True
     delay_before_min: int = 42
     delay_before_max: int = 78
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     prompt_id: Optional[int] = None
     require_proxy: bool = False
     hide_in_work: bool = False
@@ -1075,6 +1079,8 @@ class MasslookingSettings(BaseModel):
     skip_hours: int = 24
     delay_min: int = 2
     delay_max: int = 6
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     max_per_hour: int = 30
     respect_night_hours: bool = True
     limit_rate: bool = True
@@ -1163,6 +1169,8 @@ class ParserSettings(BaseModel):
     only_active_stories: bool = False
     delay_chat: int = 5
     delay_user: int = 1
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     respect_night_hours: bool = True
     limit_rate: bool = True
     require_proxy: bool = False
@@ -1213,6 +1221,8 @@ class ChatBroadcastsSettings(BaseModel):
     max_messages: int = 100
     delay_group_min: int = 30
     delay_group_max: int = 90
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     delay_msg_min: int = 3
     delay_msg_max: int = 8
     errors_until_stop: int = 10
@@ -1313,6 +1323,8 @@ class NeuroshillingSettings(BaseModel):
     hide_in_work: bool = False
     delay_min: int = 8
     delay_max: int = 25
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     prompt_id: Optional[int] = None
     setup: Optional[str] = None
     reply: Optional[str] = None
@@ -1369,6 +1381,8 @@ class WarmupSettings(BaseModel):
     do_stories: bool = True
     do_comment_contacts: bool = True
     do_joins: bool = True
+    join_delay_min: int = 180
+    join_delay_max: int = 240
     session_minutes: int = 0
     require_proxy: bool = False
     hide_in_work: bool = False

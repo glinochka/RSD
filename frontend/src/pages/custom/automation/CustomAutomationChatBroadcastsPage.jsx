@@ -5,6 +5,7 @@ import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -469,6 +470,7 @@ const CustomAutomationChatBroadcastsPage = () => {
             <Stepper value={settings.delay_msg_max} min={settings.delay_msg_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_msg_max: value })} />
             <span className="nc-muted">с</span>
           </div>
+          <UbtJoinDelay settings={settings} onPatch={patch} />
           <div className="nc-card-head"><h2>Объём рассылки</h2></div>
           <div className="nc-mode">
             <button type="button" className={settings.work_mode !== 'time' ? 'is-on' : ''} onClick={() => patch({ work_mode: 'count' })}># По количеству</button>
@@ -522,7 +524,7 @@ const CustomAutomationChatBroadcastsPage = () => {
           </div>
           <p className="nc-hint">Пусто — без ограничений. Вне часов и дней рассылка ждёт, в «Окончание» — завершается.</p>
           <div style={{ marginTop: 12 }}>
-            <FeatureToggle compact title="Ночной простой" description="С 21:30 до 07:00 по Москве рассылка не идёт — тот же фермерский ритм, что у остальных модулей." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
+            <FeatureToggle compact title="Ночной простой" description="Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) рассылка не идёт — как будто аккаунт спит." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
           </div>
           <div className="nc-card-head" style={{ marginTop: 16 }}><h2>Особые настройки</h2></div>
           <FeatureToggle compact title="Имитация набора" description="Перед отправкой аккаунт смотрит чат и печатает. Выключите — сырой send_message без набора." checked={Boolean(settings.imitate_typing)} onChange={(value) => persistFlag({ imitate_typing: value })} />

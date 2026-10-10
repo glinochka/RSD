@@ -23,7 +23,7 @@ from .user_folder_service import list_user_folders
 from .chat_import_service import import_chats_from_file
 from .chat_addlist_service import import_chat_links, split_link_tokens
 from .job_service import list_jobs
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .parser_service import normalize_parser_targets, normalize_since_hours
 from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
@@ -49,6 +49,8 @@ DEFAULT_PARSER_SETTINGS: dict[str, Any] = {
     "only_active_stories": False,
     "delay_chat": 5,
     "delay_user": 1,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "respect_night_hours": True,
     "limit_rate": True,
     "require_proxy": False,
@@ -108,6 +110,7 @@ def normalize_parser_settings(raw: Any) -> dict[str, Any]:
     data["only_active_stories"] = bool(incoming.get("only_active_stories"))
     data["delay_chat"] = _clamp_int(incoming.get("delay_chat") if incoming.get("delay_chat") is not None else 5, 5, lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_user"] = _clamp_int(incoming.get("delay_user") if incoming.get("delay_user") is not None else 1, 1, lo=0, hi=DELAY_MAX_SECONDS)
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     data["limit_rate"] = bool(incoming.get("limit_rate", True))
     data["require_proxy"] = bool(incoming.get("require_proxy"))

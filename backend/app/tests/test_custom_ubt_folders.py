@@ -503,6 +503,58 @@ class TestJobLifecycle:
         assert account_is_flood_quarantined(account, now=now) is False
         assert account_is_live(account) is True
 
+    def test_farm_sleeps_outside_configured_hours(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from app.services.custom.work_mode import farm_work_overlap
+
+        moscow = ZoneInfo("Europe/Moscow")
+        mode = {"hour_start": 8, "hour_end": 20, "weekdays": [0, 1, 2, 3, 4]}
+        assert farm_work_overlap(datetime(2026, 10, 9, 7, 20, tzinfo=moscow), mode=mode) is False
+        assert farm_work_overlap(datetime(2026, 10, 9, 12, 0, tzinfo=moscow), mode=mode) is True
+        assert farm_work_overlap(datetime(2026, 10, 9, 22, 0, tzinfo=moscow), mode=mode) is False
+        saturday = datetime(2026, 10, 10, 12, 0, tzinfo=moscow)
+        assert farm_work_overlap(saturday, mode=mode) is True
+
+    def test_task_join_delay_is_independent_of_comment_knobs(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_addlist_service import task_join_delay_seconds
+        from app.services.custom.module_delays import JOIN_DELAY_MIN_DEFAULT
+        from app.services.custom.neurocommenting_module_service import normalize_nc_settings
+
+        automation = SimpleNamespace(
+            module_settings={
+                "neurocommenting": {
+                    "delay_before_min": 90,
+                    "delay_before_max": 90,
+                    "join_delay_min": 120,
+                    "join_delay_max": 120,
+                },
+                "neurochatting": {
+                    "delay_before_min": 45,
+                    "delay_before_max": 45,
+                    "join_delay_min": 75,
+                    "join_delay_max": 75,
+                },
+            }
+        )
+        assert task_join_delay_seconds(automation, "neurocommenting") == 120
+        assert task_join_delay_seconds(automation, "neurochatting") == 75
+        defaulted = task_join_delay_seconds(SimpleNamespace(module_settings={}), "parser")
+        assert defaulted >= JOIN_DELAY_MIN_DEFAULT
+        normalized = normalize_nc_settings({"delay_before_min": 90, "delay_before_max": 90})
+        assert normalized["delay_before_min"] == 90
+        assert normalized["join_delay_min"] == JOIN_DELAY_MIN_DEFAULT
+
+    def test_folder_grows_chat_ids_instead_of_resetting(self):
+        from app.services.custom.chat_addlist_service import merge_folder_chat_ids
+
+        previous = {"slug": "grown", "filter_id": 7, "chat_ids": [1, 2]}
+        assert merge_folder_chat_ids(previous, [2, 3, 4]) == [1, 2, 3, 4]
+        assert merge_folder_chat_ids(None, [9]) == [9]
+
     def test_addlist_slug_on_chat(self):
         from types import SimpleNamespace
 

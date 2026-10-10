@@ -409,7 +409,7 @@ const CustomAutomationMassprimingPage = () => {
         <div className="nc-setting">
           <div className="nc-setting-copy">
             <strong>Ночной простой</strong>
-            <span>С 21:30 до 07:00 по Москве прайминг не идёт.</span>
+            <span>Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) прайминг не идёт.</span>
           </div>
           <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>

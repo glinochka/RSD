@@ -5,6 +5,7 @@ import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -363,6 +364,7 @@ const CustomAutomationMasslookingPage = () => {
               <Stepper value={settings.delay_max} min={settings.delay_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_max: value })} />
               <span className="nc-muted">сек</span>
             </div>
+            <UbtJoinDelay settings={settings} onPatch={patch} />
           </div>
           <p className="nc-hint">FloodWait Telegram обрабатывается сам: короткие ждут на месте, длинные откладывают аккаунт. Отдельный карантин после N флудов не нужен.</p>
         </div>
@@ -429,7 +431,7 @@ const CustomAutomationMasslookingPage = () => {
         <div className="nc-setting">
           <div className="nc-setting-copy">
             <strong>Ночной простой</strong>
-            <span>С 21:30 до 07:00 по Москве просмотры не идут.</span>
+            <span>Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) просмотры не идут.</span>
           </div>
           <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
         </div>
