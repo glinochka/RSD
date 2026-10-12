@@ -300,6 +300,12 @@ export const API_ROUTES = {
     `/api/custom/automations/${id}/accounts/${accountId}/session-guard/pause`,
   CUSTOM_AUTOMATION_ACCOUNT_SESSION_GUARD_ADOPT: (id, accountId) =>
     `/api/custom/automations/${id}/accounts/${accountId}/session-guard/adopt`,
+  CUSTOM_AUTOMATION_ACCOUNT_CLOUD_PASSWORD: (id, accountId) =>
+    `/api/custom/automations/${id}/accounts/${accountId}/cloud-password`,
+  CUSTOM_AUTOMATION_ACCOUNT_CLOUD_PASSWORD_CONFIRM: (id, accountId) =>
+    `/api/custom/automations/${id}/accounts/${accountId}/cloud-password/confirm`,
+  CUSTOM_AUTOMATION_ACCOUNT_INTERCEPT_REAUTH: (id, accountId) =>
+    `/api/custom/automations/${id}/accounts/${accountId}/intercept-reauth`,
   CUSTOM_AUTOMATION_ACCOUNTS_SETUP_TEMPLATES: (id) => `/api/custom/automations/${id}/accounts/setup-templates`,
   CUSTOM_AUTOMATION_ACCOUNTS_PREPARE: (id) => `/api/custom/automations/${id}/accounts/prepare`,
   CUSTOM_AUTOMATION_ACCOUNTS_PREPARE_STATUS: (id) => `/api/custom/automations/${id}/accounts/prepare-status`,
@@ -325,6 +331,8 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_JOBS: (id) => `/api/custom/automations/${id}/jobs`,
   CUSTOM_AUTOMATION_JOB: (id, jobId) => `/api/custom/automations/${id}/jobs/${encodeURIComponent(jobId)}`,
   CUSTOM_AUTOMATION_JOB_CANCEL: (id, jobId) => `/api/custom/automations/${id}/jobs/${encodeURIComponent(jobId)}/cancel`,
+  CUSTOM_AUTOMATION_JOB_PAUSE: (id, jobId) => `/api/custom/automations/${id}/jobs/${encodeURIComponent(jobId)}/pause`,
+  CUSTOM_AUTOMATION_JOB_RESUME: (id, jobId) => `/api/custom/automations/${id}/jobs/${encodeURIComponent(jobId)}/resume`,
   CUSTOM_AUTOMATION_STATS: (id) => `/api/custom/automations/${id}/stats`,
   CUSTOM_AUTOMATION_STATS_BLACKLIST: (id) => `/api/custom/automations/${id}/stats/blacklist`,
   CUSTOM_AUTOMATION_NEUROCOMMENTING: (id) => `/api/custom/automations/${id}/modules/neurocommenting`,

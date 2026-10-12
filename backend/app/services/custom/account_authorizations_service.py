@@ -107,6 +107,17 @@ async def list_account_authorizations(
     if not row:
         return {"status": "not_found"}
     pool_account, social_account = row
+    from .account_pacing import intercept_is_quiet
+
+    if intercept_is_quiet(social_account):
+        return {
+            "status": "ok",
+            "items": [],
+            "count": 0,
+            "held": True,
+            "pool_account": pool_account,
+            "social_account": social_account,
+        }
     if not social_account.session_file_path and not getattr(social_account, "encrypted_session", None):
         return {"status": "no_session", "pool_account": pool_account, "social_account": social_account}
     try:
@@ -145,6 +156,10 @@ async def terminate_account_authorization(
     if not row:
         return {"status": "not_found"}
     pool_account, social_account = row
+    from .account_pacing import intercept_is_quiet
+
+    if intercept_is_quiet(social_account):
+        raise AccountAuthorizationError("Первые 24 часа и до переавторизации аккаунт не трогаем")
     if not social_account.session_file_path and not getattr(social_account, "encrypted_session", None):
         return {"status": "no_session", "pool_account": pool_account, "social_account": social_account}
     from telethon.tl.functions.account import ResetAuthorizationRequest

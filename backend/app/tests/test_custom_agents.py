@@ -1740,6 +1740,7 @@ class TestSchedulerContracts:
         assert "discovery" in factories
         assert "join" in factories
         assert "session_hygiene" in factories
+        assert "intercept_reauth" in factories
         assert "lead_warmup" in factories
         assert "account_sessions" in factories
         assert "account_warmup" not in factories
@@ -5221,6 +5222,7 @@ class TestAccountAuthorizations:
         test_session: AsyncSession,
         monkeypatch,
     ):
+        from datetime import datetime
         from types import SimpleNamespace
 
         from app.services.account_pool_service import get_or_create_default_pool, get_or_create_intercept_pool
@@ -5236,6 +5238,7 @@ class TestAccountAuthorizations:
             session_file_path="sessions/stolen.session",
             is_active=True,
             origin="intercept",
+            intercept_reauthorized_at=datetime.utcnow().replace(tzinfo=None),
         )
         test_session.add(account)
         await test_session.flush()
@@ -5299,6 +5302,53 @@ class TestAccountAuthorizations:
         )
         assert account.id in {item["id"] for item in farm_after.json()["items"]}
         assert account.id not in {item["id"] for item in intercept_after.json()["items"]}
+
+    async def test_intercept_adopt_waits_for_reauth(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_intercept_pool
+
+        intercept = await get_or_create_intercept_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000994",
+            username="held",
+            encrypted_session="x",
+            session_file_path="sessions/held.session",
+            is_active=True,
+            origin="intercept",
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=intercept.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+
+        listing = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts?pool=intercept",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert listing.status_code == 200
+        item = next(row for row in listing.json()["items"] if row["id"] == account.id)
+        assert item["intercept_stage"] == "hold"
+        assert "Холд 24 часа" in item["intercept_labels"]
+        assert item["intercept_can_adopt"] is False
+
+        adopted = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/session-guard/adopt",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert adopted.status_code == 422
 
     async def test_list_authorizations_without_session(
         self,

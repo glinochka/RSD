@@ -426,6 +426,48 @@ class TestJobLifecycle:
         assert is_persistent_job("dm_broadcast") is False
         assert is_persistent_job("masslooking") is False
 
+    def test_paused_jobs_stay_active_and_can_resume(self):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from app.services.custom.job_service import (
+            PAUSED_STATUS,
+            _matches,
+            serialize_custom,
+        )
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        running = SimpleNamespace(
+            id=11,
+            job_type="neurocommenting",
+            title="Нейрокомментинг",
+            status="running",
+            params={"delay_before_min": 90, "presets": []},
+            result={},
+            logs=[],
+            error=None,
+            created_at=now,
+            started_at=now,
+            completed_at=None,
+            updated_at=now,
+        )
+        live = serialize_custom(running)
+        assert live["can_pause"] is True
+        assert live["can_resume"] is False
+        assert live["can_edit"] is True
+        assert live["can_cancel"] is True
+        assert "presets" not in live["params"]
+
+        running.status = PAUSED_STATUS
+        paused = serialize_custom(running)
+        assert paused["status"] == "paused"
+        assert paused["can_pause"] is False
+        assert paused["can_resume"] is True
+        assert paused["can_edit"] is True
+        assert paused["completed_at"] is None
+        assert _matches(paused, bucket="active", category=None, search=None) is True
+        assert _matches(paused, bucket="history", category=None, search=None) is False
+
     def test_folder_splits_into_unique_account_pools(self):
         from app.services.custom.chat_addlist_service import _reusable_folders, even_redistribute
 

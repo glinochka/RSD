@@ -242,7 +242,10 @@ async def _load_pool_account(
 async def enforce_authorizations(client: Any, account: SocialAccount, *, force: bool = False) -> dict[str, Any]:
     if getattr(account, "session_guard_enabled", True) is False:
         return {"status": "disabled", "terminated": []}
-    from .account_pacing import account_is_intercept, account_may_keep_alive
+    from .account_pacing import account_is_intercept, account_may_keep_alive, intercept_is_reauthorized, intercept_is_quiet
+
+    if intercept_is_quiet(account):
+        return {"status": "skipped", "terminated": [], "reason": "intercept_hold"}
 
     telethon = getattr(client, "client", client)
     alert = False
@@ -273,7 +276,7 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
         _hash_set(getattr(account, "known_auth_hashes", None)),
         live,
         paused=guard_is_paused(account),
-        takeover=account_is_intercept(account),
+        takeover=account_is_intercept(account) and intercept_is_reauthorized(account),
     )
     terminated: list[str] = []
     for hash_value in plan["terminate"]:
@@ -374,6 +377,16 @@ async def adopt_account_sessions(
     if not row:
         return {"status": "not_found"}
     pool_account, social_account = row
+    from .account_pacing import ORIGIN_FARM, account_is_intercept, intercept_is_reauthorized
+    from ..account_pool_service import get_or_create_default_pool
+
+    if account_is_intercept(social_account) and not intercept_is_reauthorized(social_account):
+        return {
+            "status": "not_ready",
+            "error": "Сначала дождитесь переавторизации сессии",
+            "pool_account": pool_account,
+            "social_account": social_account,
+        }
     if not social_account.session_file_path and not getattr(social_account, "encrypted_session", None):
         return {"status": "no_session", "pool_account": pool_account, "social_account": social_account}
     try:
@@ -396,15 +409,15 @@ async def adopt_account_sessions(
     social_account.session_guard_checked_at = _utc_now()
     social_account.updated_at = _utc_now()
     moved = False
-    from .account_pacing import ORIGIN_FARM, account_is_intercept
-    from ..account_pool_service import get_or_create_default_pool
-
     pool = await session.get(AccountPool, pool_account.account_pool_id)
     if account_is_intercept(social_account) or getattr(pool, "purpose", ORIGIN_FARM) == "intercept":
         farm = await get_or_create_default_pool(session, automation_id)
         pool_account.account_pool_id = farm.id
         social_account.origin = ORIGIN_FARM
         social_account.created_at = _utc_now()
+        social_account.intercept_reauthorized_at = None
+        social_account.intercept_reauth_error = None
+        social_account.intercept_reauth_started_at = None
         automation = await session.get(CustomAutomation, automation_id)
         from .account_warmup_service import enroll_pool_account
         from .chat_membership_service import ensure_memberships_for_account

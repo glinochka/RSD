@@ -556,14 +556,21 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
         id=9,
         origin="intercept",
         created_at=now,
+        intercept_reauthorized_at=None,
         flood_quarantined_until=None,
         next_action_at=None,
         next_humanization_at=None,
     )
-    assert account_in_settle_rest(stolen, now=now) is False
-    assert account_may_keep_alive(stolen, now=now) is True
+    assert account_in_settle_rest(stolen, now=now) is True
+    assert account_may_keep_alive(stolen, now=now) is False
     assert account_may_do_work(stolen, now=now) is False
     assert account_may_humanize(stolen, now=now) is False
+    stolen.created_at = now - timedelta(hours=25)
+    assert account_in_settle_rest(stolen, now=now) is True
+    assert account_may_keep_alive(stolen, now=now) is False
+    stolen.intercept_reauthorized_at = now
+    assert account_in_settle_rest(stolen, now=now) is False
+    assert account_may_keep_alive(stolen, now=now) is True
 
 
 def test_peer_opener_is_always_the_veteran(monkeypatch):
@@ -660,3 +667,246 @@ def test_upload_health_queue_does_not_start_hygiene():
     name = getattr(queued, "__name__", str(queued)).lower()
     assert "hygiene" not in name
     assert "health" in name or "check" in name
+
+
+def test_intercept_labels_follow_hold_then_reauth():
+    from datetime import datetime, timedelta
+
+    from app.services.custom.account_pacing import (
+        LABEL_CAN_ADOPT,
+        LABEL_HOLD_24H,
+        LABEL_MINT_FAILED,
+        LABEL_NEED_2FA,
+        LABEL_PROXY_DEAD,
+        LABEL_REAUTH_FAILED,
+        LABEL_REAUTH_RUNNING,
+        LABEL_REAUTH_WAITING,
+        LABEL_REAUTHORIZED,
+        LABEL_SESSION_DEAD,
+        intercept_labels,
+        intercept_needs_reauth,
+        intercept_public_state,
+    )
+
+    now = datetime.utcnow().replace(tzinfo=None)
+    fresh = SimpleNamespace(
+        origin="intercept",
+        created_at=now,
+        intercept_reauthorized_at=None,
+        intercept_reauth_error=None,
+    )
+    assert intercept_labels(fresh, now=now) == [LABEL_HOLD_24H]
+    assert intercept_needs_reauth(fresh, now=now) is False
+    assert intercept_public_state(fresh, now=now)["intercept_can_adopt"] is False
+
+    aged = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=25),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error=None,
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_needs_reauth(aged, now=now) is True
+    assert intercept_labels(aged, now=now) == [LABEL_REAUTH_WAITING]
+    ready = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=now,
+        intercept_reauth_error=None,
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+    )
+    assert intercept_labels(ready, now=now) == [LABEL_REAUTHORIZED, LABEL_CAN_ADOPT]
+    assert intercept_public_state(ready, now=now)["intercept_can_adopt"] is True
+    failed = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error="failed: QR",
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_labels(failed, now=now) == [LABEL_REAUTH_FAILED]
+    assert intercept_public_state(failed, now=now)["intercept_can_reauth"] is True
+    mint_failed = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error="mint_failed: qr empty",
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_labels(mint_failed, now=now) == [LABEL_MINT_FAILED]
+    need_2fa = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error="need_2fa: missing",
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_labels(need_2fa, now=now) == [LABEL_NEED_2FA]
+    assert intercept_needs_reauth(need_2fa, now=now) is False
+    dead = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error="session_invalid: killed",
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_labels(dead, now=now) == [LABEL_SESSION_DEAD]
+    proxy = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error="proxy_dead: timeout",
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_labels(proxy, now=now) == [LABEL_PROXY_DEAD]
+    running = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error=None,
+        intercept_reauth_started_at=now,
+        encrypted_cloud_password=None,
+        updated_at=now,
+    )
+    assert intercept_labels(running, now=now) == [LABEL_REAUTH_RUNNING]
+    assert intercept_public_state(running, now=now)["intercept_can_reauth"] is False
+
+
+@pytest.mark.asyncio
+async def test_intercept_reauth_promotes_spare_and_logs_out_old(monkeypatch):
+    from datetime import datetime, timedelta
+
+    from app.services.custom import intercept_reauth_service as svc
+
+    now = datetime.utcnow().replace(tzinfo=None)
+    account = SimpleNamespace(
+        id=44,
+        origin="intercept",
+        created_at=now - timedelta(hours=26),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error=None,
+        session_file_path="sessions/44.session",
+        encrypted_session="old",
+        spare_telegram_device={"device_model": "Pixel"},
+        telegram_device={"device_model": "Old"},
+        spare_authorization_hash=9,
+        known_auth_hashes=["1"],
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password="enc",
+        updated_at=now,
+    )
+    logged_out = {"n": 0}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        client = SimpleNamespace(log_out=AsyncMock(side_effect=lambda: logged_out.__setitem__("n", 1)))
+
+    mint = AsyncMock(return_value=11)
+    monkeypatch.setattr(svc, "_close_hub_client", AsyncMock())
+    monkeypatch.setattr(svc, "_human_pause", AsyncMock())
+    monkeypatch.setattr(svc, "_reset_others_except_new", AsyncMock(return_value=2))
+    monkeypatch.setattr(svc, "_drop_main_live", AsyncMock())
+    monkeypatch.setattr(svc.TelegramAccountClient, "for_account", lambda *_a, **_k: FakeClient())
+    monkeypatch.setattr(svc, "load_cloud_password", lambda _acc: "secret-2fa")
+    monkeypatch.setattr(svc, "_mint_spare_session", mint)
+    monkeypatch.setattr(svc, "account_has_spare", lambda _acc: True)
+    monkeypatch.setattr(svc, "promote_spare_session", lambda acc: True)
+
+    session = SimpleNamespace(flush=AsyncMock())
+    result = await svc.reauth_intercept_account(session, account, 1, cloud_password="secret-2fa")
+    assert result["status"] == "ok"
+    assert logged_out["n"] == 1
+    assert account.intercept_reauthorized_at is not None
+    assert account.telegram_device["device_model"] == "Pixel"
+    assert account.spare_telegram_device is None
+    assert account.intercept_reauth_error is None
+    assert mint.await_args.kwargs.get("cloud_password") == "secret-2fa"
+
+
+@pytest.mark.asyncio
+async def test_intercept_reauth_keeps_old_session_if_mint_fails(monkeypatch):
+    from datetime import datetime, timedelta
+
+    from app.services.custom import intercept_reauth_service as svc
+
+    now = datetime.utcnow().replace(tzinfo=None)
+    account = SimpleNamespace(
+        id=45,
+        origin="intercept",
+        created_at=now - timedelta(hours=26),
+        intercept_reauthorized_at=None,
+        intercept_reauth_error=None,
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        session_file_path="sessions/45.session",
+        encrypted_session="old",
+        spare_telegram_device=None,
+        telegram_device={"device_model": "Old"},
+        spare_authorization_hash=None,
+        known_auth_hashes=["1"],
+        updated_at=now,
+    )
+    logged_out = {"n": 0}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        client = SimpleNamespace(log_out=AsyncMock(side_effect=lambda: logged_out.__setitem__("n", 1)))
+
+    monkeypatch.setattr(svc, "_close_hub_client", AsyncMock())
+    monkeypatch.setattr(svc, "_human_pause", AsyncMock())
+    reset = AsyncMock(return_value=0)
+    monkeypatch.setattr(svc, "_reset_others_except_new", reset)
+    monkeypatch.setattr(svc, "_drop_main_live", AsyncMock())
+    monkeypatch.setattr(svc.TelegramAccountClient, "for_account", lambda *_a, **_k: FakeClient())
+    monkeypatch.setattr(svc, "_mint_spare_session", AsyncMock(side_effect=RuntimeError("qr empty")))
+    monkeypatch.setattr(svc, "account_has_spare", lambda _acc: False)
+    monkeypatch.setattr(svc, "promote_spare_session", lambda acc: False)
+
+    session = SimpleNamespace(flush=AsyncMock())
+    result = await svc.reauth_intercept_account(session, account, 1)
+    assert result["status"] == "error"
+    assert logged_out["n"] == 0
+    assert reset.await_count == 0
+    assert account.intercept_reauthorized_at is None
+    assert str(account.intercept_reauth_error).startswith("mint_failed")
+
+
+def test_classify_reauth_error_maps_known_failures():
+    from app.services.custom.account_pacing import (
+        INTERCEPT_ERROR_FAILED,
+        INTERCEPT_ERROR_MINT,
+        INTERCEPT_ERROR_NEED_2FA,
+        INTERCEPT_ERROR_PROXY,
+        INTERCEPT_ERROR_SESSION,
+    )
+    from app.services.custom.intercept_reauth_service import classify_reauth_error
+    from app.services.custom.telegram_error_handler import ProxyDeadError, SessionInvalidError
+
+    assert classify_reauth_error(RuntimeError("need_2fa"))[0] == INTERCEPT_ERROR_NEED_2FA
+    assert classify_reauth_error(RuntimeError("qr empty"))[0] == INTERCEPT_ERROR_MINT
+    assert classify_reauth_error(SessionInvalidError("session invalid"))[0] == INTERCEPT_ERROR_SESSION
+    assert classify_reauth_error(ProxyDeadError("Прокси недоступен"))[0] == INTERCEPT_ERROR_PROXY
+    assert classify_reauth_error(RuntimeError("something else"))[0] == INTERCEPT_ERROR_FAILED

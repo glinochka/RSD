@@ -108,6 +108,19 @@ def live_client_for_path(path: str | None) -> "TelegramAccountClient | None":
     if handle and handle.wrapper.client:
         return handle.wrapper
     return None
+
+
+async def drop_live_for_path(path: str | None) -> None:
+    if not path:
+        return
+    handle = _live_handles.pop(_session_key(path), None)
+    if handle is None:
+        return
+    handle.persistent = False
+    try:
+        await handle.wrapper.drop_alive()
+    except Exception:
+        logger.debug("drop_live_for_path failed for %s", path, exc_info=True)
 _SESSION_SIDECARS = ("-journal", "-wal", "-shm")
 _PRODUCTION_DCS = {
     1: ("149.154.175.53", 443),

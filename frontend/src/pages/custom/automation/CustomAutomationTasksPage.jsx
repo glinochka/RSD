@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
@@ -11,11 +12,77 @@ import '../../../styles/customSolutionNav.css';
 const STATUS_LABELS = {
   pending: 'Ожидает',
   running: 'В работе',
+  paused: 'На паузе',
   awaiting_approval: 'На модерации',
   completed: 'Завершено',
   error: 'Ошибка',
   cancelled: 'Отменено',
   skipped: 'Пропущено',
+};
+
+const SKIP_EDIT_KEYS = new Set(['presets', 'enabled']);
+const EXTRA_EDIT_FIELDS = {
+  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 180, join_delay_max: 240, probability: 100, max_per_chat: 10 },
+  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 180, join_delay_max: 240, probability: 30, max_per_chat: 1 },
+  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 180, join_delay_max: 240 },
+  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 180, join_delay_max: 240 },
+  dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8 },
+  masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 180, join_delay_max: 240, max_per_account: 50 },
+  masspriming: { delay_min: 8, delay_max: 25, max_per_account: 20 },
+  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 180, join_delay_max: 240, member_limit: 1000 },
+  warmup: { join_delay_min: 180, join_delay_max: 240 },
+};
+
+const formatParamValue = (value) => {
+  if (Array.isArray(value) || (value && typeof value === 'object')) {
+    return JSON.stringify(value);
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value);
+};
+
+const parseParamValue = (raw, original) => {
+  if (typeof original === 'boolean') {
+    return raw === true || raw === 'true' || raw === '1';
+  }
+  if (typeof original === 'number') {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : original;
+  }
+  if (Array.isArray(original) || (original && typeof original === 'object')) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return original;
+    }
+  }
+  const trimmed = String(raw ?? '').trim();
+  if (trimmed === '') {
+    return '';
+  }
+  const asNumber = Number(trimmed);
+  if (Number.isFinite(asNumber) && String(asNumber) === trimmed) {
+    return asNumber;
+  }
+  if (trimmed === 'true' || trimmed === 'false') {
+    return trimmed === 'true';
+  }
+  return raw;
+};
+
+const buildEditForm = (job) => {
+  const extras = EXTRA_EDIT_FIELDS[job?.job_type] || {};
+  const params = { ...extras, ...(job?.params || {}) };
+  const form = {};
+  Object.entries(params).forEach(([key, value]) => {
+    if (SKIP_EDIT_KEYS.has(key)) {
+      return;
+    }
+    form[key] = formatParamValue(value);
+  });
+  return form;
 };
 
 const BUCKETS = [
@@ -71,6 +138,8 @@ const CustomAutomationTasksPage = () => {
   const [selectedChats, setSelectedChats] = useState([]);
   const [panel, setPanel] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({});
   const [form, setForm] = useState({ query: '', max_chats: 30, require_approval: true, relevance_threshold: 0.6 });
 
   const loadJobs = useCallback(async () => {
@@ -155,7 +224,7 @@ const CustomAutomationTasksPage = () => {
         <h1>Задачи</h1>
         <p>
           Фоновые запуски модулей и операции над аккаунтами. Они выполняются на сервере — окно можно закрыть, задачи не прервутся.
-          «Активные» — текущий прогресс с логами и отменой, «История» — завершённые с параметрами и результатом.
+          Активную задачу можно поставить на паузу и позже продолжить, изменить параметры или остановить совсем.
         </p>
       </div>
 
@@ -195,7 +264,7 @@ const CustomAutomationTasksPage = () => {
               key={item.id}
               type="button"
               className={`tsk-card ${selectedId === item.id ? 'is-active' : ''}`}
-              onClick={() => { setSelectedId(item.id); setSelectedChats([]); }}
+              onClick={() => { setSelectedId(item.id); setSelectedChats([]); setEditing(false); }}
             >
               <div className="tsk-card-top">
                 <div className="tsk-card-title">
@@ -226,7 +295,7 @@ const CustomAutomationTasksPage = () => {
                   <h2>{selected.title}</h2>
                   <p>{selected.subtitle || formatWhen(selected.created_at)}</p>
                 </div>
-                <button type="button" className="tsk-close" onClick={() => setSelectedId(null)}>×</button>
+                <button type="button" className="tsk-close" onClick={() => { setSelectedId(null); setEditing(false); }}>×</button>
               </div>
 
               <div>
@@ -261,12 +330,29 @@ const CustomAutomationTasksPage = () => {
                 </dl>
               </div>
 
-              {paramEntries(selected.params).length ? (
+              {editing && selected.can_edit ? (
+                <div>
+                  <div className="tsk-section-label">Параметры</div>
+                  <div className="tsk-edit">
+                    {Object.keys(editForm).length === 0 ? <p>Нет редактируемых полей</p> : null}
+                    {Object.entries(editForm).map(([key, value]) => (
+                      <div key={key} className="tsk-edit-row">
+                        <label htmlFor={`tsk-edit-${key}`}>{key}</label>
+                        {String(value).length > 80 ? (
+                          <textarea id={`tsk-edit-${key}`} rows={3} value={value} onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))} />
+                        ) : (
+                          <input id={`tsk-edit-${key}`} value={value} onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : paramEntries(selected.params).length ? (
                 <div>
                   <div className="tsk-section-label">Параметры запуска</div>
                   <dl className="tsk-kv">
                     {paramEntries(selected.params).map(([key, value]) => (
-                      <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>
+                      <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
                     ))}
                   </dl>
                 </div>
@@ -306,11 +392,38 @@ const CustomAutomationTasksPage = () => {
               ) : null}
 
               <div className="tsk-actions">
-                {selected.can_cancel ? (
-                  <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => runAction(() => customService.cancelAutomationJob(id, selected.id), 'Задача отменена')}>
-                    Отменить
-                  </button>
-                ) : null}
+                {editing && selected.can_edit ? (
+                  <>
+                    <button
+                      type="button"
+                      className="acc-btn acc-btn--primary"
+                      disabled={busy}
+                      onClick={() => {
+                        const original = { ...(EXTRA_EDIT_FIELDS[selected.job_type] || {}), ...(selected.params || {}) };
+                        const params = {};
+                        Object.entries(editForm).forEach(([key, value]) => {
+                          params[key] = parseParamValue(value, original[key]);
+                        });
+                        runAction(async () => {
+                          await customService.patchAutomationJob(id, selected.id, { params });
+                          setEditing(false);
+                        }, 'Параметры сохранены');
+                      }}
+                    >
+                      Сохранить параметры
+                    </button>
+                    <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => setEditing(false)}>Отмена</button>
+                  </>
+                ) : (
+                  <UbtJobControls
+                    job={selected}
+                    busy={busy}
+                    onPause={() => runAction(() => customService.pauseAutomationJob(id, selected.id), 'Задача на паузе')}
+                    onResume={() => runAction(() => customService.resumeAutomationJob(id, selected.id), 'Задача продолжена')}
+                    onCancel={() => runAction(() => customService.cancelAutomationJob(id, selected.id), 'Задача остановлена')}
+                    onEdit={() => { setEditForm(buildEditForm(selected)); setEditing(true); }}
+                  />
+                )}
                 {selected.can_approve ? (
                   <>
                     <button type="button" className="acc-btn acc-btn--primary" disabled={busy || !selectedChats.length} onClick={() => runAction(() => customService.approveDiscoveryTask(id, selected.source_id, selectedChats), 'Чаты одобрены')}>

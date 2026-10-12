@@ -15,7 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
-from .account_pacing import account_is_intercept, account_may_keep_alive, farm_overlap_active_hours
+from .account_pacing import (
+    account_is_intercept,
+    account_may_keep_alive,
+    farm_overlap_active_hours,
+    intercept_is_reauthorized,
+)
 from .account_roles import account_is_live
 from .telegram_account_client import TelegramAccountClient
 from .work_mode import (
@@ -127,6 +132,8 @@ class AccountSessionHub:
 
 
 def _session_should_sleep(account: SocialAccount) -> bool:
+    if account_is_intercept(account):
+        return not intercept_is_reauthorized(account)
     if not account_may_keep_alive(account):
         return True
     if in_daily_idle_gap(getattr(account, "id", None)):
@@ -213,6 +220,13 @@ async def close_account_sessions(automation_id: int) -> None:
     hub = _hubs.pop(automation_id, None)
     if hub:
         await hub.close()
+
+
+async def close_one_account_session(automation_id: int, account_id: int) -> None:
+    hub = _hubs.get(automation_id)
+    if hub is None:
+        return
+    await hub._close(account_id)
 
 
 def _work_streams(automation: CustomAutomation) -> list[tuple[str, StreamFn]]:

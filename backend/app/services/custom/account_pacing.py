@@ -26,6 +26,7 @@ import hashlib
 import os
 import random
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from ...alembic.models import CustomAutomation, SocialAccount
@@ -50,6 +51,32 @@ PHASE_REPLY = "reply"
 PHASE_RAMP = "ramp"
 ORIGIN_FARM = "farm"
 ORIGIN_INTERCEPT = "intercept"
+INTERCEPT_HOLD_HOURS = 24
+INTERCEPT_STAGE_HOLD = "hold"
+INTERCEPT_STAGE_WAITING = "waiting"
+INTERCEPT_STAGE_REAUTH = "reauthorizing"
+INTERCEPT_STAGE_READY = "reauthorized"
+INTERCEPT_STAGE_FAILED = "reauth_failed"
+INTERCEPT_STAGE_MINT = "mint_failed"
+INTERCEPT_STAGE_NEED_2FA = "need_2fa"
+INTERCEPT_STAGE_SESSION = "session_invalid"
+INTERCEPT_STAGE_PROXY = "proxy_dead"
+LABEL_HOLD_24H = "Холд 24 часа"
+LABEL_REAUTHORIZED = "Сессия переавторизована"
+LABEL_CAN_ADOPT = "Можно заливать в основной пул"
+LABEL_REAUTH_RUNNING = "Идёт переавторизация"
+LABEL_REAUTH_WAITING = "Ожидает переавторизацию"
+LABEL_REAUTH_FAILED = "Неуспешная переавторизация"
+LABEL_MINT_FAILED = "Не удалось выпустить сессию"
+LABEL_NEED_2FA = "Нужен облачный пароль"
+LABEL_SESSION_DEAD = "Сессия невалидна"
+LABEL_PROXY_DEAD = "Прокси не отвечает"
+INTERCEPT_ERROR_NEED_2FA = "need_2fa"
+INTERCEPT_ERROR_FAILED = "failed"
+INTERCEPT_ERROR_MINT = "mint_failed"
+INTERCEPT_ERROR_SESSION = "session_invalid"
+INTERCEPT_ERROR_PROXY = "proxy_dead"
+INTERCEPT_RUNNING_GRACE = timedelta(minutes=20)
 RAMP_FULL_DAYS = 7
 RAMP_START_FACTOR = 0.10      # tests / SETTLE_HOURS=0: 10% from day 0
 WORK_RAMP_START_FACTOR = 0.25  # production: 25% work at 72h → 100% on day 7
@@ -335,6 +362,143 @@ def account_is_intercept(account: SocialAccount | None) -> bool:
     return str(getattr(account, "origin", None) or ORIGIN_FARM).strip().lower() == ORIGIN_INTERCEPT
 
 
+def intercept_is_reauthorized(account: SocialAccount | None) -> bool:
+    return bool(getattr(account, "intercept_reauthorized_at", None))
+
+
+def intercept_error_code(account: SocialAccount | None) -> str | None:
+    raw = str(getattr(account, "intercept_reauth_error", None) or "").strip()
+    if not raw:
+        return None
+    code = raw.split(":", 1)[0].strip().lower()
+    if code in {
+        INTERCEPT_ERROR_NEED_2FA,
+        INTERCEPT_ERROR_FAILED,
+        INTERCEPT_ERROR_MINT,
+        INTERCEPT_ERROR_SESSION,
+        INTERCEPT_ERROR_PROXY,
+    }:
+        return code
+    return INTERCEPT_ERROR_FAILED
+
+
+def intercept_is_quiet(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    """Stolen sessions stay offline until our own login replaces them."""
+    del now
+    return account_is_intercept(account) and not intercept_is_reauthorized(account)
+
+
+def intercept_in_hold(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    if not intercept_is_quiet(account, now=now):
+        return False
+    return account_upload_age_hours(account, now=now) < float(INTERCEPT_HOLD_HOURS)
+
+
+def intercept_is_running(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    started = _naive_utc(getattr(account, "intercept_reauth_started_at", None) if account else None)
+    if started is None or intercept_is_reauthorized(account):
+        return False
+    current = now or _utc_now()
+    return (current - started) < INTERCEPT_RUNNING_GRACE and intercept_error_code(account) is None
+
+
+def intercept_needs_reauth(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    if not intercept_is_quiet(account, now=now):
+        return False
+    if intercept_is_running(account, now=now):
+        return False
+    if account_upload_age_hours(account, now=now) < float(INTERCEPT_HOLD_HOURS):
+        return False
+    code = intercept_error_code(account)
+    if code == INTERCEPT_ERROR_NEED_2FA:
+        return bool(getattr(account, "encrypted_cloud_password", None))
+    if code == INTERCEPT_ERROR_SESSION:
+        return False
+    if code in {INTERCEPT_ERROR_FAILED, INTERCEPT_ERROR_MINT, INTERCEPT_ERROR_PROXY}:
+        updated = _naive_utc(getattr(account, "updated_at", None))
+        if updated and ((now or _utc_now()) - updated) < timedelta(minutes=15):
+            return False
+    return True
+
+
+def intercept_hold_until(account: SocialAccount | None) -> datetime | None:
+    created = account_created_at(account)
+    if created is None:
+        return None
+    return created + timedelta(hours=INTERCEPT_HOLD_HOURS)
+
+
+def intercept_stage(account: SocialAccount | None, *, now: datetime | None = None) -> str | None:
+    if not account_is_intercept(account):
+        return None
+    if intercept_is_reauthorized(account):
+        return INTERCEPT_STAGE_READY
+    if intercept_is_running(account, now=now):
+        return INTERCEPT_STAGE_REAUTH
+    code = intercept_error_code(account)
+    if code == INTERCEPT_ERROR_NEED_2FA:
+        return INTERCEPT_STAGE_NEED_2FA
+    if code == INTERCEPT_ERROR_SESSION:
+        return INTERCEPT_STAGE_SESSION
+    if code == INTERCEPT_ERROR_PROXY:
+        return INTERCEPT_STAGE_PROXY
+    if code == INTERCEPT_ERROR_MINT:
+        return INTERCEPT_STAGE_MINT
+    if code == INTERCEPT_ERROR_FAILED:
+        return INTERCEPT_STAGE_FAILED
+    if intercept_in_hold(account, now=now):
+        return INTERCEPT_STAGE_HOLD
+    return INTERCEPT_STAGE_WAITING
+
+
+def intercept_labels(account: SocialAccount | None, *, now: datetime | None = None) -> list[str]:
+    stage = intercept_stage(account, now=now)
+    if stage == INTERCEPT_STAGE_HOLD:
+        return [LABEL_HOLD_24H]
+    if stage == INTERCEPT_STAGE_WAITING:
+        return [LABEL_REAUTH_WAITING]
+    if stage == INTERCEPT_STAGE_REAUTH:
+        return [LABEL_REAUTH_RUNNING]
+    if stage == INTERCEPT_STAGE_READY:
+        return [LABEL_REAUTHORIZED, LABEL_CAN_ADOPT]
+    if stage == INTERCEPT_STAGE_NEED_2FA:
+        return [LABEL_NEED_2FA]
+    if stage == INTERCEPT_STAGE_SESSION:
+        return [LABEL_SESSION_DEAD]
+    if stage == INTERCEPT_STAGE_PROXY:
+        return [LABEL_PROXY_DEAD]
+    if stage == INTERCEPT_STAGE_MINT:
+        return [LABEL_MINT_FAILED]
+    if stage == INTERCEPT_STAGE_FAILED:
+        return [LABEL_REAUTH_FAILED]
+    return []
+
+
+def intercept_public_state(account: SocialAccount | None, *, now: datetime | None = None) -> dict[str, Any]:
+    if not account_is_intercept(account):
+        return {
+            "intercept_stage": None,
+            "intercept_labels": [],
+            "intercept_can_adopt": False,
+            "intercept_can_reauth": False,
+            "intercept_has_cloud_password": False,
+            "intercept_hold_until": None,
+            "intercept_reauthorized_at": None,
+            "intercept_reauth_error": None,
+        }
+    stage = intercept_stage(account, now=now)
+    return {
+        "intercept_stage": stage,
+        "intercept_labels": intercept_labels(account, now=now),
+        "intercept_can_adopt": intercept_is_reauthorized(account),
+        "intercept_can_reauth": stage != INTERCEPT_STAGE_REAUTH,
+        "intercept_has_cloud_password": bool(getattr(account, "encrypted_cloud_password", None)),
+        "intercept_hold_until": intercept_hold_until(account),
+        "intercept_reauthorized_at": getattr(account, "intercept_reauthorized_at", None),
+        "intercept_reauth_error": getattr(account, "intercept_reauth_error", None),
+    }
+
+
 def account_created_at(account: SocialAccount | None) -> datetime | None:
     return _naive_utc(getattr(account, "created_at", None) if account else None)
 
@@ -401,20 +565,20 @@ def account_upload_phase(account: SocialAccount | None, *, now: datetime | None 
 def account_in_settle_rest(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     """First 24 hours after farm upload: no work, no humanization, stay offline.
 
-    Intercept accounts skip this: they must connect immediately to drop extra devices.
+    Intercept stays fully offline until our own session replaces the stolen one.
     """
     if account_is_intercept(account):
-        return False
+        return intercept_is_quiet(account, now=now)
     return account_upload_phase(account, now=now) == PHASE_SETTLE
 
 
 def account_may_keep_alive(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     """Persistent hub online only after day 2. Days 1–2 use short connect/disconnect.
 
-    Intercept accounts stay connected so session-guard can kick extra devices.
+    Intercept stays online 24/7 only after reauth; until then we do not connect.
     """
     if account_is_intercept(account):
-        return True
+        return intercept_is_reauthorized(account)
     return account_upload_phase(account, now=now) == PHASE_RAMP
 
 

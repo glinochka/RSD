@@ -2397,6 +2397,10 @@ class SocialAccount(Base):
     origin: Mapped[str] = mapped_column(
         String(32), default="farm", server_default="farm", nullable=False, index=True
     )
+    intercept_reauthorized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    intercept_reauth_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    intercept_reauth_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    encrypted_cloud_password: Mapped[str | None] = mapped_column(Text, nullable=True)
     restriction_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     restriction_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     restriction_detail: Mapped[str | None] = mapped_column(Text, nullable=True)

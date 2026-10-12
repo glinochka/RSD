@@ -1083,6 +1083,42 @@ const customService = {
     return handleResponse(response);
   },
 
+  async updateAccountCloudPassword(automationId, accountId, payload) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_CLOUD_PASSWORD(automationId, accountId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async reauthInterceptAccount(automationId, accountId, payload = {}) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_INTERCEPT_REAUTH(automationId, accountId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async confirmAccountCloudPassword(automationId, accountId, code) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_CLOUD_PASSWORD_CONFIRM(automationId, accountId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ code }),
+      },
+    );
+    return handleResponse(response);
+  },
+
     async updateAccount(automationId, accountId, { displayName, bio } = {}) {
       const body = {};
       if (displayName !== undefined) {
@@ -1578,6 +1614,40 @@ const customService = {
       {
         method: 'POST',
         headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async pauseAutomationJob(automationId, jobId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_JOB_PAUSE(automationId, jobId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async resumeAutomationJob(automationId, jobId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_JOB_RESUME(automationId, jobId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async patchAutomationJob(automationId, jobId, payload) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_JOB(automationId, jobId)}`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload || {}),
       },
     );
     return handleResponse(response);

@@ -30,6 +30,11 @@ from .schemas import (
     AccountQrStatusResponse,
     AccountQrVerify2faRequest,
     AccountResponse,
+    CloudPasswordConfirmRequest,
+    CloudPasswordUpdateRequest,
+    CloudPasswordUpdateResponse,
+    InterceptReauthRequest,
+    InterceptReauthResponse,
     AccountSmsRequest,
     AccountSmsStartResponse,
     AccountSmsVerifyRequest,
@@ -49,6 +54,7 @@ from .schemas import (
     ChatDiscoveryTaskListResponse,
     ChatDiscoveryTaskResponse,
     UnifiedJobListResponse,
+    UnifiedJobPatchRequest,
     UnifiedJobResponse,
     UbtStatsResponse,
     ChatBlackboxRequest,
@@ -173,6 +179,16 @@ from ..services.custom.account_session_guard_service import (
     adopt_account_sessions,
     pause_account_session_guard,
 )
+from ..services.custom.account_cloud_password_service import (
+    CloudPasswordError,
+    confirm_cloud_password_email,
+    update_cloud_password,
+)
+from ..services.custom.account_pacing import intercept_public_state
+from ..services.custom.intercept_reauth_service import (
+    queue_intercept_reauth,
+    run_intercept_reauth_account,
+)
 from ..services.telegram_userbot_auth import TelegramUserbotAuthError
 from ..services.custom.bulk_profile_service import (
     BulkProfileUpdateWorker,
@@ -189,7 +205,16 @@ from ..services.custom.chat_discovery_service import (
 )
 from ..services.custom.chat_import_service import import_chats_from_file, retry_import_errors
 from ..services.custom.chat_inspect_service import get_inspect_status, mark_inspect_running, run_inspect_comments
-from ..services.custom.job_service import cancel_job, get_job, list_jobs, queue_tracked, record_finished
+from ..services.custom.job_service import (
+    cancel_job,
+    get_job,
+    list_jobs,
+    pause_job,
+    queue_tracked,
+    record_finished,
+    resume_job,
+    update_job,
+)
 from ..services.custom.account_prepare_service import (
     get_prepare_status,
     mark_prepare_running,
@@ -1578,6 +1603,7 @@ def _account_response(
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
         telegram_session_count=getattr(social_account, "telegram_session_count", None),
         origin=getattr(social_account, "origin", None) or "farm",
+        **intercept_public_state(social_account),
     )
 
 
@@ -2116,10 +2142,12 @@ async def check_account_spamblock(
             ) from exc
         if result.get("status") == "not_found":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-        if result.get("status") == "no_session":
+        if result.get("status") in {"no_session", "held"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=_spamblock_check_detail(result),
+                detail="Первые 24 часа и до переавторизации аккаунт не трогаем"
+                if result.get("status") == "held"
+                else _spamblock_check_detail(result),
             )
         classification = result.get("classification") if isinstance(result.get("classification"), dict) else {}
         pool_account = result.get("pool_account")
@@ -2157,6 +2185,11 @@ async def get_account_telegram_code(
         status_value = str(result.get("status") or "")
         if status_value == "not_found":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        if status_value == "held":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(result.get("error") or "Первые 24 часа аккаунт не трогаем"),
+            )
         if status_value == "no_session":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2196,6 +2229,16 @@ def _authorization_http_error(result: dict[str, Any]) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Нет сессии Telegram. Подключите аккаунт заново по QR или SMS.",
+        )
+    if status_value == "not_ready":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(result.get("error") or "Сначала дождитесь переавторизации сессии"),
+        )
+    if status_value == "held":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(result.get("error") or "Первые 24 часа аккаунт не трогаем"),
         )
     if status_value == "error":
         raise HTTPException(
@@ -2309,6 +2352,128 @@ async def adopt_account_sessions_endpoint(
                 result["social_account"],
                 automation.max_daily_messages_per_account,
             ),
+        )
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/{account_id}/cloud-password",
+    response_model=CloudPasswordUpdateResponse,
+)
+async def update_account_cloud_password(
+    automation_id: int,
+    account_id: int,
+    payload: CloudPasswordUpdateRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            result = await update_cloud_password(
+                session,
+                automation_id,
+                account_id,
+                current_password=payload.current_password,
+                new_password=payload.new_password,
+                hint=payload.hint,
+                email=payload.email,
+            )
+        except CloudPasswordError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        _authorization_http_error(result)
+        status_value = str(result.get("status") or "")
+        account = _account_response(
+            result["pool_account"],
+            result["social_account"],
+            automation.max_daily_messages_per_account,
+        )
+        if status_value == "need_email_code":
+            return CloudPasswordUpdateResponse(
+                status=status_value,
+                detail="Пароль принят. Введите код из письма, чтобы подтвердить почту.",
+                email_pattern=result.get("email_pattern"),
+                code_length=int(result.get("code_length") or 6),
+                account=account,
+            )
+        return CloudPasswordUpdateResponse(
+            status="ok",
+            detail="Облачный пароль обновлён.",
+            account=account,
+        )
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/{account_id}/cloud-password/confirm",
+    response_model=CloudPasswordUpdateResponse,
+)
+async def confirm_account_cloud_password_email(
+    automation_id: int,
+    account_id: int,
+    payload: CloudPasswordConfirmRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            result = await confirm_cloud_password_email(
+                session,
+                automation_id,
+                account_id,
+                code=payload.code,
+            )
+        except CloudPasswordError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        _authorization_http_error(result)
+        return CloudPasswordUpdateResponse(
+            status="ok",
+            detail="Почта для облачного пароля подтверждена.",
+            account=_account_response(
+                result["pool_account"],
+                result["social_account"],
+                automation.max_daily_messages_per_account,
+            ),
+        )
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/{account_id}/intercept-reauth",
+    response_model=InterceptReauthResponse,
+)
+async def intercept_reauth_account_endpoint(
+    automation_id: int,
+    account_id: int,
+    background: BackgroundTasks,
+    payload: InterceptReauthRequest | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    body = payload or InterceptReauthRequest()
+    async with async_session_maker() as session:
+        result = await queue_intercept_reauth(
+            session,
+            automation_id,
+            account_id,
+            cloud_password=body.cloud_password,
+        )
+        if result.get("status") == "not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        if result.get("status") == "not_ready":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(result.get("error") or "Переавторизация недоступна"),
+            )
+        pool_account = result.get("pool_account")
+        social_account = result["social_account"]
+        if pool_account is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        account = _account_response(pool_account, social_account, automation.max_daily_messages_per_account)
+        if result.get("status") == "in_progress":
+            return InterceptReauthResponse(
+                status="in_progress",
+                detail="Переавторизация уже идёт. Это занимает несколько минут.",
+                account=account,
+            )
+        background.add_task(run_intercept_reauth_account, automation_id, account_id)
+        return InterceptReauthResponse(
+            status="queued",
+            detail="Переавторизация запущена. Новая сессия на том же прокси, старая сама себя завершит только после успеха.",
+            account=account,
         )
 
 
@@ -3141,6 +3306,52 @@ async def cancel_automation_job(
 ):
     async with async_session_maker() as session:
         item = await cancel_job(session, automation_id, job_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        return UnifiedJobResponse.model_validate(item)
+
+
+@router.post("/automations/{automation_id}/jobs/{job_id}/pause", response_model=UnifiedJobResponse)
+async def pause_automation_job(
+    automation_id: int,
+    job_id: str,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        item = await pause_job(session, automation_id, job_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        return UnifiedJobResponse.model_validate(item)
+
+
+@router.post("/automations/{automation_id}/jobs/{job_id}/resume", response_model=UnifiedJobResponse)
+async def resume_automation_job(
+    automation_id: int,
+    job_id: str,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        item = await resume_job(session, automation_id, job_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        return UnifiedJobResponse.model_validate(item)
+
+
+@router.patch("/automations/{automation_id}/jobs/{job_id}", response_model=UnifiedJobResponse)
+async def patch_automation_job(
+    automation_id: int,
+    job_id: str,
+    payload: UnifiedJobPatchRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        item = await update_job(
+            session,
+            automation_id,
+            job_id,
+            params=payload.params,
+            title=payload.title,
+        )
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
         return UnifiedJobResponse.model_validate(item)

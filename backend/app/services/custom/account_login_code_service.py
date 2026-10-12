@@ -68,6 +68,15 @@ async def read_last_telegram_login_code(
     if not row:
         return {"status": "not_found"}
     pool_account, social_account = row
+    from .account_pacing import intercept_is_quiet
+
+    if intercept_is_quiet(social_account):
+        return {
+            "status": "held",
+            "error": "Первые 24 часа и до переавторизации аккаунт не трогаем",
+            "pool_account": pool_account,
+            "social_account": social_account,
+        }
     if not social_account.session_file_path and not getattr(social_account, "encrypted_session", None):
         return {"status": "no_session", "pool_account": pool_account, "social_account": social_account}
 

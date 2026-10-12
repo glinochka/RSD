@@ -11,7 +11,8 @@ import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { DELAY_MAX_SECONDS } from './delayLimits';
-import { assertCanRun, mergeSettings, useLiveRef } from './ubtPersist';
+import UbtJobControls from '../../../components/custom/UbtJobControls';
+import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
@@ -25,6 +26,7 @@ const DELAY_PRESETS = {
 const STATUS_LABELS = {
   pending: 'Ожидает',
   running: 'В работе',
+  paused: 'На паузе',
   completed: 'Завершено',
   error: 'Ошибка',
   cancelled: 'Отменено',
@@ -76,7 +78,7 @@ const CustomAutomationMasslookingPage = () => {
   }, [load]);
 
   const jobs = data?.jobs || [];
-  const activeJob = jobs.find((item) => ['pending', 'running'].includes(item.status)) || jobs[0] || null;
+  const activeJob = jobs.find((item) => LIVE_JOB_STATUSES.includes(item.status)) || jobs[0] || null;
 
   useEffect(() => {
     if (!jobs.some((item) => ['pending', 'running'].includes(item.status))) {
@@ -464,9 +466,13 @@ const CustomAutomationMasslookingPage = () => {
           </div>
           <div className="nc-row">
             <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => persist()}>Сохранить</button>
-            {activeJob?.can_cancel ? (
-              <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => runSafe(() => customService.cancelAutomationJob(id, activeJob.id).then(load), 'Запуск отменён')}>Остановить</button>
-            ) : null}
+            <UbtJobControls
+              job={activeJob}
+              busy={busy}
+              onPause={() => runSafe(() => customService.pauseAutomationJob(id, activeJob.id).then(load), 'Задача на паузе')}
+              onResume={() => runSafe(() => customService.resumeAutomationJob(id, activeJob.id).then(load), 'Задача продолжена')}
+              onCancel={() => runSafe(() => customService.cancelAutomationJob(id, activeJob.id).then(load), 'Запуск отменён')}
+            />
             <button
               type="button"
               className="acc-btn acc-btn--primary"

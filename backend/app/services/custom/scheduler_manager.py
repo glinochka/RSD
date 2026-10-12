@@ -30,6 +30,7 @@ from .account_session_orchestrator import close_account_sessions, run_account_se
 from .chat_moderation_service import run_moderation_probe_pass
 from .chat_rotation_service import run_chat_rotation_pass
 from .session_hygiene_service import run_session_hygiene_for_automation
+from .intercept_reauth_service import run_intercept_reauth_for_automation
 from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
 from .warmup_module_service import warmup_scheduler_active
 
@@ -86,6 +87,7 @@ class CustomAutomationScheduler:
             "mod_probe": settings.CUSTOM_MOD_PROBE_INTERVAL_SECONDS,
             "chat_rotation": settings.CUSTOM_CHAT_ROTATION_INTERVAL_SECONDS,
             "session_hygiene": settings.CUSTOM_SESSION_HYGIENE_INTERVAL_SECONDS,
+            "intercept_reauth": settings.CUSTOM_INTERCEPT_REAUTH_INTERVAL_SECONDS,
             "test_watch": settings.CUSTOM_TEST_WATCH_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
             "dmp_notify": 60,
@@ -104,6 +106,7 @@ class CustomAutomationScheduler:
             "mod_probe": run_moderation_probe_pass,
             "chat_rotation": run_chat_rotation_pass,
             "session_hygiene": run_session_hygiene_for_automation,
+            "intercept_reauth": run_intercept_reauth_for_automation,
             "test_watch": run_lab_neurocommenting_pass,
             "dmp_poll": poll_pending_imports,
             "dmp_notify": retry_pending_dmp_notifications,
@@ -149,7 +152,16 @@ class CustomAutomationScheduler:
                 jobs.add("lead_warmup")
             return jobs
 
-        jobs = {"join", "discovery", "mod_probe", "chat_rotation", "inbound_dm", "session_hygiene", "account_sessions"}
+        jobs = {
+            "join",
+            "discovery",
+            "mod_probe",
+            "chat_rotation",
+            "inbound_dm",
+            "session_hygiene",
+            "intercept_reauth",
+            "account_sessions",
+        }
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
         if automation.is_chat_monitoring_enabled:

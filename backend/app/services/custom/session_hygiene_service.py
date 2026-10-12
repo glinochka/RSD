@@ -271,8 +271,20 @@ async def _account_requires_2fa(client) -> bool:
         return False
 
 
-async def _mint_spare_session(main_client, account: SocialAccount, automation_id: int) -> int | None:
-    """Issue a second independent auth key by accepting QR login from the main client."""
+async def _mint_spare_session(
+    main_client,
+    account: SocialAccount,
+    automation_id: int,
+    *,
+    cloud_password: str | None = None,
+    before_accept=None,
+    before_password=None,
+) -> int | None:
+    """Issue a second independent auth key by accepting QR login from the main client.
+
+    Spare client uses the same proxy as the main session (`main_client._proxy`).
+    `before_accept` / `before_password` are optional human-like pauses.
+    """
     from telethon.tl.functions.auth import AcceptLoginTokenRequest
 
     try:
@@ -280,11 +292,9 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
     except Exception:  # pragma: no cover
         SessionPasswordNeededError = type("SessionPasswordNeededError", (Exception,), {})
 
-    if await _account_requires_2fa(main_client.client):
-        raise RuntimeError(
-            "2FA cloud password is enabled; spare session mint is skipped "
-            "(QR spare login cannot complete without the password)"
-        )
+    password = str(cloud_password or "").strip() or None
+    if await _account_requires_2fa(main_client.client) and not password:
+        raise RuntimeError("need_2fa")
 
     work = Path(tempfile.mkdtemp(prefix="rsd_spare_"))
     spare_path = work / "spare.session"
@@ -303,15 +313,18 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
         token = getattr(qr_login, "token", None)
         if not token:
             raise RuntimeError("Telegram QR login returned an empty token")
+        if before_accept is not None:
+            await before_accept()
         await main_client.client(AcceptLoginTokenRequest(token=token))
         accepted = True
         try:
             await qr_login.wait(timeout=_QR_ACCEPT_TIMEOUT)
         except SessionPasswordNeededError as exc:
-            raise RuntimeError(
-                "Spare mint hit 2FA password after AcceptLoginToken; "
-                "aborting so we do not leave a half-open device"
-            ) from exc
+            if not password:
+                raise RuntimeError("need_2fa") from exc
+            if before_password is not None:
+                await before_password()
+            await spare_client.sign_in(password=password)
         await _close_client(spare_client)
         spare_client = None
         if not session_file_has_auth_key(spare_path):

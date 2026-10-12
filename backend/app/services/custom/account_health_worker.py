@@ -9,7 +9,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_in_settle_rest, account_is_intercept, account_is_resting, account_may_keep_alive
+from .account_pacing import (
+    account_in_settle_rest,
+    account_is_intercept,
+    account_is_resting,
+    account_may_keep_alive,
+    intercept_is_quiet,
+)
 from .account_classification_service import classify_account
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, update_account_after_telegram_error
@@ -65,6 +71,9 @@ class AccountHealthWorker:
         pool_account = await session.scalar(
             select(PoolAccount).where(PoolAccount.social_account_id == account_id)
         )
+
+        if intercept_is_quiet(social_account):
+            return {"account_id": account_id, "status": "skipped", "reason": "intercept_hold"}
 
         if getattr(social_account, "is_frozen", False):
             social_account.last_health_check_at = _utc_now()
@@ -332,6 +341,12 @@ class AccountHealthWorker:
         if not result:
             return {"status": "not_found"}
         pool_account, social_account = result
+        if intercept_is_quiet(social_account):
+            return {
+                "status": "held",
+                "pool_account": pool_account,
+                "social_account": social_account,
+            }
         if not (social_account.session_file_path or "").strip():
             return {
                 "status": "no_session",

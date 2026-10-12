@@ -1,5 +1,7 @@
 import { useRef } from 'react';
 
+export const LIVE_JOB_STATUSES = ['pending', 'running', 'paused'];
+
 export function useLiveRef(value) {
   const ref = useRef(value);
   ref.current = value;

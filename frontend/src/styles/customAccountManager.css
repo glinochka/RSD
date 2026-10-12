@@ -420,6 +420,27 @@ a.acc-icon-btn {
 .acc-chip--bad { background: #fde8ee; color: #be123c; }
 .acc-chip--info { background: #f0f0f0; color: #2f2f2f; }
 .acc-chip--mute { background: #f3f4f6; color: #9ca3af; }
+.acc-chip--hold { background: #fff4d6; color: #b45309; }
+.acc-chip--pool { background: #ece7fe; color: #6d28d9; }
+
+.acc-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.acc-2fa {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.acc-2fa h3 {
+  margin: 8px 0 0;
+  font-size: 0.95rem;
+}
 
 .acc-empty {
   min-height: 220px;

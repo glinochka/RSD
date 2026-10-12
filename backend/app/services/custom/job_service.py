@@ -18,7 +18,10 @@ logger = logging.getLogger(__name__)
 LOG_TTL = timedelta(hours=24)
 MAX_JOB_LOGS = 2000
 ACTIVE_STATUSES = {"pending", "running", "processing", "awaiting_approval"}
+PAUSED_STATUS = "paused"
+VISIBLE_ACTIVE_STATUSES = ACTIVE_STATUSES | {PAUSED_STATUS}
 HISTORY_STATUSES = {"completed", "error", "cancelled", "skipped"}
+_SKIP_PARAM_KEYS = {"presets", "_job_id"}
 PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling"}
 STREAM_JOB_TYPES = {
     "neurocommenting": "neurocommenting",
@@ -131,12 +134,20 @@ def apply_module_enabled(automation: CustomAutomation, job_type: str, enabled: b
     automation.updated_at = _utc_now()
 
 
-def _duration_seconds(started: datetime | None, ended: datetime | None, status: str) -> int:
+def _duration_seconds(
+    started: datetime | None,
+    ended: datetime | None,
+    status: str,
+    *,
+    freeze_at: datetime | None = None,
+) -> int:
     start = started
     finish = ended
     if not start:
         return 0
-    if not finish:
+    if status == PAUSED_STATUS:
+        finish = freeze_at or ended or start
+    elif not finish:
         finish = _utc_now() if status in ACTIVE_STATUSES else start
     delta = finish - start
     return max(0, int(delta.total_seconds()))
@@ -149,6 +160,19 @@ def _normalize_status(status: str | None) -> str:
     if raw in {"idle"}:
         return "completed"
     return raw
+
+
+def _public_params(raw: Any) -> dict[str, Any]:
+    data = dict(raw) if isinstance(raw, dict) else {}
+    for key in _SKIP_PARAM_KEYS:
+        data.pop(key, None)
+    return data
+
+
+def _append_job_log(job: CustomJob, message: str, *, level: str = "info") -> None:
+    logs = list(job.logs or [])
+    logs.append({"ts": _iso(_utc_now()), "level": level, "message": str(message)[:2000]})
+    job.logs = logs[-MAX_JOB_LOGS:]
 
 
 def _filter_logs(logs: list[Any] | None) -> list[dict[str, Any]]:
@@ -191,6 +215,10 @@ def _payload(
     subtitle: str | None = None,
     can_cancel: bool = False,
     can_approve: bool = False,
+    can_pause: bool = False,
+    can_resume: bool = False,
+    can_edit: bool = False,
+    freeze_at: datetime | None = None,
 ) -> dict[str, Any]:
     meta = JOB_META.get(job_type, {"category": "module", "title": title, "badge": "ЗД"})
     normalized = _normalize_status(status)
@@ -211,9 +239,14 @@ def _payload(
         "created_at": created_at,
         "started_at": started_at,
         "completed_at": completed_at,
-        "duration_seconds": _duration_seconds(started_at or created_at, completed_at, normalized),
+        "duration_seconds": _duration_seconds(
+            started_at or created_at, completed_at, normalized, freeze_at=freeze_at
+        ),
         "can_cancel": can_cancel,
         "can_approve": can_approve,
+        "can_pause": can_pause,
+        "can_resume": can_resume,
+        "can_edit": can_edit,
     }
 
 
@@ -281,6 +314,7 @@ def serialize_discovery(task: ChatDiscoveryTask) -> dict[str, Any]:
         logs=_discovery_logs(task),
         can_cancel=status in {"pending", "processing"},
         can_approve=status == "awaiting_approval",
+        can_edit=status in {"pending", "processing", "awaiting_approval"},
     )
 
 
@@ -322,29 +356,34 @@ def serialize_import(job: ChatImportJob) -> dict[str, Any]:
 
 def serialize_custom(job: CustomJob) -> dict[str, Any]:
     meta = JOB_META.get(job.job_type, {})
+    status = job.status
     return _payload(
         source="job",
         source_id=job.id,
         job_type=job.job_type,
         title=job.title or meta.get("title") or job.job_type,
-        subtitle="",
-        status=job.status,
+        subtitle="На паузе" if status == PAUSED_STATUS else "",
+        status=status,
         created_at=job.created_at,
         started_at=job.started_at or job.created_at,
-        completed_at=job.completed_at,
-        params=job.params or {},
+        completed_at=None if status == PAUSED_STATUS else job.completed_at,
+        params=_public_params(job.params),
         result=job.result or {},
         logs=job.logs or [],
         error=job.error,
-        can_cancel=job.status in ACTIVE_STATUSES,
+        can_cancel=status in VISIBLE_ACTIVE_STATUSES,
+        can_pause=status in ACTIVE_STATUSES,
+        can_resume=status == PAUSED_STATUS,
+        can_edit=status in VISIBLE_ACTIVE_STATUSES,
+        freeze_at=job.updated_at if status == PAUSED_STATUS else None,
     )
 
 
 def _matches(item: dict[str, Any], *, bucket: str, category: str | None, search: str | None) -> bool:
     status = item["status"]
-    if bucket == "active" and status not in ACTIVE_STATUSES:
+    if bucket == "active" and status not in VISIBLE_ACTIVE_STATUSES:
         return False
-    if bucket == "history" and status in ACTIVE_STATUSES:
+    if bucket == "history" and status in VISIBLE_ACTIVE_STATUSES:
         return False
     if category and item.get("category") != category:
         return False
@@ -553,10 +592,16 @@ async def job_is_cancelled(job_id: int) -> bool:
         return job is None or job.status == "cancelled"
 
 
+async def job_is_stopped(job_id: int) -> bool:
+    async with async_session_maker() as session:
+        job = await _load_job(session, job_id)
+        return job is None or job.status in {"cancelled", PAUSED_STATUS}
+
+
 async def mark_running(job_id: int) -> None:
     async with async_session_maker() as session:
         job = await _load_job(session, job_id)
-        if not job or job.status == "cancelled":
+        if not job or job.status in {"cancelled", PAUSED_STATUS}:
             return
         job.status = "running"
         job.started_at = job.started_at or _utc_now()
@@ -575,7 +620,7 @@ async def finish_job(
         job = await _load_job(session, job_id)
         if not job:
             return
-        if job.status == "cancelled":
+        if job.status in {"cancelled", PAUSED_STATUS}:
             return
         job.status = status
         if result is not None:
@@ -607,7 +652,7 @@ async def _cancel_sibling_jobs(automation_id: int, job_type: str, keep_id: int) 
                 select(CustomJob).where(
                     CustomJob.custom_automation_id == automation_id,
                     CustomJob.job_type == job_type,
-                    CustomJob.status.in_(tuple(ACTIVE_STATUSES)),
+                    CustomJob.status.in_(tuple(VISIBLE_ACTIVE_STATUSES)),
                     CustomJob.id != keep_id,
                 )
             )
@@ -663,6 +708,8 @@ def _finite_should_complete(payload: dict[str, Any], job_type: str) -> bool:
 
 async def run_spawned(job_id: int, fn: Callable[..., Awaitable[Any]], *args: Any) -> None:
     await mark_running(job_id)
+    if await job_is_stopped(job_id):
+        return
     await append_log(job_id, "Задача запущена")
     job_type = ""
     params: dict[str, Any] = {}
@@ -675,7 +722,7 @@ async def run_spawned(job_id: int, fn: Callable[..., Awaitable[Any]], *args: Any
     try:
         result = await fn(*args)
         payload = result if isinstance(result, dict) else {"value": result}
-        if await job_is_cancelled(job_id):
+        if await job_is_stopped(job_id):
             return
         if persistent:
             await finish_job(job_id, "running", result=payload)
@@ -732,7 +779,7 @@ async def cancel_job(session: AsyncSession, automation_id: int, job_id: str) -> 
         job = await session.get(CustomJob, ident)
         if not job or job.custom_automation_id != automation_id:
             return None
-        if job.status not in ACTIVE_STATUSES:
+        if job.status not in VISIBLE_ACTIVE_STATUSES:
             return serialize_custom(job)
         job.status = "cancelled"
         job.completed_at = now
@@ -747,3 +794,196 @@ async def cancel_job(session: AsyncSession, automation_id: int, job_id: str) -> 
         await session.refresh(job)
         return serialize_custom(job)
     return None
+
+
+def _split_job_id(job_id: str) -> tuple[str, int] | None:
+    source, _, raw = job_id.partition(":")
+    if not raw.isdigit():
+        return None
+    return source, int(raw)
+
+
+def _normalize_module_params(job_type: str, incoming: dict[str, Any]) -> dict[str, Any]:
+    if job_type == "neurocommenting":
+        from .neurocommenting_module_service import normalize_nc_settings
+
+        return normalize_nc_settings(incoming)
+    if job_type == "discussion":
+        from .neurochatting_module_service import normalize_chat_settings
+
+        return normalize_chat_settings(incoming)
+    if job_type == "shilling":
+        from .neuroshilling_module_service import normalize_shill_settings
+
+        return normalize_shill_settings(incoming)
+    if job_type == "chat_broadcast":
+        from .chat_broadcast_module_service import normalize_bc_settings
+
+        return normalize_bc_settings(incoming)
+    if job_type == "dm_broadcast":
+        from .dm_broadcast_module_service import normalize_dm_settings
+
+        return normalize_dm_settings(incoming)
+    if job_type == "masslooking":
+        from .masslooking_module_service import normalize_look_settings
+
+        return normalize_look_settings(incoming)
+    if job_type == "masspriming":
+        from .masspriming_module_service import normalize_prime_settings
+
+        return normalize_prime_settings(incoming)
+    if job_type == "parser":
+        from .parser_module_service import normalize_parser_settings
+
+        return normalize_parser_settings(incoming)
+    if job_type == "warmup":
+        from .warmup_module_service import normalize_warmup_settings
+
+        return normalize_warmup_settings(incoming)
+    return incoming
+
+
+def _apply_params_to_module(automation: CustomAutomation, job_type: str, params: dict[str, Any]) -> None:
+    key, _flag = MODULE_BINDINGS.get(job_type, (None, None))
+    if job_type == "warmup":
+        key = "warmup"
+    if not key:
+        return
+    blob = dict(automation.module_settings or {})
+    current = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
+    merged = {**current, **{k: v for k, v in params.items() if k not in _SKIP_PARAM_KEYS}}
+    merged["presets"] = current.get("presets") or []
+    if "enabled" in current:
+        merged["enabled"] = current.get("enabled")
+    blob[key] = _normalize_module_params(job_type, merged)
+    automation.module_settings = blob
+    automation.updated_at = _utc_now()
+
+
+_DISCOVERY_PARAM_KEYS = {
+    "query": "query",
+    "Запрос": "query",
+    "max_chats": "max_chats",
+    "Макс. чатов": "max_chats",
+    "relevance_threshold": "relevance_threshold",
+    "Порог релевантности": "relevance_threshold",
+    "require_approval": "require_approval",
+    "Ручное одобрение": "require_approval",
+    "mode": "mode",
+    "Режим": "mode",
+}
+
+
+async def pause_job(session: AsyncSession, automation_id: int, job_id: str) -> dict[str, Any] | None:
+    parsed = _split_job_id(job_id)
+    if not parsed or parsed[0] != "job":
+        return None
+    job = await session.get(CustomJob, parsed[1])
+    if not job or job.custom_automation_id != automation_id:
+        return None
+    if job.status not in ACTIVE_STATUSES:
+        return serialize_custom(job)
+    now = _utc_now()
+    job.status = PAUSED_STATUS
+    job.completed_at = None
+    job.updated_at = now
+    _append_job_log(job, "На паузе. Можно продолжить или изменить параметры.")
+    await session.commit()
+    await session.refresh(job)
+    return serialize_custom(job)
+
+
+async def resume_job(session: AsyncSession, automation_id: int, job_id: str) -> dict[str, Any] | None:
+    parsed = _split_job_id(job_id)
+    if not parsed or parsed[0] != "job":
+        return None
+    job = await session.get(CustomJob, parsed[1])
+    if not job or job.custom_automation_id != automation_id:
+        return None
+    if job.status != PAUSED_STATUS:
+        return serialize_custom(job)
+    now = _utc_now()
+    job.status = "running"
+    job.started_at = job.started_at or now
+    job.completed_at = None
+    job.updated_at = now
+    _append_job_log(job, "Возобновлено.")
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation is not None:
+        apply_module_enabled(automation, job.job_type, True)
+    await session.commit()
+    await session.refresh(job)
+    return serialize_custom(job)
+
+
+async def update_job(
+    session: AsyncSession,
+    automation_id: int,
+    job_id: str,
+    *,
+    params: dict[str, Any] | None = None,
+    title: str | None = None,
+) -> dict[str, Any] | None:
+    parsed = _split_job_id(job_id)
+    if not parsed:
+        return None
+    source, ident = parsed
+    now = _utc_now()
+    if source == "discovery":
+        task = await session.get(ChatDiscoveryTask, ident)
+        if not task or task.custom_automation_id != automation_id:
+            return None
+        if task.status not in {"pending", "processing", "awaiting_approval"}:
+            return serialize_discovery(task)
+        incoming = params or {}
+        mapped: dict[str, Any] = {}
+        for key, value in incoming.items():
+            field = _DISCOVERY_PARAM_KEYS.get(str(key))
+            if field:
+                mapped[field] = value
+        if "query" in mapped:
+            query = str(mapped["query"] or "").strip()
+            if query:
+                task.query = query
+        if "max_chats" in mapped:
+            try:
+                task.max_chats = max(1, min(200, int(mapped["max_chats"])))
+            except (TypeError, ValueError):
+                pass
+        if "relevance_threshold" in mapped:
+            try:
+                task.relevance_threshold = max(0.0, min(1.0, float(mapped["relevance_threshold"])))
+            except (TypeError, ValueError):
+                pass
+        if "require_approval" in mapped:
+            task.require_approval = bool(mapped["require_approval"])
+        if "mode" in mapped:
+            mode = str(mapped["mode"] or "").strip() or task.mode
+            task.mode = mode
+        task.updated_at = now
+        await session.commit()
+        await session.refresh(task)
+        return serialize_discovery(task)
+    if source != "job":
+        return None
+    job = await session.get(CustomJob, ident)
+    if not job or job.custom_automation_id != automation_id:
+        return None
+    if job.status not in VISIBLE_ACTIVE_STATUSES:
+        return serialize_custom(job)
+    if title:
+        job.title = str(title).strip()[:255] or job.title
+    incoming = _public_params(params or {})
+    if incoming:
+        merged = {**_public_params(job.params), **incoming}
+        if job.job_type in MODULE_BINDINGS or job.job_type == "warmup":
+            merged = _public_params(_normalize_module_params(job.job_type, merged))
+        job.params = merged
+        automation = await session.get(CustomAutomation, automation_id)
+        if automation is not None:
+            _apply_params_to_module(automation, job.job_type, merged)
+        _append_job_log(job, "Параметры обновлены.")
+    job.updated_at = now
+    await session.commit()
+    await session.refresh(job)
+    return serialize_custom(job)

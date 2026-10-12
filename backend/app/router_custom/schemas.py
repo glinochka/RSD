@@ -430,6 +430,14 @@ class AccountResponse(BaseModel):
     proxy_label: Optional[str] = None
     telegram_session_count: Optional[int] = None
     origin: str = "farm"
+    intercept_stage: Optional[str] = None
+    intercept_labels: list[str] = Field(default_factory=list)
+    intercept_can_adopt: bool = False
+    intercept_can_reauth: bool = False
+    intercept_has_cloud_password: bool = False
+    intercept_hold_until: Optional[datetime] = None
+    intercept_reauthorized_at: Optional[datetime] = None
+    intercept_reauth_error: Optional[str] = None
 
 
 class AccountQrStartResponse(BaseModel):
@@ -512,6 +520,35 @@ class AccountAuthorizationItem(BaseModel):
 class AccountAuthorizationListResponse(BaseModel):
     items: list[AccountAuthorizationItem]
     count: int
+    account: Optional[AccountResponse] = None
+
+
+class CloudPasswordUpdateRequest(BaseModel):
+    current_password: Optional[str] = None
+    new_password: str
+    hint: Optional[str] = ""
+    email: Optional[str] = None
+
+
+class CloudPasswordConfirmRequest(BaseModel):
+    code: str
+
+
+class CloudPasswordUpdateResponse(BaseModel):
+    status: str
+    detail: str = ""
+    email_pattern: Optional[str] = None
+    code_length: int = 6
+    account: Optional[AccountResponse] = None
+
+
+class InterceptReauthRequest(BaseModel):
+    cloud_password: Optional[str] = None
+
+
+class InterceptReauthResponse(BaseModel):
+    status: str
+    detail: str = ""
     account: Optional[AccountResponse] = None
 
 
@@ -932,6 +969,14 @@ class UnifiedJobResponse(BaseModel):
     duration_seconds: int = 0
     can_cancel: bool = False
     can_approve: bool = False
+    can_pause: bool = False
+    can_resume: bool = False
+    can_edit: bool = False
+
+
+class UnifiedJobPatchRequest(BaseModel):
+    params: dict[str, Any] = Field(default_factory=dict)
+    title: Optional[str] = None
 
 
 class UnifiedJobListResponse(BaseModel):
