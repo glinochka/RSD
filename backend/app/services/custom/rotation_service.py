@@ -184,6 +184,7 @@ async def list_alive_session_accounts(
     automation_id: int,
     *,
     exclude_banned: bool = True,
+    exclude_flood: bool = True,
 ) -> list[SocialAccount]:
     """All connected pool accounts. Used for inspect and preparation joins."""
     pool = await _default_pool(session, automation_id)
@@ -198,7 +199,7 @@ async def list_alive_session_accounts(
             continue
         if getattr(social, "is_frozen", False):
             continue
-        if account_is_flood_quarantined(social):
+        if exclude_flood and account_is_flood_quarantined(social):
             continue
         if not social.session_file_path and not getattr(social, "encrypted_session", None):
             continue

@@ -315,8 +315,8 @@ const UbtDistributeChats = ({
                   onClick={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
                 >
                   <span>
-                    <strong>{item.label || item.username || `#${item.id}`}</strong>
-                    <span className="nc-muted">{item.username ? `@${item.username}` : item.phone_number || ''}</span>
+                    <strong>{item.label || item.username || item.phone_number || `аккаунт #${item.id}`}</strong>
+                    <span className="nc-muted">{item.status ? item.status : (item.username ? `@${item.username}` : item.phone_number || '')}</span>
                   </span>
                   <span className="nc-pool-count">{item.joined_count || 0} вступил · {count}/{cap}</span>
                 </button>
@@ -379,7 +379,7 @@ const UbtDistributeChats = ({
                       <strong>{item.label || item.username || `#${item.id}`}</strong>
                       <span>{item.username ? `@${item.username}` : item.phone_number || ''}</span>
                     </div>
-                    <span>{blocked ? 'не готов' : on ? 'в задаче' : 'добавить'}</span>
+                    <span>{item.status || (blocked ? 'не готов' : on ? 'в задаче' : 'добавить')}</span>
                   </button>
                 );
               })}

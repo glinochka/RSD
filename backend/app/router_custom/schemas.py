@@ -1063,6 +1063,7 @@ class TaskPoolAccountItem(BaseModel):
     assigned: list[TaskPoolChatItem] = Field(default_factory=list)
     assigned_count: int = 0
     joined_count: int = 0
+    status: str = ""
 
 
 class TaskPoolFolderMix(BaseModel):

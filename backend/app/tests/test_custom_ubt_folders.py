@@ -853,6 +853,28 @@ class TestJobLifecycle:
         )
         assert pending == 3
 
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_addlist_service import pool_actor_selectable, pool_actor_status
+        from app.services.custom.job_service import actor_label
+
+        parked = SimpleNamespace(
+            id=32,
+            display_name="Maksim Toples",
+            username="MaksimToples",
+            phone_number="15674004008",
+            is_active=True,
+            is_banned=False,
+            is_frozen=False,
+            flood_quarantined_until=datetime(2099, 1, 1, 12, 0),
+            session_file_path="ok.session",
+            encrypted_session="x",
+        )
+        assert actor_label(parked) == "Maksim Toples (15674004008)"
+        assert pool_actor_status(parked) == "карантин"
+        assert pool_actor_selectable(parked) is True
+        assert pool_actor_status(None) == "нет в базе"
+
     def test_sibling_tasks_keep_the_same_chat_owners(self):
         from app.services.custom.chat_addlist_service import (
             merge_assignment_previous,

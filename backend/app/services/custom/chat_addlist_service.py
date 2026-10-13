@@ -53,6 +53,34 @@ JOIN_WAVE_MIN = 15
 JOIN_WAVE_MAX = 20
 
 
+def pool_actor_status(account: SocialAccount | None) -> str:
+    """Short reason the pool row is not currently working."""
+    if account is None:
+        return "нет в базе"
+    if not account.is_active:
+        return "выключен"
+    if account.is_banned:
+        return "бан"
+    if getattr(account, "is_frozen", False):
+        return "заморозка"
+    from .account_pacing import account_is_flood_quarantined
+
+    if account_is_flood_quarantined(account):
+        return "карантин"
+    if not (account.session_file_path or getattr(account, "encrypted_session", None)):
+        return "нет сессии"
+    return ""
+
+
+def pool_actor_selectable(account: SocialAccount | None) -> bool:
+    """True if the account can stay on a task even while FloodWait parks joins."""
+    if account is None or not account.is_active or account.is_banned:
+        return False
+    if getattr(account, "is_frozen", False):
+        return False
+    return bool(account.session_file_path or getattr(account, "encrypted_session", None))
+
+
 def join_account_is_parked(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     """True while Telegram FloodWait / retry still holds this account."""
     from .account_pacing import account_is_flood_quarantined, account_is_resting
@@ -965,7 +993,10 @@ async def ensure_task_join_plan(
     mix: bool = False,
 ) -> dict[str, Any]:
     """Keep per-account pools (max 50) and a reserve; joins happen in 15–20 waves."""
-    alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
+    alive = {
+        account.id: account
+        for account in await list_alive_session_accounts(session, automation.id, exclude_flood=False)
+    }
     workers = [aid for aid in account_ids if aid in alive]
     chats = (
         await session.execute(
@@ -1713,11 +1744,10 @@ async def serialize_task_pool(
     automation: CustomAutomation,
     task_key: str,
 ) -> dict[str, Any]:
-    from .account_roles import account_is_task_ready
     from .chat_folder_service import folder_payloads
     from .job_service import VISIBLE_ACTIVE_STATUSES, actor_label
     from .rotation_service import list_alive_session_accounts
-    from ...alembic.models import CustomJob, PoolAccount
+    from ...alembic.models import CustomJob
 
     settings = module_settings_for_task(automation, task_key)
     plans = _plans_blob(automation)
@@ -1747,19 +1777,20 @@ async def serialize_task_pool(
     folder_names = {int(item["id"]): str(item.get("name") or "") for item in folder_rows}
     joined = await load_joined_assignment(session, automation.id, account_ids, wanted)
     joined_set = {(aid, cid) for aid, ids in joined.items() for cid in ids}
-    alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
-    pool_rows = (
-        await session.execute(
-            select(PoolAccount).where(
-                PoolAccount.custom_automation_id == automation.id,
-                PoolAccount.social_account_id.in_(list(alive.keys()) or [0]),
-            )
-        )
-    ).scalars().all()
-    pool_by_account = {int(row.social_account_id): row for row in pool_rows}
+    roster = {
+        account.id: account
+        for account in await list_alive_session_accounts(session, automation.id, exclude_flood=False)
+    }
+    missing_ids = [aid for aid in account_ids if aid not in roster]
+    if missing_ids:
+        extra = (
+            await session.execute(select(SocialAccount).where(SocialAccount.id.in_(missing_ids)))
+        ).scalars().all()
+        for row in extra:
+            roster[int(row.id)] = row
     account_items: list[dict[str, Any]] = []
     for aid in account_ids:
-        account = alive.get(aid)
+        account = roster.get(aid)
         cards = []
         joined_count = 0
         for cid in assignments.get(aid) or []:
@@ -1789,6 +1820,7 @@ async def serialize_task_pool(
                 "assigned": cards,
                 "assigned_count": len(cards),
                 "joined_count": joined_count,
+                "status": pool_actor_status(account),
             }
         )
     reserve_cards = []
@@ -1842,16 +1874,19 @@ async def serialize_task_pool(
         )
     available_accounts = []
     selected_accounts = set(account_ids)
-    for account in alive.values():
-        pool = pool_by_account.get(account.id)
-        eligible = account_is_task_ready(pool, account)
+    seen_available: set[int] = set()
+    for account in roster.values():
+        if account.id in seen_available:
+            continue
+        seen_available.add(account.id)
         available_accounts.append(
             {
                 "id": account.id,
                 "label": actor_label(account),
                 "username": getattr(account, "username", None),
                 "phone_number": getattr(account, "phone_number", None),
-                "eligible": eligible,
+                "eligible": pool_actor_selectable(account),
+                "status": pool_actor_status(account),
                 "selected": account.id in selected_accounts,
             }
         )
