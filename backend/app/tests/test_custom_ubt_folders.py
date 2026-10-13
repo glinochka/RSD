@@ -840,3 +840,52 @@ class TestJobLifecycle:
         assert assignment[2][:2] == [30, 40]
         assert 50 in assignment[1] + assignment[2]
         assert 60 in assignment[1] + assignment[2]
+
+    def test_ready_addlists_cover_sibling_assignment(self):
+        from app.services.custom.chat_addlist_service import (
+            addlists_from_chat_targets,
+            best_addlist_for_chats,
+            covering_addlist_rows,
+            merge_sibling_folders,
+            spec_is_live,
+            warmup_task_joins_enabled,
+        )
+
+        plans = {
+            "neurochatting": {
+                "assignments": {"1": [10, 20, 30, 40]},
+                "folders": {
+                    "1": [{"slug": "ReadyFolder1", "url": "https://t.me/addlist/ReadyFolder1", "chat_ids": [10, 20, 30, 40]}]
+                },
+            }
+        }
+        covered = covering_addlist_rows(plans, [10, 20, 30, 40, 50])
+        assert covered[0]["slug"] == "ReadyFolder1"
+        merged = merge_sibling_folders(plans, {1: [10, 20, 30, 40], 2: [50, 60]}, {})
+        assert merged["1"][0]["slug"] == "ReadyFolder1"
+        assert "2" not in merged
+        row, cover = best_addlist_for_chats(covered, [10, 20, 50])
+        assert row["slug"] == "ReadyFolder1"
+        assert cover == [10, 20]
+        from types import SimpleNamespace
+
+        class Chat:
+            def __init__(self, ident, slug):
+                self.id = ident
+                self.invite_link = f"https://t.me/addlist/{slug}"
+                self.monitoring_config = {"addlist_slug": slug}
+
+        rows = addlists_from_chat_targets([Chat(10, "ReadyFolder1"), Chat(20, "ReadyFolder1"), Chat(99, "OtherFold")])
+        slugs = {item["slug"] for item in rows}
+        assert slugs == {"ReadyFolder1", "OtherFold"}
+        assert spec_is_live({"task_key": "neuroshilling"}, {"shilling"})
+        assert not spec_is_live({"task_key": "neuroshilling"}, {"discussion"})
+        assert spec_is_live({"task_key": "warmup"}, set(), warmup_joins=True)
+        assert not spec_is_live({"task_key": "warmup"}, set(), warmup_joins=False)
+        auto = SimpleNamespace(
+            account_warmup_enabled=True,
+            module_settings={"warmup": {"mode": "auto", "do_joins": True, "folder_ids": [], "chat_ids": []}},
+        )
+        assert warmup_task_joins_enabled(auto) is False
+        auto.module_settings["warmup"]["folder_ids"] = [3]
+        assert warmup_task_joins_enabled(auto) is True

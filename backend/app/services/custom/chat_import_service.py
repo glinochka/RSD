@@ -444,9 +444,6 @@ async def import_chats_from_file(
         job.status = "completed" if not errors else "completed_with_errors"
     job.updated_at = _utc_now()
     await session.flush()
-    from .chat_membership_service import ensure_memberships_for_automation
-
-    await ensure_memberships_for_automation(session, automation_id)
     await session.commit()
     await session.refresh(job)
     return job
@@ -530,9 +527,6 @@ async def retry_import_errors(
     job.error_rows = len(remaining)
     job.error_log = preserved + remaining
     job.updated_at = _utc_now()
-    from .chat_membership_service import ensure_memberships_for_automation
-
-    await ensure_memberships_for_automation(session, job.custom_automation_id)
     await session.commit()
     await session.refresh(job)
     return job

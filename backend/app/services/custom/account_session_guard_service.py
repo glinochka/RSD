@@ -488,10 +488,8 @@ async def adopt_account_sessions(
         social_account.intercept_reauth_started_at = None
         automation = await session.get(CustomAutomation, automation_id)
         from .account_warmup_service import enroll_pool_account
-        from .chat_membership_service import ensure_memberships_for_account
 
         enroll_pool_account(automation, pool_account)
-        await ensure_memberships_for_account(session, automation_id, social_account.id)
         moved = True
     await session.commit()
     return {

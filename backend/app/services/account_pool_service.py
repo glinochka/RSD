@@ -210,10 +210,6 @@ async def _create_social_account(
         preferred_proxy_id=preferred_proxy_id,
         lock_preferred=lock_preferred,
     )
-    if origin != POOL_INTERCEPT:
-        from .custom.chat_membership_service import ensure_memberships_for_account
-
-        await ensure_memberships_for_account(session, automation_id, social_account.id)
     return social_account
 
 

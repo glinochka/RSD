@@ -110,6 +110,7 @@ def _log_job_type(task_key: str) -> str:
         "chat_broadcasts": "chat_broadcast",
         "parser": "parser",
         "masslooking": "masslooking",
+        "warmup": "warmup",
     }.get(task_key, "join")
 
 
@@ -328,6 +329,168 @@ def sibling_previous(
     for cid, aid in owner.items():
         out.setdefault(aid, []).append(cid)
     return out
+
+
+def warmup_task_joins_enabled(automation: CustomAutomation | None) -> bool:
+    """Warmup may join only the chats/folders selected on that module."""
+    from .task_targets import has_chat_pool
+    from .warmup_module_service import runtime_warmup_cfg, warmup_scheduler_active
+
+    if not warmup_scheduler_active(automation):
+        return False
+    cfg = runtime_warmup_cfg(automation)
+    return cfg.get("do_joins") is not False and has_chat_pool(cfg)
+
+
+def spec_is_live(spec: dict[str, Any] | None, active: set[str] | None, *, warmup_joins: bool = False) -> bool:
+    """Join plans follow running tasks, not leftover module flags or uploaded folders."""
+    key = str((spec or {}).get("task_key") or "")
+    if not key:
+        return False
+    live = {str(item) for item in (active or set())}
+    if key == "warmup":
+        return warmup_joins or "warmup" in live
+    return _log_job_type(key) in live
+
+
+def collect_plan_addlists(plans: dict[str, Any] | None) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key, spec in (plans or {}).items():
+        if str(key) in _SHARED_PLAN_KEYS or not isinstance(spec, dict):
+            continue
+        folders = spec.get("folders") if isinstance(spec.get("folders"), dict) else {}
+        for rows in folders.values():
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                slug = str(row.get("slug") or "").strip()
+                if not slug or slug in seen:
+                    continue
+                seen.add(slug)
+                items.append(row)
+    return items
+
+
+def addlists_from_chat_targets(chats: list[ChatTarget] | None) -> list[dict[str, Any]]:
+    by_slug: dict[str, list[int]] = {}
+    for chat in chats or []:
+        slug = chat_addlist_slug(chat)
+        if not slug:
+            continue
+        by_slug.setdefault(slug, []).append(int(chat.id))
+    return [
+        {"slug": slug, "url": addlist_url(slug), "chat_ids": ids}
+        for slug, ids in by_slug.items()
+    ]
+
+
+def best_addlist_for_chats(
+    rows: list[dict[str, Any]] | None,
+    chat_ids: list[int],
+) -> tuple[dict[str, Any] | None, list[int]]:
+    """Pick the addlist that covers the most pending chats."""
+    wanted = {int(cid) for cid in chat_ids or [] if int(cid) > 0}
+    best: dict[str, Any] | None = None
+    best_cover: list[int] = []
+    for row in rows or []:
+        if not isinstance(row, dict) or not str(row.get("slug") or "").strip():
+            continue
+        cover = [cid for cid in _int_list(row.get("chat_ids")) if cid in wanted]
+        if len(cover) > len(best_cover):
+            best = row
+            best_cover = cover
+    return best, best_cover
+
+
+def covering_addlist_rows(plans: dict[str, Any] | None, chat_ids: list[int]) -> list[dict[str, Any]]:
+    wanted = {int(cid) for cid in chat_ids or [] if int(cid) > 0}
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in collect_plan_addlists(plans):
+        slug = str(row.get("slug") or "").strip()
+        if not slug or slug in seen:
+            continue
+        if not wanted.intersection(_int_list(row.get("chat_ids"))):
+            continue
+        seen.add(slug)
+        rows.append(row)
+    return rows
+
+
+def merge_sibling_folders(
+    plans: dict[str, Any] | None,
+    assignment: dict[int, list[int]],
+    stored_folders: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Copy ready addlists from other tasks onto this assignment."""
+    out: dict[str, Any] = dict(stored_folders or {})
+    for aid, ids in (assignment or {}).items():
+        key = str(int(aid))
+        rows = [row for row in (out.get(key) or []) if isinstance(row, dict)]
+        seen = {str(row.get("slug") or "") for row in rows}
+        for row in covering_addlist_rows(plans, ids):
+            slug = str(row.get("slug") or "").strip()
+            if not slug or slug in seen:
+                continue
+            rows.append(
+                {
+                    "slug": slug,
+                    "url": str(row.get("url") or addlist_url(slug)),
+                    "filter_id": row.get("filter_id"),
+                    "chat_ids": _int_list(row.get("chat_ids")),
+                }
+            )
+            seen.add(slug)
+        if rows:
+            out[key] = rows
+    return out
+
+
+def attach_addlist_row(plans: dict[str, Any], account_id: int, row: dict[str, Any] | None) -> None:
+    if not row or not str(row.get("slug") or "").strip():
+        return
+    slug = str(row.get("slug") or "").strip()
+    folder_chats = set(_int_list(row.get("chat_ids")))
+    payload = {
+        "slug": slug,
+        "url": str(row.get("url") or addlist_url(slug)),
+        "filter_id": row.get("filter_id"),
+        "chat_ids": _int_list(row.get("chat_ids")),
+    }
+    for key, spec in list((plans or {}).items()):
+        if str(key) in _SHARED_PLAN_KEYS or not isinstance(spec, dict):
+            continue
+        assigned = {
+            cid
+            for value in (spec.get("assignments") or {}).values()
+            for cid in _int_list(value)
+        }
+        account_ids: set[int] = set()
+        for item in spec.get("assignments") or {}:
+            try:
+                account_ids.add(int(item))
+            except (TypeError, ValueError):
+                continue
+        if int(account_id) not in account_ids:
+            continue
+        if assigned and folder_chats and not (folder_chats & assigned):
+            continue
+        folders = dict(spec.get("folders") or {})
+        rows = [item for item in (folders.get(str(account_id)) or []) if isinstance(item, dict)]
+        replaced = False
+        next_rows: list[dict[str, Any]] = []
+        for item in rows:
+            if str(item.get("slug") or "") == slug:
+                next_rows.append(payload)
+                replaced = True
+            else:
+                next_rows.append(item)
+        if not replaced:
+            next_rows.append(payload)
+        folders[str(account_id)] = next_rows
+        spec["folders"] = folders
+        plans[key] = spec
 
 
 def merge_assignment_previous(*sources: dict[int, list[int]] | None) -> dict[int, list[int]]:
@@ -712,8 +875,14 @@ async def ensure_task_joins_for_automation(session: AsyncSession, automation_id:
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
         return {"tasks": 0}
+    from .job_service import list_active_job_types
+
+    active = await list_active_job_types(automation_id)
+    warmup_joins = warmup_task_joins_enabled(automation)
     summary = {"tasks": 0, "joined": 0, "folders": 0}
     for spec in await collect_task_join_specs_resolved(session, automation):
+        if not spec_is_live(spec, active, warmup_joins=warmup_joins):
+            continue
         result = await ensure_task_join_plan(
             session,
             automation,
@@ -796,6 +965,8 @@ async def ensure_task_join_plan(
     stored_folders = (stored_task or {}).get("folders") if isinstance(stored_task, dict) else {}
     if not isinstance(stored_folders, dict):
         stored_folders = {}
+    if not manual:
+        stored_folders = merge_sibling_folders(plans, assignment, stored_folders)
     pending_left = 0
     for account_id, assigned in assignment.items():
         pending_left += sum(
@@ -1287,11 +1458,15 @@ def _build_dialog_filter(filter_id: int, title: str, peers: list[Any]) -> Any:
         return types.DialogFilter(**kwargs)
 
 
-async def _join_addlist(client: Any, slug: str) -> None:
+async def _join_addlist(client: Any, slug: str, chats: list[ChatTarget] | None = None) -> None:
     from telethon.tl.functions.chatlists import JoinChatlistInviteRequest
 
     telethon = getattr(client, "client", client)
     peers, _title = await _check_addlist_peers(client, slug)
+    if chats:
+        wanted = await _resolve_input_peers(client, chats)
+        if wanted:
+            peers = wanted
     await telethon(JoinChatlistInviteRequest(slug=slug, peers=peers or []))
 
 

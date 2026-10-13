@@ -27,7 +27,6 @@ from .chat_membership_service import (
     _target_chat_count_for_account,
     account_occupied_count,
     apply_account_join_cooldown,
-    ensure_memberships_for_automation,
     pick_unclaimed_chat_id,
     release_membership,
     reuse_or_queue_membership,
@@ -294,7 +293,6 @@ async def _rotate_one_account(
 
 async def run_chat_rotation_pass(automation_id: int) -> dict[str, Any]:
     async with async_session_maker() as session:
-        await ensure_memberships_for_automation(session, automation_id)
         accounts = [
             account
             for account in await list_alive_session_accounts(session, automation_id)
