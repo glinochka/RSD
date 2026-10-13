@@ -4,6 +4,7 @@ import customService from '../../../services/customService';
 import FeatureToggle from '../../../components/FeatureToggle';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { paramLabel, resultLabel } from './jobParamLabels';
+import { humanizeUbtLog } from './ubtLogText';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
@@ -319,13 +320,13 @@ const CustomAutomationTasksPage = () => {
               <div>
                 <div className="tsk-section-label">Логи</div>
                 <div className="tsk-logs">
-                  {(selected.logs || []).length === 0 ? 'Логи не сохранились — они хранятся 3 суток' : null}
-                  {(selected.logs || []).map((row, index) => (
-                    <div key={`${row.ts}-${index}`} className={`tsk-log-row ${row.level === 'error' ? 'tsk-log-row--error' : ''}`}>
-                      <span>{formatWhen(row.ts)}</span>
-                      <span>{row.message}</span>
-                    </div>
-                  ))}
+                  {(selected.logs || []).length === 0
+                    ? 'Логи не сохранились — они хранятся 3 суток'
+                    : (selected.logs || []).map((row, index) => (
+                      <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'tsk-log-err' : ''}>
+                        {formatWhen(row.ts)} {humanizeUbtLog(row.message)}
+                      </div>
+                    ))}
                 </div>
               </div>
 

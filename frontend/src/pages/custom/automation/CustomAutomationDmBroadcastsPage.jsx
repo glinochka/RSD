@@ -101,6 +101,9 @@ const CustomAutomationDmBroadcastsPage = () => {
       if (blockedAccounts.has(item.id)) {
         return false;
       }
+      if (!item.eligible) {
+        return false;
+      }
       if (settings?.require_proxy && !item.has_proxy) {
         return false;
       }

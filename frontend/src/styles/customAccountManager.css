@@ -740,45 +740,21 @@ a.acc-icon-btn {
 
 .acc-log-list {
   margin: 0;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  background: #f7fafc;
-  border: 1px solid #eef2f6;
+  padding: 12px;
+  display: block;
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 0;
   border-radius: 12px;
   max-height: 420px;
   overflow: auto;
-  font-size: 0.8125rem;
-}
-
-.acc-log-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 0;
-  border: 0;
-  background: transparent;
-}
-
-.acc-log-row + .acc-log-row {
-  border-top: 1px solid #eef2f6;
-}
-
-.acc-log-row.is-error,
-.acc-log-row.is-error .acc-log-msg {
-  color: #b91c1c;
-}
-
-.acc-log-time {
-  color: #6b7280;
   font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.55;
 }
 
-.acc-log-msg {
-  color: #374151;
-  font-weight: 400;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+.acc-log-err {
+  color: #fca5a5;
 }
 
 .acc-drop-overlay {

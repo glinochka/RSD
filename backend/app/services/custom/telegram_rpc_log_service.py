@@ -78,6 +78,13 @@ _RPC_RU = {
     "GetPeerStoriesRequest": "открыл истории",
     "ReadStoriesRequest": "просмотрел истории",
     "SendVoteRequest": "проголосовал в опросе",
+    "ResolveUsernameRequest": "нашёл канал по имени",
+    "GetContactsRequest": "открыл контакты",
+    "GetFileRequest": "скачал файл",
+    "SaveFilePartRequest": "загрузил файл",
+    "UploadSaveFilePartRequest": "загрузил файл",
+    "GetEmojiKeywordsRequest": "открыл эмодзи",
+    "GetTopReactionsRequest": "открыл реакции",
 }
 
 
@@ -123,9 +130,7 @@ def humanize_telegram_request(request: Any) -> str | None:
         return "вышел в офлайн" if offline else "вошёл в онлайн"
     base = _RPC_RU.get(name)
     if not base:
-        readable = name.replace("Request", "")
-        readable = "".join(f" {ch.lower()}" if ch.isupper() else ch for ch in readable).strip()
-        base = readable or name
+        return None
     hint = _peer_hint(request)
     message = getattr(request, "message", None)
     extra = f": «{_clip(message)}»" if message else ""
@@ -321,7 +326,13 @@ async def list_account_telegram_logs(
         if label and message and not message.startswith(label):
             message = f"{label} {message}"
         if row.error_message:
-            message = f"{message} ({row.error_message})"
+            err = str(row.error_message)
+            lower = err.lower()
+            if "flood" in lower or "too many" in lower:
+                err = "Telegram ограничил частоту действий"
+            elif err.endswith("Error") or "Error" in err[:40]:
+                err = "ошибка Telegram"
+            message = f"{message} ({err})"
         key = (str(row.created_at or ""), message)
         if key in seen:
             continue

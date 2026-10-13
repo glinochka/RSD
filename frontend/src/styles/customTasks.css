@@ -330,33 +330,22 @@
 }
 
 .tsk-logs {
-  background: #f7fafc;
-  border: 1px solid #eef2f6;
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 0;
   border-radius: 12px;
-  padding: 12px 14px;
-  min-height: 56px;
-  color: #6b7280;
-  font-size: 0.8125rem;
-}
-
-.tsk-log-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 0;
-  color: #374151;
-}
-
-.tsk-log-row + .tsk-log-row {
-  border-top: 1px solid #eef2f6;
-}
-
-.tsk-log-row > span:first-child {
-  color: #6b7280;
+  padding: 12px;
+  min-height: 120px;
+  max-height: 280px;
+  overflow: auto;
   font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.55;
 }
 
-.tsk-log-row--error { color: #b91c1c; }
+.tsk-log-err {
+  color: #fca5a5;
+}
 
 .tsk-kpi-row {
   display: grid;

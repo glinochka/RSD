@@ -10,6 +10,7 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { humanizeUbtLog } from './ubtLogText';
 import { ACTION_DELAY_MAX_SECONDS } from './delayLimits';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
 import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
@@ -108,6 +109,9 @@ const CustomAutomationNeurocommentingPage = () => {
     const needle = accountQuery.trim().toLowerCase();
     return items.filter((item) => {
       if (blockedAccounts.has(item.id)) {
+        return false;
+      }
+      if (!item.eligible) {
         return false;
       }
       if (settings?.require_proxy && !item.has_proxy) {
@@ -445,7 +449,7 @@ const CustomAutomationNeurocommentingPage = () => {
         ) : null}
         <div className="nc-logs" style={{ marginTop: 12 }}>
           {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
-            <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
+            <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {humanizeUbtLog(row.message)}</div>
           ))}
         </div>
         <UbtUnsaved dirty={dirty} />

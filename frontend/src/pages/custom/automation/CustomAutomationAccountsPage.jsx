@@ -9,6 +9,7 @@ import CustomAccountConnectForm from './CustomAccountConnectForm';
 import CustomAccountProxyFields from './CustomAccountProxyFields';
 import { WARMUP_STATUS_LABELS } from './activityLabels';
 import { ubtModulePath } from './customNav';
+import { humanizeUbtLog } from './ubtLogText';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -1532,9 +1533,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 {telegramLogs.length ? (
                   <div className="acc-log-list">
                     {telegramLogs.map((item) => (
-                      <div key={item.id} className={`acc-log-row${item.result === 'error' ? ' is-error' : ''}`}>
-                        <span className="acc-log-time">{formatLogWhen(item.created_at)}</span>
-                        <span className="acc-log-msg">{item.message}</span>
+                      <div key={item.id} className={item.result === 'error' ? 'acc-log-err' : ''}>
+                        {formatLogWhen(item.created_at)} {humanizeUbtLog(item.message)}
                       </div>
                     ))}
                   </div>

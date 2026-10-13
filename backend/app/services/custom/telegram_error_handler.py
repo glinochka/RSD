@@ -728,8 +728,8 @@ async def execute_with_telegram_retry(
 
                         hours = max(1, int((until - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() // 3600))
                         message = (
-                            f"{actor_label(account)} карантин {hours} ч "
-                            "(FloodWait / too many attempts)"
+                            f"{actor_label(account)} карантин {hours} ч — "
+                            "Telegram ограничил частоту действий"
                         )
                         active = await list_active_job_types(automation_id)
                         for job_type in active or set(STREAM_JOB_TYPES.values()):

@@ -1412,11 +1412,18 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
             used_accounts.add(account_id)
             task_dirty = True
             title = chat_label(chat_target) if chat_target else str(pick_id)
-            await log_active(
-                automation_id,
-                job_type,
-                f"{actor_label(account)} вступление {title}: {status or 'unknown'}",
-            )
+            who = actor_label(account)
+            if status == "joined":
+                line = f"{who} вступил в {title}"
+            elif status == "blackbox":
+                line = f"{who}: {title} ушёл в чёрный список — комментарии закрыты или есть модерация"
+            elif status == "rate_limited":
+                line = f"{who} Telegram попросил подождать перед вступлением в {title}"
+            elif status == "banned":
+                line = f"{who} заблокирован в {title}"
+            else:
+                line = f"{who} не удалось вступить в {title}"
+            await log_active(automation_id, job_type, line)
             results.append(
                 {
                     "account_id": account_id,
