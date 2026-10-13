@@ -10,6 +10,8 @@ import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, toggleNumericId, ubtModulePath } from './customNav';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -394,9 +396,13 @@ const CustomAutomationWarmupPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Целевые группы / каналы</h2>
-          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+          <div className="nc-row">
+            <UbtDistributeChats automationId={id} taskKey="warmup" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
+            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+          </div>
         </div>
         <p className="nc-hint">Сюда попадают чаты, в которые аккаунт может вступить после прогрева. Пусто = вступления идут из общего списка чатов, не из случайного интернета.</p>
+        <UbtAddlistLinks automationId={id} taskKey="warmup" />
         <div className="nc-row" style={{ marginTop: 8 }}>
           <button type="button" className={`nc-chip ${targetTab === 'links' ? 'is-on' : ''}`} onClick={() => setTargetTab('links')}>Ссылки</button>
           <button type="button" className={`nc-chip ${targetTab === 'folder' ? 'is-on' : ''}`} onClick={() => setTargetTab('folder')}>Папки</button>

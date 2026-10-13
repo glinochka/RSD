@@ -58,6 +58,11 @@ from .schemas import (
     UnifiedJobResponse,
     UbtStatsResponse,
     ChatBlackboxRequest,
+    ChatBlackboxBulkRequest,
+    TelegramAccountLogListResponse,
+    TaskAddlistListResponse,
+    TaskDistributeRequest,
+    TaskDistributeResponse,
     NeurocommentingModuleResponse,
     NeurocommentingSettings,
     NeurocommentingChannelsRequest,
@@ -240,7 +245,13 @@ from ..services.custom.amocrm_service import (
     update_pipeline_config,
 )
 from ..services.custom.lead_warmup_service import auto_transfer_lead
-from ..services.custom.analytics_service import HISTORY_TYPES, blackbox_stats_chat, get_automation_dashboard, get_ubt_stats
+from ..services.custom.analytics_service import (
+    HISTORY_TYPES,
+    blackbox_stats_chat,
+    blackbox_stats_chats,
+    get_automation_dashboard,
+    get_ubt_stats,
+)
 from ..services.custom.activity_feed_service import FEED_ACTIVITY_TYPES, list_activity_feed
 from ..services.custom.error_feed_service import list_error_feed
 from ..services.custom.discussion_service import run_discussion_pass
@@ -559,6 +570,75 @@ async def automation_stats_blacklist(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return ChatTargetResponse.model_validate(chat)
+
+
+@router.post("/automations/{automation_id}/stats/blacklist-bulk")
+async def automation_stats_blacklist_bulk(
+    automation_id: int,
+    payload: ChatBlackboxBulkRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    del automation
+    async with async_session_maker() as session:
+        count = await blackbox_stats_chats(
+            session,
+            automation_id,
+            payload.chat_ids,
+            reason=payload.reason or "generated_blacklist",
+        )
+        return {"status": "ok", "count": count}
+
+
+@router.get("/automations/{automation_id}/addlists", response_model=TaskAddlistListResponse)
+async def list_automation_addlists(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_addlist_service import list_task_addlists
+
+    async with async_session_maker() as session:
+        row = await session.get(CustomAutomation, automation_id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        return TaskAddlistListResponse(items=list_task_addlists(row))
+
+
+@router.post("/automations/{automation_id}/task-distribute", response_model=TaskDistributeResponse)
+async def save_automation_task_distribute(
+    automation_id: int,
+    payload: TaskDistributeRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_addlist_service import import_chat_links, save_task_assignments
+
+    del automation
+    task_key = str(payload.task_key or "").strip()
+    if not task_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Укажите модуль")
+    async with async_session_maker() as session:
+        row = await session.get(CustomAutomation, automation_id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        mapped: dict[int, list[int]] = {}
+        errors: list[str] = []
+        for raw_id, links in (payload.assignments or {}).items():
+            try:
+                account_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            text = "\n".join(str(item or "").strip() for item in (links or []) if str(item or "").strip())
+            if not text:
+                mapped[account_id] = []
+                continue
+            added, errs = await import_chat_links(session, automation_id, text)
+            mapped[account_id] = added
+            errors.extend(errs)
+        result = await save_task_assignments(session, row, task_key, mapped)
+        return TaskDistributeResponse(
+            assignments=result.get("assignments") or {},
+            chat_ids=result.get("chat_ids") or [],
+            add_errors=errors,
+        )
 
 
 @router.get("/automations/{automation_id}/modules/neurocommenting", response_model=NeurocommentingModuleResponse)
@@ -2168,6 +2248,23 @@ async def check_account_spamblock(
             detail=_spamblock_check_detail(result),
             restriction_kind=(classification or {}).get("kind") or getattr(social_account, "restriction_kind", None),
         )
+
+
+@router.get(
+    "/automations/{automation_id}/accounts/{account_id}/telegram-logs",
+    response_model=TelegramAccountLogListResponse,
+)
+async def get_account_telegram_logs(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.telegram_rpc_log_service import list_account_telegram_logs
+
+    del automation
+    async with async_session_maker() as session:
+        items = await list_account_telegram_logs(session, automation_id, account_id)
+        return TelegramAccountLogListResponse(items=items)
 
 
 @router.get(

@@ -279,6 +279,49 @@ const customService = {
     return handleResponse(response);
   },
 
+  async applyStatsBlacklistBulk(automationId, { chatIds, reason } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_STATS_BLACKLIST_BULK(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        chat_ids: chatIds || [],
+        reason: reason || 'generated_blacklist',
+      }),
+    });
+    return handleResponse(response);
+  },
+
+  async getTaskAddlists(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ADDLISTS(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveTaskDistribute(automationId, { taskKey, assignments } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_DISTRIBUTE(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        task_key: taskKey,
+        assignments: assignments || {},
+      }),
+    });
+    return handleResponse(response);
+  },
+
+  async getAccountTelegramLogs(automationId, accountId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_TELEGRAM_LOGS(automationId, accountId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async getNeurocommentingModule(automationId) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING(automationId)}`, {
       method: 'GET',

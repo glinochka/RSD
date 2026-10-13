@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .account_roles import account_matches_action
 from .account_pacing import farm_overlap_active_hours
 from .module_account_filters import no_accounts_picked, skip_account_for_module
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import format_delay_ru
 from .chat_inspect_service import probe_comments_readonly
 from .chat_membership_service import (
     account_is_joined,
@@ -228,17 +228,13 @@ def _as_int_list(raw: Any) -> list[int]:
 
 
 def _delay_bounds(run_config: dict[str, Any] | None) -> tuple[float, float]:
-    cfg = run_config or {}
-    try:
-        low = int(cfg.get("delay_before_min") or POST_COMMENT_DELAY_MIN_SECONDS)
-    except (TypeError, ValueError):
-        low = POST_COMMENT_DELAY_MIN_SECONDS
-    try:
-        high = int(cfg.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)
-    except (TypeError, ValueError):
-        high = POST_COMMENT_DELAY_MAX_SECONDS
-    low = max(0, min(low, DELAY_MAX_SECONDS))
-    high = max(low, min(high, DELAY_MAX_SECONDS))
+    from .module_delays import clamp_action_delay_pair
+
+    low, high = clamp_action_delay_pair(
+        run_config or {},
+        default_min=POST_COMMENT_DELAY_MIN_SECONDS,
+        default_max=POST_COMMENT_DELAY_MAX_SECONDS,
+    )
     return float(low), float(high)
 
 
@@ -617,6 +613,7 @@ async def process_chat_target(
                 post_age = (_utc_now() - posted_at).total_seconds()
                 min_delay = random.uniform(delay_min, delay_max)
                 if post_age < min_delay:
+                    remaining = min_delay - post_age
                     delay_until = posted_at + timedelta(seconds=min_delay)
                     pending = await enqueue_pending_action(
                         session,
@@ -636,7 +633,7 @@ async def process_chat_target(
                             automation_id,
                             "neurocommenting",
                             f"{actor_label(actor)} отложил комментарий в {chat_label(chat_target)} "
-                            f"на {int(min_delay)}с (антибот-пауза)",
+                            f"на {format_delay_ru(remaining)} — пост ещё свежий, ждём антибот-паузу",
                         )
                     continue
         # ────────────────────────────────────────────────────────────────────

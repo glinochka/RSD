@@ -10,7 +10,9 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
-import { DELAY_MAX_SECONDS } from './delayLimits';
+import { ACTION_DELAY_MAX_SECONDS } from './delayLimits';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
@@ -319,7 +321,10 @@ const CustomAutomationNeurochattingPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Целевые группы <span className="nc-muted">{selectedFolders.size} пап. · {selectedChats.size} гр.</span></h2>
-          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+          <div className="nc-row">
+            <UbtDistributeChats automationId={id} taskKey="neurochatting" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
+            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+          </div>
         </div>
         <div className="nc-row">
           <button type="button" className={`nc-chip ${chatTab === 'links' ? 'is-on' : ''}`} onClick={() => setChatTab('links')}>Юзернейм / ссылка</button>
@@ -383,6 +388,7 @@ const CustomAutomationNeurochattingPage = () => {
             ))}
           </div>
         ) : null}
+        <UbtAddlistLinks automationId={id} taskKey="neurochatting" />
         <div style={{ marginTop: 12 }}>
           <FeatureToggle compact title="Не вступать — писать только туда, где аккаунт уже состоит" description="Новые вступления не ставим в очередь. Группы без членства пропускаются." checked={Boolean(settings.only_joined)} onChange={(value) => persistFlag({ only_joined: value })} />
         </div>
@@ -428,9 +434,9 @@ const CustomAutomationNeurochattingPage = () => {
         </div>
         <div className="nc-row">
           <span className="nc-muted">Задержка перед отправкой</span>
-          <Stepper value={settings.delay_before_min} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
+          <Stepper value={settings.delay_before_min} min={0} max={ACTION_DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
           <span className="nc-muted">до</span>
-          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_max: value })} />
+          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={ACTION_DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_max: value })} />
           <span className="nc-muted">сек</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Не отвечаем на слишком свежие сообщения — антибот-пауза. FloodWait Telegram обрабатывается сам.</p>

@@ -12,6 +12,8 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { DELAY_MAX_SECONDS } from './delayLimits';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -411,7 +413,10 @@ const CustomAutomationNeuroshillingPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Настройка кампании</h2>
-          <span className="nc-muted">{selectedFolders.size} пап. · {chosenGroups.length} групп · {chosenChannels.length} каналов</span>
+          <div className="nc-row">
+            <span className="nc-muted">{selectedFolders.size} пап. · {chosenGroups.length} групп · {chosenChannels.length} каналов</span>
+            <UbtDistributeChats automationId={id} taskKey="neuroshilling" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
+          </div>
         </div>
         <div className="nc-split">
           <div>
@@ -441,6 +446,7 @@ const CustomAutomationNeuroshillingPage = () => {
                   <button type="button" className="acc-btn acc-btn--primary" disabled={busy} onClick={() => runSafe(() => customService.addNeuroshillingTargets(id, links, linkKind).then((payload) => { applyPayload(payload); setLinks(''); if (payload.add_errors?.length) { setError(payload.add_errors.join('; ')); } return payload; }), 'Цели добавлены')}>+ Добавить</button>
                   <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
                 </div>
+                <UbtAddlistLinks automationId={id} taskKey="neuroshilling" />
               </div>
             ) : null}
             {targetTab === 'folder' ? (

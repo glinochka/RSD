@@ -283,6 +283,9 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   });
   const [reauthPassword, setReauthPassword] = useState('');
   const [reauthBusy, setReauthBusy] = useState(false);
+  const [telegramLogs, setTelegramLogs] = useState([]);
+  const [telegramLogsLoading, setTelegramLogsLoading] = useState(false);
+  const [telegramLogsError, setTelegramLogsError] = useState(null);
 
   const loadAccounts = useCallback(async (opts) => {
     const silent = Boolean(opts && typeof opts === 'object' && opts.silent);
@@ -349,6 +352,23 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     loadPoolProxies();
   }, [loadPoolProxies]);
 
+  const loadTelegramLogs = useCallback(async (accountId) => {
+    if (!id || !accountId) {
+      return;
+    }
+    setTelegramLogsLoading(true);
+    setTelegramLogsError(null);
+    try {
+      const data = await customService.getAccountTelegramLogs(id, accountId);
+      setTelegramLogs(data.items || []);
+    } catch (err) {
+      setTelegramLogs([]);
+      setTelegramLogsError(err.message || 'Не удалось загрузить логи');
+    } finally {
+      setTelegramLogsLoading(false);
+    }
+  }, [id]);
+
   const loadSessions = useCallback(async (accountId) => {
     if (!id || !accountId) {
       return;
@@ -377,20 +397,24 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     if (!drawerId) {
       setSessionItems([]);
       setSessionsError(null);
+      setTelegramLogs([]);
+      setTelegramLogsError(null);
       setTwoFaOpen(false);
       setTwoFaNeedCode(false);
       setTwoFaMessage(null);
       setTwoFaError(null);
       return undefined;
     }
+    loadTelegramLogs(drawerId);
+    const timer = window.setInterval(() => loadTelegramLogs(drawerId), 4000);
     if (drawerStage && drawerStage !== 'reauthorized') {
       setSessionItems([]);
       setSessionsError(null);
-      return undefined;
+      return () => window.clearInterval(timer);
     }
     loadSessions(drawerId);
-    return undefined;
-  }, [drawerId, loadSessions, drawerStage]);
+    return () => window.clearInterval(timer);
+  }, [drawerId, loadSessions, loadTelegramLogs, drawerStage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1465,6 +1489,41 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                       >
                         <Ico d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
                       </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="acc-sessions">
+                <div className="acc-sessions-head">
+                  <h3>Все логи</h3>
+                  <button
+                    type="button"
+                    className="acc-icon-btn"
+                    title="Обновить"
+                    onClick={() => loadTelegramLogs(drawerAccount.id)}
+                    disabled={telegramLogsLoading}
+                  >
+                    <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
+                  </button>
+                </div>
+                <p className="form-hint">
+                  Все обращения аккаунта к Telegram: задачи, прогрев, вход в онлайн, чтение каналов и остальное.
+                </p>
+                {telegramLogsLoading && telegramLogs.length === 0 ? <p className="form-hint">Загружаем логи...</p> : null}
+                {telegramLogsError ? <p className="acc-flash acc-flash--error">{telegramLogsError}</p> : null}
+                {!telegramLogsLoading && !telegramLogsError && telegramLogs.length === 0 ? (
+                  <p className="form-hint">Пока нет действий этого аккаунта в Telegram.</p>
+                ) : null}
+                <ul className="acc-log-list">
+                  {telegramLogs.map((item) => (
+                    <li key={item.id} className={`acc-log-row${item.result === 'error' ? ' is-error' : ''}`}>
+                      <div>
+                        <b>{item.message}</b>
+                        <small>
+                          {formatRelative(item.created_at)}
+                          {item.result === 'error' && item.error ? ` · ${item.error}` : ''}
+                        </small>
+                      </div>
                     </li>
                   ))}
                 </ul>

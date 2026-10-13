@@ -12,6 +12,8 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { DELAY_MAX_SECONDS } from './delayLimits';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -330,6 +332,7 @@ const CustomAutomationMasslookingPage = () => {
                 onChange={(event) => setFolderId(event.target.value)}
               />
               <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск канала" />
+              <UbtDistributeChats automationId={id} taskKey="masslooking" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
               <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
             </div>
             <div className="nc-list" style={{ marginTop: 8 }}>
@@ -345,6 +348,7 @@ const CustomAutomationMasslookingPage = () => {
             {chosenChats.length ? (
               <p className="nc-muted" style={{ marginTop: 8 }}>Из папок: {chosenChats.map((item) => item.title).join(', ')}</p>
             ) : null}
+            <UbtAddlistLinks automationId={id} taskKey="masslooking" />
           </div>
           <div className="nc-setting nc-setting--muted" style={{ marginTop: 8 }}>
             <div className="nc-setting-copy">

@@ -235,6 +235,53 @@ def even_redistribute(
     return assignment
 
 
+def apply_task_chat_assignment(
+    account_ids: list[int],
+    chat_ids: list[int],
+    previous: dict[int, list[int]] | None = None,
+    manual: dict[int, list[int]] | None = None,
+) -> dict[int, list[int]]:
+    """Honor an explicit per-account split; otherwise even-redistribute."""
+    accounts = [int(item) for item in dict.fromkeys(account_ids or []) if int(item) > 0]
+    chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
+    if not accounts:
+        return {}
+    if manual:
+        assignment: dict[int, list[int]] = {aid: [] for aid in accounts}
+        assigned: set[int] = set()
+        chat_set = set(chats)
+        for aid in accounts:
+            for cid in manual.get(aid) or []:
+                chat_id = int(cid)
+                if chat_id not in chat_set or chat_id in assigned:
+                    continue
+                assignment[aid].append(chat_id)
+                assigned.add(chat_id)
+        leftover = [cid for cid in chats if cid not in assigned]
+        homes = [aid for aid in accounts if assignment[aid]] or accounts
+        if leftover:
+            extra = even_redistribute(homes, leftover)
+            for aid, ids in extra.items():
+                assignment.setdefault(aid, []).extend(ids)
+        return assignment
+    return even_redistribute(accounts, chats, previous)
+
+
+def normalize_chat_assignments(raw: Any) -> dict[str, list[int]]:
+    """account_id -> chat_ids, as stored on module settings."""
+    blob = raw if isinstance(raw, dict) else {}
+    out: dict[str, list[int]] = {}
+    for key, value in blob.items():
+        try:
+            aid = int(key)
+        except (TypeError, ValueError):
+            continue
+        if aid <= 0:
+            continue
+        out[str(aid)] = _int_list(value)
+    return out
+
+
 def split_link_tokens(raw: str | None) -> list[str]:
     tokens: list[str] = []
     for line in str(raw or "").replace(",", " ").splitlines():
@@ -518,7 +565,33 @@ async def ensure_task_join_plan(
     plans = _plans_blob(automation)
     previous_raw = ((plans.get(task_key) or {}).get("assignments") if isinstance(plans.get(task_key), dict) else {}) or {}
     previous = {int(key): _int_list(value) for key, value in previous_raw.items()}
-    assignment = even_redistribute(workers, list(chat_map.keys()), previous)
+    manual = {
+        int(key): value
+        for key, value in normalize_chat_assignments(
+            module_settings_for_task(automation, task_key).get("chat_assignments")
+        ).items()
+    }
+    if manual:
+        extra_ids = [cid for ids in manual.values() for cid in ids if cid not in chat_map]
+        if extra_ids:
+            extra_chats = (
+                await session.execute(
+                    select(ChatTarget).where(
+                        ChatTarget.custom_automation_id == automation.id,
+                        ChatTarget.id.in_(extra_ids),
+                        ChatTarget.black_boxed_at.is_(None),
+                    )
+                )
+            ).scalars().all()
+            for chat in extra_chats:
+                chat_map[chat.id] = chat
+        previous = {**previous, **manual}
+    assignment = apply_task_chat_assignment(
+        workers,
+        list(chat_map.keys()),
+        previous=previous,
+        manual=manual or None,
+    )
     await _upsert_actor_memberships(session, automation.id, assignment)
     stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
     stored_folders = (stored_task or {}).get("folders") if isinstance(stored_task, dict) else {}
@@ -1213,3 +1286,90 @@ async def join_pending_addlists(session: AsyncSession, automation_id: int) -> di
     if joined:
         await session.commit()
     return {"joined": joined}
+
+
+_TASK_TITLES = {
+    "neurocommenting": "Нейрокомментинг",
+    "neurochatting": "Нейрочаттинг",
+    "neuroshilling": "Нейрошиллинг",
+    "chat_broadcasts": "Чат-рассылки",
+    "parser": "Парсер",
+    "masslooking": "Масслукинг",
+    "warmup": "Прогрев",
+}
+
+
+def list_task_addlists(automation: CustomAutomation | None) -> list[dict[str, Any]]:
+    """Collected t.me/addlist links for already-built Telegram folders."""
+    if automation is None:
+        return []
+    plans = _plans_blob(automation)
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for task_key, spec in plans.items():
+        if not isinstance(spec, dict):
+            continue
+        folders = spec.get("folders") or {}
+        title = _TASK_TITLES.get(str(task_key), str(task_key))
+        for account_key, rows in folders.items():
+            try:
+                account_id = int(account_key)
+            except (TypeError, ValueError):
+                account_id = 0
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                slug = str(row.get("slug") or "").strip()
+                url = str(row.get("url") or "").strip() or (addlist_url(slug) if slug else "")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                items.append(
+                    {
+                        "task_key": str(task_key),
+                        "task_title": title,
+                        "account_id": account_id,
+                        "slug": slug,
+                        "url": url,
+                        "chat_ids": _int_list(row.get("chat_ids")),
+                        "chat_count": len(_int_list(row.get("chat_ids"))),
+                    }
+                )
+    return items
+
+
+async def save_task_assignments(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    task_key: str,
+    assignments: dict[int, list[int]],
+) -> dict[str, Any]:
+    """Persist a manual per-account chat split and merge ids into module settings."""
+    key = _TASK_SETTINGS_KEY.get(task_key, task_key)
+    blob = dict(automation.module_settings or {})
+    settings = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
+    clean = {str(int(aid)): _int_list(ids) for aid, ids in (assignments or {}).items() if int(aid) > 0}
+    settings["chat_assignments"] = clean
+    union: list[int] = []
+    seen: set[int] = set()
+    for ids in clean.values():
+        for cid in ids:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            union.append(cid)
+    if union:
+        current = _int_list(settings.get("chat_ids"))
+        settings["chat_ids"] = list(dict.fromkeys(current + union))
+    blob[key] = settings
+    plans = _plans_blob(automation)
+    stored = dict(plans.get(task_key) or {}) if isinstance(plans.get(task_key), dict) else {}
+    stored["assignments"] = {k: v for k, v in clean.items()}
+    stored["manual"] = True
+    stored["updated_at"] = _utc_now().isoformat()
+    plans[task_key] = stored
+    blob[TASK_JOINS_KEY] = plans
+    automation.module_settings = blob
+    automation.updated_at = _utc_now()
+    await session.commit()
+    return {"assignments": clean, "chat_ids": settings.get("chat_ids") or []}

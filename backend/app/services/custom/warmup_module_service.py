@@ -21,7 +21,7 @@ from .account_warmup_service import (
     normalize_warmup_messages,
     normalize_warmup_usernames,
 )
-from .chat_addlist_service import import_chat_links
+from .chat_addlist_service import import_chat_links, normalize_chat_assignments
 from .chat_folder_service import folder_payloads
 from .job_service import list_jobs
 from .module_delays import JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
@@ -47,6 +47,7 @@ DEFAULT_WARMUP_SETTINGS: dict[str, Any] = {
     "require_proxy": False,
     "hide_in_work": False,
     "blacklisted_account_ids": [],
+    "chat_assignments": {},
     "presets": [],
 }
 
@@ -96,6 +97,7 @@ def normalize_warmup_settings(raw: Any) -> dict[str, Any]:
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
     data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     mode = str(incoming.get("mode") or "auto").strip().lower()
     data["mode"] = mode if mode in {"auto", "manual"} else "auto"
     intensity = str(incoming.get("intensity") or "auto").strip().lower()

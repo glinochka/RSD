@@ -12,6 +12,8 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { DELAY_MAX_SECONDS } from './delayLimits';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -326,7 +328,12 @@ const CustomAutomationChatBroadcastsPage = () => {
         <div className="nc-card">
           <div className="nc-card-head">
             <h2>Группы <span className="nc-muted">{settings.only_joined ? 'по чатам аккаунта' : `${selectedFolders.size} пап. · ${selectedChats.size} групп`}</span></h2>
-            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+            <div className="nc-row">
+              {settings.only_joined ? null : (
+                <UbtDistributeChats automationId={id} taskKey="chat_broadcasts" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
+              )}
+              <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+            </div>
           </div>
           <div style={{ marginBottom: 12 }}>
             <FeatureToggle
@@ -351,6 +358,7 @@ const CustomAutomationChatBroadcastsPage = () => {
                 <span className="nc-muted">Строк: {links.split(/[\s,]+/).filter((item) => item.trim()).length}</span>
               </div>
               <p className="nc-hint">Можно вставить t.me/addlist/... — папка попадёт в задачу, разобьётся на пулы по аккаунтам, и каждый вступит через свой addlist.</p>
+              <UbtAddlistLinks automationId={id} taskKey="chat_broadcasts" />
             </div>
           ) : null}
           {chatTab === 'delivered' ? (

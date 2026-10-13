@@ -21,7 +21,7 @@ from ...alembic.models import (
 from .chat_folder_service import list_folders
 from .user_folder_service import list_user_folders
 from .chat_import_service import import_chats_from_file
-from .chat_addlist_service import import_chat_links, split_link_tokens
+from .chat_addlist_service import import_chat_links, normalize_chat_assignments, split_link_tokens
 from .job_service import list_jobs
 from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .parser_service import normalize_parser_targets, normalize_since_hours
@@ -56,6 +56,7 @@ DEFAULT_PARSER_SETTINGS: dict[str, Any] = {
     "require_proxy": False,
     "hide_in_work": False,
     "blacklisted_account_ids": [],
+    "chat_assignments": {},
     "presets": [],
 }
 
@@ -96,6 +97,7 @@ def normalize_parser_settings(raw: Any) -> dict[str, Any]:
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
     data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["targets"] = normalize_parser_targets(incoming.get("targets"))
     data["do_join"] = bool(incoming.get("do_join", True))
     data["since_hours"] = normalize_since_hours(incoming.get("since_hours") if incoming.get("since_hours") is not None else 24)

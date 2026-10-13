@@ -575,6 +575,8 @@ async def _channel_lists(
             "success": stats["success"],
             "success_pct": pct,
         }
+        if chat is not None and getattr(chat, "black_boxed_at", None):
+            continue
         if pct >= threshold:
             white.append(row)
         else:
@@ -893,5 +895,46 @@ async def blackbox_stats_chat(
     await session.commit()
     await session.refresh(chat)
     return chat
+
+
+async def blackbox_stats_chats(
+    session: AsyncSession,
+    automation_id: int,
+    chat_ids: list[int],
+    *,
+    reason: str = "generated_blacklist",
+) -> int:
+    from .chat_membership_service import blackbox_unusable_chat
+
+    ids = []
+    seen: set[int] = set()
+    for item in chat_ids or []:
+        try:
+            ident = int(item)
+        except (TypeError, ValueError):
+            continue
+        if ident <= 0 or ident in seen:
+            continue
+        seen.add(ident)
+        ids.append(ident)
+    if not ids:
+        return 0
+    chats = (
+        await session.execute(
+            select(ChatTarget).where(
+                ChatTarget.custom_automation_id == automation_id,
+                ChatTarget.id.in_(ids),
+            )
+        )
+    ).scalars().all()
+    count = 0
+    for chat in chats:
+        if chat.black_boxed_at:
+            continue
+        await blackbox_unusable_chat(session, chat, reason=reason)
+        count += 1
+    if count:
+        await session.commit()
+    return count
 
 

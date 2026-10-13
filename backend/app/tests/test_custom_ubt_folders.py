@@ -658,3 +658,57 @@ class TestJobLifecycle:
         assert user_passes_filters(userbot, skip_bots=True) is False
         assert user_passes_filters(person, skip_bots=True) is True
         assert user_passes_filters(userbot, skip_bots=False) is True
+
+    def test_action_delay_is_capped_and_humanized(self):
+        from app.services.custom.module_delays import ACTION_DELAY_MAX_SECONDS, clamp_action_delay_pair, format_delay_ru
+        from app.services.custom.telegram_rpc_log_service import humanize_telegram_request
+
+        lo, hi = clamp_action_delay_pair(
+            {"delay_before_min": 2951, "delay_before_max": 5391},
+            default_min=180,
+            default_max=240,
+        )
+        assert lo == ACTION_DELAY_MAX_SECONDS
+        assert hi == ACTION_DELAY_MAX_SECONDS
+        assert format_delay_ru(45) == "45 с"
+        assert format_delay_ru(90) == "1 мин 30 с"
+        assert format_delay_ru(2951) == "49 мин 11 с"
+        assert humanize_telegram_request(type("UpdateStatusRequest", (), {"offline": False})()) == "вошёл в онлайн"
+        assert humanize_telegram_request(type("PingRequest", (), {})()) is None
+        assert "прочитал" in (humanize_telegram_request(type("GetHistoryRequest", (), {})()) or "")
+
+    def test_manual_distribute_keeps_uneven_split_and_lists_addlists(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_addlist_service import (
+            TASK_JOINS_KEY,
+            apply_task_chat_assignment,
+            list_task_addlists,
+        )
+
+        even = apply_task_chat_assignment([1, 2, 3], [10, 20, 30, 40, 50, 60])
+        sizes = [len(ids) for ids in even.values()]
+        assert max(sizes) - min(sizes) <= 1
+        manual = apply_task_chat_assignment(
+            [1, 2, 3],
+            [10, 20, 30, 40],
+            manual={1: [10, 20, 30], 2: [40], 3: []},
+        )
+        assert manual[1] == [10, 20, 30]
+        assert manual[2] == [40]
+        assert manual[3] == []
+        auto = SimpleNamespace(
+            module_settings={
+                TASK_JOINS_KEY: {
+                    "neurocommenting": {
+                        "folders": {
+                            "11": [{"slug": "AbCd123456", "chat_ids": [1, 2, 3], "url": "https://t.me/addlist/AbCd123456"}]
+                        }
+                    }
+                }
+            }
+        )
+        items = list_task_addlists(auto)
+        assert items[0]["url"] == "https://t.me/addlist/AbCd123456"
+        assert items[0]["task_key"] == "neurocommenting"
+        assert items[0]["chat_count"] == 3

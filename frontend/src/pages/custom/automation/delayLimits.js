@@ -1,4 +1,5 @@
 export const DELAY_MAX_SECONDS = 90 * 60;
+export const ACTION_DELAY_MAX_SECONDS = 15 * 60;
 
 export const JOIN_DELAY_MIN_DEFAULT = 180;
 export const JOIN_DELAY_MAX_DEFAULT = 240;

@@ -406,6 +406,8 @@ class TelegramAccountClient:
         self._converted_pyrogram = False
         self._borrowed = False
         self._live_handle: _LiveHandle | None = None
+        self._account_id: int | None = None
+        self._automation_id: int | None = None
 
     @classmethod
     def for_account(
@@ -429,7 +431,7 @@ class TelegramAccountClient:
             except Exception:
                 detected = None
         profile = ensure_account_device(account, api_id=detected)
-        return cls(
+        wrapper = cls(
             str(path),
             api_id=api_id,
             api_hash=api_hash,
@@ -437,6 +439,11 @@ class TelegramAccountClient:
             proxy=proxy if proxy is not None else telethon_proxy_from_account(account),
             device_profile=profile,
         )
+        try:
+            wrapper._account_id = int(getattr(account, "id", 0) or 0) or None
+        except (TypeError, ValueError):
+            wrapper._account_id = None
+        return wrapper
 
     async def _close_client(self) -> None:
         client = self.client
@@ -507,6 +514,7 @@ class TelegramAccountClient:
         except Exception as exc:
             await self._close_client()
             self._raise_connect_error(exc)
+        self._attach_rpc_logger()
         try:
             authorized = await self.client.is_user_authorized()
         except Exception as exc:
@@ -565,6 +573,17 @@ class TelegramAccountClient:
         self._file_lock = None
         self._release_asyncio_lock()
 
+    def _attach_rpc_logger(self) -> None:
+        if self.client is None:
+            return
+        from .telegram_rpc_log_service import install_telegram_rpc_logger
+
+        install_telegram_rpc_logger(
+            self.client,
+            account_id=self._account_id,
+            automation_id=self._automation_id,
+        )
+
     def _adopt_live(self, handle: _LiveHandle) -> None:
         live = handle.wrapper
         self.client = live.client
@@ -572,6 +591,9 @@ class TelegramAccountClient:
         self.api_hash = live.api_hash
         self._live_handle = handle
         self._borrowed = live is not self
+        if self._account_id is None:
+            self._account_id = getattr(live, "_account_id", None)
+        self._attach_rpc_logger()
 
     async def _connect_fresh(self) -> None:
         self._session_lock = await _lock_for_session(self.session_path)

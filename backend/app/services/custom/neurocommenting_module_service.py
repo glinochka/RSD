@@ -18,12 +18,12 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .account_roles import account_is_task_ready
-from .chat_addlist_service import import_chat_links
+from .chat_addlist_service import import_chat_links, list_task_addlists, normalize_chat_assignments
 from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .job_service import list_jobs
 from .lead_keywords import normalize_lead_keywords
-from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
+from .module_delays import JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_action_delay_pair, clamp_join_delay_pair
 from .neurocommenting_service import (
     DEFAULT_NEUROCOMMENTING_PROMPT,
     POST_COMMENT_DELAY_MAX_SECONDS,
@@ -45,6 +45,8 @@ DEFAULT_NC_SETTINGS: dict[str, Any] = {
     "max_per_chat": 10,
     "delay_before_min": POST_COMMENT_DELAY_MIN_SECONDS,
     "delay_before_max": POST_COMMENT_DELAY_MAX_SECONDS,
+    "blacklisted_account_ids": [],
+    "chat_assignments": {},
     "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
     "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "respect_night_hours": True,
@@ -100,15 +102,14 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
         data["max_per_chat"] = max(1, min(50, int(incoming.get("max_per_chat") or 10)))
     except (TypeError, ValueError):
         data["max_per_chat"] = 10
-    try:
-        data["delay_before_min"] = max(0, min(DELAY_MAX_SECONDS, int(incoming.get("delay_before_min") or POST_COMMENT_DELAY_MIN_SECONDS)))
-    except (TypeError, ValueError):
-        data["delay_before_min"] = POST_COMMENT_DELAY_MIN_SECONDS
-    try:
-        data["delay_before_max"] = max(data["delay_before_min"], min(DELAY_MAX_SECONDS, int(incoming.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)))
-    except (TypeError, ValueError):
-        data["delay_before_max"] = max(data["delay_before_min"], POST_COMMENT_DELAY_MAX_SECONDS)
+    data["delay_before_min"], data["delay_before_max"] = clamp_action_delay_pair(
+        incoming,
+        default_min=POST_COMMENT_DELAY_MIN_SECONDS,
+        default_max=POST_COMMENT_DELAY_MAX_SECONDS,
+    )
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
+    data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     try:
         prompt_id = incoming.get("prompt_id")
@@ -250,6 +251,7 @@ async def get_neurocommenting_module(session: AsyncSession, automation_id: int) 
         ],
         "jobs": nc_jobs,
         "summary": await _log_summary(session, automation_id),
+        "addlists": [item for item in list_task_addlists(automation) if item.get("task_key") == "neurocommenting"],
         "blacklist": [
             {
                 "id": chat.id,

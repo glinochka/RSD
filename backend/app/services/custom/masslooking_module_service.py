@@ -14,6 +14,7 @@ from ...alembic.models import (
     PoolAccount,
     SocialAccount,
 )
+from .chat_addlist_service import normalize_chat_assignments
 from .job_service import list_jobs
 from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .chat_folder_service import folder_payloads
@@ -43,6 +44,7 @@ DEFAULT_LOOK_SETTINGS: dict[str, Any] = {
     "require_proxy": False,
     "hide_in_work": False,
     "blacklisted_account_ids": [],
+    "chat_assignments": {},
     "presets": [],
 }
 
@@ -81,6 +83,7 @@ def normalize_look_settings(raw: Any) -> dict[str, Any]:
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
     data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["targets"] = normalize_story_targets(incoming.get("targets"))
     data["view_feed"] = bool(incoming.get("view_feed", True))
     data["stories_limit"] = _clamp_int(incoming.get("stories_limit") if incoming.get("stories_limit") is not None else 0, 0, lo=0, hi=500)

@@ -18,7 +18,7 @@ from ...alembic.models import (
 )
 from .account_roles import account_is_task_ready
 from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
-from .chat_addlist_service import import_chat_links
+from .chat_addlist_service import import_chat_links, normalize_chat_assignments
 from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_broadcast_channel, is_group_chat
@@ -51,6 +51,7 @@ DEFAULT_SHILL_SETTINGS: dict[str, Any] = {
     "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "prompt_id": None,
     "blacklisted_account_ids": [],
+    "chat_assignments": {},
     "presets": [],
 }
 
@@ -89,6 +90,7 @@ def normalize_shill_settings(raw: Any) -> dict[str, Any]:
     data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["channel_ids"] = _as_int_list(incoming.get("channel_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["chat_shilling"] = bool(incoming.get("chat_shilling", True))
     data["post_shilling"] = bool(incoming.get("post_shilling", True))
     data["unique_messages"] = bool(incoming.get("unique_messages", True))

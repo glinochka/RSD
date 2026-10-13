@@ -2207,6 +2207,10 @@ class CustomAutomation(Base):
         back_populates="automation",
         cascade="all, delete-orphan",
     )
+    telegram_account_logs: Mapped[list["TelegramAccountLog"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
     pending_chat_actions: Mapped[list["PendingChatAction"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
@@ -2439,6 +2443,10 @@ class SocialAccount(Base):
         cascade="all, delete-orphan",
     )
     action_logs: Mapped[list["AutomationActionLog"]] = relationship(
+        back_populates="social_account",
+        cascade="all, delete-orphan",
+    )
+    telegram_logs: Mapped[list["TelegramAccountLog"]] = relationship(
         back_populates="social_account",
         cascade="all, delete-orphan",
     )
@@ -3091,6 +3099,27 @@ class AutomationActionLog(Base):
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="action_logs")
     social_account: Mapped["SocialAccount"] = relationship(back_populates="action_logs")
+
+
+class TelegramAccountLog(Base):
+    __tablename__ = "telegram_account_logs"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    social_account_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    rpc_name: Mapped[str] = mapped_column(String(80), default="", server_default="", nullable=False)
+    result: Mapped[str] = mapped_column(String(16), default="ok", server_default="ok", nullable=False, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="telegram_account_logs")
+    social_account: Mapped["SocialAccount"] = relationship(back_populates="telegram_logs")
 
 
 class AmocrmConnection(Base):

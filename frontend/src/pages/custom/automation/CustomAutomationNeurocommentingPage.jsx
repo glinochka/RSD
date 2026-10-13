@@ -10,7 +10,9 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
-import { DELAY_MAX_SECONDS } from './delayLimits';
+import { ACTION_DELAY_MAX_SECONDS } from './delayLimits';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
@@ -60,6 +62,7 @@ const CustomAutomationNeurocommentingPage = () => {
   const [dbQuery, setDbQuery] = useState('');
   const [promptName, setPromptName] = useState('');
   const [blackQuery, setBlackQuery] = useState('');
+  const [blackAccountQuery, setBlackAccountQuery] = useState('');
   const [presetName, setPresetName] = useState('');
 
   const applyPayload = (payload) => {
@@ -98,11 +101,15 @@ const CustomAutomationNeurocommentingPage = () => {
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedChats = new Set(settings?.chat_ids || []);
   const selectedFolders = new Set(settings?.folder_ids || []);
+  const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
 
   const accounts = useMemo(() => {
     const items = data?.accounts || [];
     const needle = accountQuery.trim().toLowerCase();
     return items.filter((item) => {
+      if (blockedAccounts.has(item.id)) {
+        return false;
+      }
       if (settings?.require_proxy && !item.has_proxy) {
         return false;
       }
@@ -114,7 +121,7 @@ const CustomAutomationNeurocommentingPage = () => {
       }
       return `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle);
     });
-  }, [data, accountQuery, settings]);
+  }, [data, accountQuery, settings, blockedAccounts]);
 
   const dbChats = useMemo(() => {
     const items = data?.chats || [];
@@ -132,6 +139,7 @@ const CustomAutomationNeurocommentingPage = () => {
 
   const chosenAccounts = (data?.accounts || []).filter((item) => selectedAccounts.has(item.id));
   const chosenChats = (data?.chats || []).filter((item) => selectedChats.has(item.id));
+  const blockedAccountRows = (data?.accounts || []).filter((item) => blockedAccounts.has(item.id));
   const issues = data?.issues || [];
   const settingsRef = useLiveRef(settings);
   const enabledRef = useLiveRef(enabled);
@@ -172,6 +180,15 @@ const CustomAutomationNeurocommentingPage = () => {
       ? settings.account_ids.filter((item) => item !== accountId)
       : [...settings.account_ids, accountId];
     patch({ account_ids: next });
+  };
+
+  const blockAccount = (accountId) => {
+    patch({
+      blacklisted_account_ids: blockedAccounts.has(accountId)
+        ? settings.blacklisted_account_ids.filter((item) => item !== accountId)
+        : [...(settings.blacklisted_account_ids || []), accountId],
+      account_ids: settings.account_ids.filter((item) => item !== accountId),
+    });
   };
 
   const toggleChat = (chatId) => {
@@ -293,7 +310,17 @@ const CustomAutomationNeurocommentingPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Целевые каналы <span className="nc-muted">{selectedFolders.size} пап. · {selectedChats.size} кан.</span></h2>
-          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+          <div className="nc-row">
+            <UbtDistributeChats
+              automationId={id}
+              taskKey="neurocommenting"
+              accounts={data.accounts || []}
+              chats={data.chats || []}
+              settings={settings}
+              onApplied={(partial) => persist(partial)}
+            />
+            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
+          </div>
         </div>
         <div className="nc-row">
           <button type="button" className={`nc-chip ${chatTab === 'links' ? 'is-on' : ''}`} onClick={() => setChatTab('links')}>Юзернейм / ссылка</button>
@@ -357,6 +384,7 @@ const CustomAutomationNeurocommentingPage = () => {
             ))}
           </div>
         ) : null}
+        <UbtAddlistLinks automationId={id} taskKey="neurocommenting" />
       </div>
 
       <div className="nc-card">
@@ -392,9 +420,9 @@ const CustomAutomationNeurocommentingPage = () => {
         </div>
         <div className="nc-row">
           <span className="nc-muted">Задержка перед комментарием</span>
-          <Stepper value={settings.delay_before_min} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
+          <Stepper value={settings.delay_before_min} min={0} max={ACTION_DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
           <span className="nc-muted">до</span>
-          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_max: value })} />
+          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={ACTION_DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_max: value })} />
           <span className="nc-muted">сек</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Это антибот-пауза после публикации поста. FloodWait Telegram обрабатывается сам: короткие ждут на месте, длинные откладывают задачу.</p>
@@ -475,6 +503,40 @@ const CustomAutomationNeurocommentingPage = () => {
                 <div><strong>{item.title}</strong><span>{item.reason || 'вручную'}</span></div>
                 <span>{formatWhen(item.black_boxed_at)}</span>
               </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="nc-card">
+        <div className="nc-card-head"><h2>Чёрный список аккаунтов</h2></div>
+        <div className="nc-row">
+          <input className="nc-search" value={blackAccountQuery} onChange={(event) => setBlackAccountQuery(event.target.value)} placeholder="ID, username или телефон" />
+          <button
+            type="button"
+            className="acc-btn acc-btn--ghost"
+            onClick={() => {
+              const needle = blackAccountQuery.trim().toLowerCase();
+              if (!needle) {
+                return;
+              }
+              const found = (data.accounts || []).find((item) => `${item.label} ${item.username || ''} ${item.phone_number || ''} ${item.id}`.toLowerCase().includes(needle));
+              if (found) {
+                blockAccount(found.id);
+                setBlackAccountQuery('');
+              }
+            }}
+          >
+            + В ЧС
+          </button>
+        </div>
+        {blockedAccountRows.length === 0 ? <p className="nc-muted" style={{ marginTop: 10 }}>Эти аккаунты не будут комментировать, даже если попадут в пул.</p> : (
+          <div className="nc-list" style={{ marginTop: 10 }}>
+            {blockedAccountRows.map((item) => (
+              <button key={item.id} type="button" className="nc-item" onClick={() => blockAccount(item.id)}>
+                <div><strong>{item.label}</strong><span>{item.username ? `@${item.username}` : item.phone_number || `#${item.id}`}</span></div>
+                <span>×</span>
+              </button>
             ))}
           </div>
         )}

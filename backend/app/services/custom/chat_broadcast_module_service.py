@@ -15,7 +15,7 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .chat_broadcast_service import ACTION, normalize_broadcast_messages
-from .chat_addlist_service import import_chat_links
+from .chat_addlist_service import import_chat_links, normalize_chat_assignments
 from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
@@ -56,6 +56,7 @@ DEFAULT_BC_SETTINGS: dict[str, Any] = {
     "require_proxy": False,
     "hide_in_work": False,
     "blacklisted_account_ids": [],
+    "chat_assignments": {},
     "presets": [],
 }
 
@@ -103,6 +104,7 @@ def normalize_bc_settings(raw: Any) -> dict[str, Any]:
     data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
     data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["only_joined"] = bool(incoming.get("only_joined", True))
     data["messages"] = normalize_broadcast_messages(incoming.get("messages"))
     mode = str(incoming.get("first_mode") or "template").strip().lower()

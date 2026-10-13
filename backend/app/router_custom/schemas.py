@@ -999,10 +999,57 @@ class ChatBlackboxRequest(BaseModel):
     reason: str = "manual"
 
 
+class ChatBlackboxBulkRequest(BaseModel):
+    chat_ids: list[int] = Field(default_factory=list)
+    reason: str = "generated_blacklist"
+
+
+class TelegramAccountLogItem(BaseModel):
+    id: int
+    message: str
+    rpc_name: str = ""
+    result: str = "ok"
+    error: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class TelegramAccountLogListResponse(BaseModel):
+    items: list[TelegramAccountLogItem] = Field(default_factory=list)
+
+
+class TaskAddlistItem(BaseModel):
+    task_key: str
+    task_title: str = ""
+    account_id: int = 0
+    slug: str = ""
+    url: str = ""
+    chat_ids: list[int] = Field(default_factory=list)
+    chat_count: int = 0
+
+
+class TaskAddlistListResponse(BaseModel):
+    items: list[TaskAddlistItem] = Field(default_factory=list)
+
+
+class TaskDistributeRequest(BaseModel):
+    task_key: str
+    assignments: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class TaskDistributeResponse(BaseModel):
+    assignments: dict[str, list[int]] = Field(default_factory=dict)
+    chat_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
 class NeurocommentingSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     post_filter: str = "new"
     keywords: list[str] = Field(default_factory=list)
     probability: int = 100
@@ -1054,9 +1101,12 @@ class NeurocommentingPromptCreate(BaseModel):
 
 
 class NeurochattingSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     reply_mode: str = "interval"
     keywords: list[str] = Field(default_factory=list)
     reply_condition: str = ""
@@ -1113,9 +1163,12 @@ class NeurochattingPromptCreate(BaseModel):
 
 
 class MasslookingSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     targets: list[str] = Field(default_factory=list)
     view_feed: bool = True
     stories_limit: int = 0
@@ -1196,9 +1249,12 @@ class MassprimingPresetRequest(BaseModel):
 
 
 class ParserSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     targets: list[str] = Field(default_factory=list)
     source: str = "messages"
     do_join: bool = True
@@ -1249,9 +1305,12 @@ class ParserTargetsRequest(BaseModel):
 
 
 class ChatBroadcastsSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     only_joined: bool = True
     messages: list[dict[str, Any]] = Field(default_factory=list)
     first_mode: str = "template"
@@ -1356,9 +1415,12 @@ class DmBroadcastsPresetRequest(BaseModel):
 
 
 class NeuroshillingSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     channel_ids: list[int] = Field(default_factory=list)
     chat_shilling: bool = True
     post_shilling: bool = True
@@ -1414,9 +1476,12 @@ class NeuroshillingGenerateRequest(BaseModel):
 
 
 class WarmupSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     account_ids: list[int] = Field(default_factory=list)
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     mode: str = "auto"
     intensity: str = "auto"
     do_warmup_dms: bool = True

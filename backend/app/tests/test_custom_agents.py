@@ -8842,9 +8842,9 @@ class TestWarmupModule:
         from app.services.custom.module_account_filters import no_accounts_picked, skip_account_for_module
 
         today = datetime.now(timezone.utc).replace(tzinfo=None)
-        idle = SimpleNamespace(is_active=True, telegram_proxy=None, daily_messages_sent=0, daily_messages_reset_at=today)
-        busy = SimpleNamespace(is_active=True, telegram_proxy=None, daily_messages_sent=4, daily_messages_reset_at=today)
-        proxied = SimpleNamespace(is_active=True, telegram_proxy="socks5://x", daily_messages_sent=0, daily_messages_reset_at=today)
+        idle = SimpleNamespace(id=1, is_active=True, telegram_proxy=None, daily_messages_sent=0, daily_messages_reset_at=today)
+        busy = SimpleNamespace(id=2, is_active=True, telegram_proxy=None, daily_messages_sent=4, daily_messages_reset_at=today)
+        proxied = SimpleNamespace(id=3, is_active=True, telegram_proxy="socks5://x", daily_messages_sent=0, daily_messages_reset_at=today)
 
         assert skip_account_for_module({"hide_in_work": True}, idle) is False
         assert skip_account_for_module({"hide_in_work": True}, busy) is True
@@ -8852,6 +8852,8 @@ class TestWarmupModule:
         assert skip_account_for_module({"require_proxy": True}, proxied) is False
         pool = SimpleNamespace(proxy_id=12)
         assert skip_account_for_module({"require_proxy": True}, idle, pool) is False
+        assert skip_account_for_module({"blacklisted_account_ids": [1]}, idle) is True
+        assert skip_account_for_module({"blacklisted_account_ids": [1]}, busy) is False
         assert no_accounts_picked({}) is True
         assert no_accounts_picked({"account_ids": []}) is True
         assert no_accounts_picked({"account_ids": [3]}) is False

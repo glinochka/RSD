@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import FeatureToggle from '../../../components/FeatureToggle';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import { paramLabel, resultLabel } from './jobParamLabels';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
@@ -337,7 +338,7 @@ const CustomAutomationTasksPage = () => {
                     {Object.keys(editForm).length === 0 ? <p>Нет редактируемых полей</p> : null}
                     {Object.entries(editForm).map(([key, value]) => (
                       <div key={key} className="tsk-edit-row">
-                        <label htmlFor={`tsk-edit-${key}`}>{key}</label>
+                        <label htmlFor={`tsk-edit-${key}`}>{paramLabel(key)}</label>
                         {String(value).length > 80 ? (
                           <textarea id={`tsk-edit-${key}`} rows={3} value={value} onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))} />
                         ) : (
@@ -352,7 +353,7 @@ const CustomAutomationTasksPage = () => {
                   <div className="tsk-section-label">Параметры запуска</div>
                   <dl className="tsk-kv">
                     {paramEntries(selected.params).map(([key, value]) => (
-                      <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
+                      <div key={key}><dt>{paramLabel(key)}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
                     ))}
                   </dl>
                 </div>
@@ -363,7 +364,7 @@ const CustomAutomationTasksPage = () => {
                   <div className="tsk-section-label">Результат</div>
                   <dl className="tsk-kv">
                     {resultEntries(selected.result).map(([key, value]) => (
-                      <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
+                      <div key={key}><dt>{resultLabel(key)}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
                     ))}
                     {selected.error ? <div><dt>Ошибка</dt><dd>{selected.error}</dd></div> : null}
                   </dl>

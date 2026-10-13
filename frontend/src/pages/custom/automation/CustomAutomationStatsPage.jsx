@@ -270,6 +270,26 @@ const CustomAutomationStatsPage = () => {
     URL.revokeObjectURL(url);
   };
 
+  const applyGeneratedBlacklist = async () => {
+    const chatIds = (history.generated_blacklist || []).map((item) => item.id).filter(Boolean);
+    if (!chatIds.length) {
+      setMessage('Сгенерированный чёрный список пуст');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await customService.applyStatsBlacklistBulk(id, { chatIds });
+      setMessage(`В чёрный список внесено каналов: ${result.count || chatIds.length}`);
+      await load();
+    } catch (err) {
+      setError(err.message || 'Не удалось внести каналы в чёрный список');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const addBlack = async (event) => {
     event.preventDefault();
     if (!blackQuery.trim()) {
@@ -668,6 +688,9 @@ const CustomAutomationStatsPage = () => {
                   <span>Чёрный список · {history.generated_blacklist?.length || 0}</span>
                   <button type="button" onClick={() => copyLines(history.generated_blacklist).then((ok) => setMessage(ok ? 'Чёрный список скопирован' : 'Список пуст'))}>
                     Скопировать
+                  </button>
+                  <button type="button" disabled={busy || !(history.generated_blacklist || []).length} onClick={applyGeneratedBlacklist}>
+                    Внести в ЧС
                   </button>
                 </div>
                 {(history.generated_blacklist || []).slice(0, 8).map((item) => (

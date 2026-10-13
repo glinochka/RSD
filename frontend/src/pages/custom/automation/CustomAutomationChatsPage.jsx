@@ -6,11 +6,14 @@ import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 import { parseTelegramChatRef } from '../../../utils/telegramChatLink';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { CHAT_TYPE_LABELS } from './activityLabels';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
+import '../../../styles/customNeuro.css';
+import '../../../styles/customAccountManager.css';
 
 const JOIN_STATUSES = [
   { value: '', label: 'Все статусы' },
@@ -422,6 +425,12 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
 
           {message ? <p className="crm-flash">{message}</p> : null}
           {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Собранные addlist-папки</h3>
+            <p className="form-hint">После распределения и вступления система собирает t.me/addlist для каждого пула. Ссылку можно скопировать и открыть папку в Telegram.</p>
+            <UbtAddlistLinks automationId={id} emptyText="Пока нет собранных addlist — они появятся после запуска задачи со вступлениями." />
+          </div>
 
           {!inFolder ? (
             folders.length > 0 ? (

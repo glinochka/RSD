@@ -738,6 +738,43 @@ a.acc-icon-btn {
   cursor: not-allowed;
 }
 
+.acc-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.acc-log-row {
+  padding: 10px 12px;
+  border: 1px solid #e8ecf0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.acc-log-row.is-error {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.acc-log-row b {
+  display: block;
+  font-size: 0.875rem;
+  color: #111827;
+  font-weight: 600;
+}
+
+.acc-log-row small {
+  display: block;
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 0.75rem;
+}
+
 .acc-drop-overlay {
   position: absolute;
   inset: 0;

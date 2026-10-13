@@ -12,6 +12,8 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { toggleNumericId, ubtModulePath } from './customNav';
 import { DELAY_MAX_SECONDS } from './delayLimits';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
+import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -355,7 +357,10 @@ const CustomAutomationParserPage = () => {
         <div className="nc-card">
           <div className="nc-card-head">
             <h2>Чаты и каналы</h2>
-            <span className="nc-muted">Целей: {targetCount}</span>
+            <div className="nc-row">
+              <span className="nc-muted">Целей: {targetCount}</span>
+              <UbtDistributeChats automationId={id} taskKey="parser" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
+            </div>
           </div>
           <textarea className="nc-area" value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@groupname\nhttps://t.me/group\n-1001234567890'} />
           <p className="nc-hint">Форматы: @username, t.me/group, -100id. Папки те же, что в «Чаты и каналы».</p>
@@ -364,6 +369,7 @@ const CustomAutomationParserPage = () => {
             <CustomFileButton variant="ubt" accept=".csv,.xlsx,.xls,.txt" disabled={busy} onFile={(file) => runSafe(() => customService.importParserFile(id, file).then(applyPayload), 'Файл стал папкой чатов')}>Загрузить файл</CustomFileButton>
             <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
           </div>
+          <UbtAddlistLinks automationId={id} taskKey="parser" />
           <p className="nc-hint">Один файл — одна папка. CSV/Excel/txt со ссылками. Отсев «маленьких чатов» для своего файла не применяется.</p>
           <div style={{ marginTop: 12 }}>
             <div className="nc-row">

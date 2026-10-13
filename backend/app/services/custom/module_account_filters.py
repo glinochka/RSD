@@ -18,6 +18,15 @@ def account_is_in_work(account: Any) -> bool:
 
 def skip_account_for_module(cfg: dict[str, Any] | None, account: Any, pool: Any = None) -> bool:
     data = cfg if isinstance(cfg, dict) else {}
+    account_id = int(getattr(account, "id", 0) or 0)
+    blocked: set[int] = set()
+    for item in data.get("blacklisted_account_ids") or []:
+        try:
+            blocked.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    if account_id and account_id in blocked:
+        return True
     if data.get("require_proxy") and not account_has_proxy(account, pool):
         return True
     if data.get("hide_in_work") and account_is_in_work(account):
