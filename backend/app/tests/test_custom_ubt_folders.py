@@ -842,6 +842,17 @@ class TestJobLifecycle:
         assert remixed[1][:3] == [1, 2, 3]
         assert remixed[1][3:] == list(range(200, 153, -1))
 
+        assignment = {1: [10, 20, 30], 2: [40, 50]}
+        already = {1: [10, 20]}
+        joined_pairs = {(int(aid), int(cid)) for aid, ids in already.items() for cid in ids}
+        pending = sum(
+            1
+            for aid, ids in assignment.items()
+            for cid in ids
+            if (int(aid), int(cid)) not in joined_pairs
+        )
+        assert pending == 3
+
     def test_sibling_tasks_keep_the_same_chat_owners(self):
         from app.services.custom.chat_addlist_service import (
             merge_assignment_previous,

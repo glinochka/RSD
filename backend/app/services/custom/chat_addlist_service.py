@@ -1027,11 +1027,19 @@ async def ensure_task_join_plan(
     if not isinstance(stored_folders, dict):
         stored_folders = {}
     stored_folders = merge_sibling_folders(plans, assignment, stored_folders)
-    pending_left = 0
-    for account_id, assigned in assignment.items():
-        pending_left += sum(
-            1 for cid in assigned if not await account_is_joined(session, cid, account_id)
-        )
+    joined = await load_joined_assignment(
+        session,
+        automation.id,
+        list(assignment.keys()),
+        [cid for ids in assignment.values() for cid in ids],
+    )
+    joined_pairs = {(int(aid), int(cid)) for aid, ids in joined.items() for cid in ids}
+    pending_left = sum(
+        1
+        for aid, ids in assignment.items()
+        for cid in ids
+        if (int(aid), int(cid)) not in joined_pairs
+    )
     key = _TASK_SETTINGS_KEY.get(task_key, task_key)
     blob = dict(automation.module_settings or {})
     settings = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
