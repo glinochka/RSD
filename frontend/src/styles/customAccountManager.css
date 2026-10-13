@@ -739,40 +739,46 @@ a.acc-icon-btn {
 }
 
 .acc-log-list {
-  list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 360px;
+  background: #f7fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 12px;
+  max-height: 420px;
   overflow: auto;
+  font-size: 0.8125rem;
 }
 
 .acc-log-row {
-  padding: 10px 12px;
-  border: 1px solid #e8ecf0;
-  border-radius: 12px;
-  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
 }
 
-.acc-log-row.is-error {
-  border-color: #fecaca;
-  background: #fff7f7;
+.acc-log-row + .acc-log-row {
+  border-top: 1px solid #eef2f6;
 }
 
-.acc-log-row b {
-  display: block;
-  font-size: 0.875rem;
-  color: #111827;
-  font-weight: 600;
+.acc-log-row.is-error,
+.acc-log-row.is-error .acc-log-msg {
+  color: #b91c1c;
 }
 
-.acc-log-row small {
-  display: block;
-  margin-top: 2px;
+.acc-log-time {
   color: #6b7280;
   font-size: 0.75rem;
+}
+
+.acc-log-msg {
+  color: #374151;
+  font-weight: 400;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .acc-drop-overlay {

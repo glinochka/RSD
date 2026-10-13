@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -44,6 +45,9 @@ ADDLIST_FOLDERS_DEFAULT = 2
 ADDLIST_FOLDERS_PREMIUM = 20
 TASK_JOINS_KEY = "_task_joins"
 HOST_BOOTSTRAP_JOINS_PER_TICK = 1
+TASK_CHATS_PER_ACCOUNT = 50
+JOIN_WAVE_MIN = 15
+JOIN_WAVE_MAX = 20
 
 
 def join_account_is_parked(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
@@ -240,10 +244,17 @@ def apply_task_chat_assignment(
     chat_ids: list[int],
     previous: dict[int, list[int]] | None = None,
     manual: dict[int, list[int]] | None = None,
+    *,
+    max_per_account: int = TASK_CHATS_PER_ACCOUNT,
 ) -> dict[int, list[int]]:
-    """Honor an explicit per-account split; otherwise even-redistribute."""
+    """Honor an explicit per-account split; otherwise even-redistribute.
+
+    Each account gets at most ``max_per_account`` chats. Overflow is left
+    unassigned for ``split_task_assignment`` to put into the reserve pool.
+    """
     accounts = [int(item) for item in dict.fromkeys(account_ids or []) if int(item) > 0]
     chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
+    cap = max(1, int(max_per_account or TASK_CHATS_PER_ACCOUNT))
     if not accounts:
         return {}
     if manual:
@@ -255,16 +266,72 @@ def apply_task_chat_assignment(
                 chat_id = int(cid)
                 if chat_id not in chat_set or chat_id in assigned:
                     continue
+                if len(assignment[aid]) >= cap:
+                    continue
                 assignment[aid].append(chat_id)
                 assigned.add(chat_id)
-        leftover = [cid for cid in chats if cid not in assigned]
-        homes = [aid for aid in accounts if assignment[aid]] or accounts
-        if leftover:
-            extra = even_redistribute(homes, leftover)
-            for aid, ids in extra.items():
-                assignment.setdefault(aid, []).extend(ids)
         return assignment
-    return even_redistribute(accounts, chats, previous)
+    return even_redistribute(accounts, chats, previous, max_per_account=cap)
+
+
+def split_task_assignment(
+    account_ids: list[int],
+    chat_ids: list[int],
+    previous: dict[int, list[int]] | None = None,
+    manual: dict[int, list[int]] | None = None,
+    stored_reserve: list[int] | None = None,
+    *,
+    max_per_account: int = TASK_CHATS_PER_ACCOUNT,
+) -> tuple[dict[int, list[int]], list[int]]:
+    """Assign up to 50 chats per account; leftovers become the reserve pool."""
+    chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
+    assignment = apply_task_chat_assignment(
+        account_ids,
+        chats,
+        previous=previous,
+        manual=manual,
+        max_per_account=max_per_account,
+    )
+    assigned: set[int] = set()
+    for ids in assignment.values():
+        assigned.update(ids)
+    reserve_source = [int(item) for item in dict.fromkeys([*(stored_reserve or []), *chats]) if int(item) > 0]
+    reserve = [cid for cid in reserve_source if cid not in assigned]
+    return assignment, reserve
+
+
+def pick_join_wave(pending_ids: list[int], *, rng: Any = None) -> list[int]:
+    """Random 15–20 chats (or all remaining) for one join wave."""
+    pool = [int(item) for item in dict.fromkeys(pending_ids or []) if int(item) > 0]
+    if not pool:
+        return []
+    picker = rng or random
+    size = min(len(pool), picker.randint(JOIN_WAVE_MIN, JOIN_WAVE_MAX))
+    if size >= len(pool):
+        shuffled = list(pool)
+        picker.shuffle(shuffled)
+        return shuffled
+    return picker.sample(pool, size)
+
+
+def wave_rest_until(now: datetime | None = None) -> datetime:
+    """No more joins for the rest of this Moscow day and the next full day."""
+    from .account_pacing import moscow_day_start_utc
+
+    stamp = now or _utc_now()
+    return moscow_day_start_utc(stamp) + timedelta(days=2)
+
+
+def parse_wave_rest_until(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        value = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return None
+    if value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    return value
 
 
 def normalize_chat_assignments(raw: Any) -> dict[str, list[int]]:
@@ -575,7 +642,7 @@ async def ensure_task_join_plan(
     account_ids: list[int],
     chat_ids: list[int],
 ) -> dict[str, Any]:
-    """Host joins missing chats one-by-one, grows a shareable folder, workers join via addlist."""
+    """Keep per-account pools (max 50) and a reserve; joins happen in 15–20 waves."""
     alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
     workers = [aid for aid in account_ids if aid in alive]
     chats = (
@@ -587,7 +654,11 @@ async def ensure_task_join_plan(
             )
         )
     ).scalars().all()
-    chat_map = {chat.id: chat for chat in chats}
+    chat_map = {
+        chat.id: chat
+        for chat in chats
+        if (getattr(chat, "mod_status", None) or "") != "moderated" and chat.comments_open is not False
+    }
     if not workers or not chat_map:
         return {"joined": 0, "folders": 0}
     plans = _plans_blob(automation)
@@ -612,200 +683,49 @@ async def ensure_task_join_plan(
                 )
             ).scalars().all()
             for chat in extra_chats:
+                if (getattr(chat, "mod_status", None) or "") == "moderated" or chat.comments_open is False:
+                    continue
                 chat_map[chat.id] = chat
         previous = {**previous, **manual}
-    assignment = apply_task_chat_assignment(
+    stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
+    assignment, reserve = split_task_assignment(
         workers,
         list(chat_map.keys()),
         previous=previous,
         manual=manual or None,
+        stored_reserve=_int_list((stored_task or {}).get("reserve")),
     )
     await _upsert_actor_memberships(session, automation.id, assignment)
-    stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
     stored_folders = (stored_task or {}).get("folders") if isinstance(stored_task, dict) else {}
     if not isinstance(stored_folders, dict):
         stored_folders = {}
-    premium_cache = dict((stored_task or {}).get("premium") or {})
-    pending_by_account: dict[int, list[int]] = {}
-    union_pending: list[int] = []
-    for account_id, assigned in assignment.items():
-        pending = [cid for cid in assigned if not await account_is_joined(session, cid, account_id)]
-        pending_by_account[account_id] = pending
-        union_pending.extend(pending)
-    export_ids = host_export_chat_ids(union_pending, list(chat_map.keys()))
-    folder_slugs = {
-        chat_id: chat_addlist_slug(chat)
-        for chat_id, chat in chat_map.items()
-        if chat_addlist_slug(chat)
-    }
-    ready_workers = [
-        aid for aid in workers if not await _skip_join_for_flood(session, alive.get(aid))
-    ]
-    host = await _pick_host(
-        session,
-        alive,
-        ready_workers or workers,
-        export_ids,
-    )
-    if host and await _skip_join_for_flood(session, host):
-        host = None
-    job_type = _log_job_type(task_key)
-    joined = 0
-    created_folders = 0
-    if host:
-        joined += await _bootstrap_host_for_export(
-            session,
-            host=host,
-            chat_map=chat_map,
-            needed_ids=export_ids,
-            folder_slugs=folder_slugs,
-            job_type=job_type,
-            automation=automation,
-            task_key=task_key,
-            stored_folders=stored_folders,
-        )
-    folders: dict[str, list[dict[str, Any]]] = {}
-    from .chat_membership_service import apply_account_join_cooldown
-    from .telegram_account_client import TelegramAccountClient
-    from .job_service import actor_label, log_active
-
-    for account_id, assigned in assignment.items():
-        account = alive.get(account_id)
-        pending = list(pending_by_account.get(account_id) or [])
-        previous_folders = list((stored_folders or {}).get(str(account_id)) or [])
-        if not account or not assigned:
-            folders[str(account_id)] = []
-            continue
-        reusable, covered = _reusable_folders(previous_folders, assigned)
-        if host and account.id == host.id:
-            folders[str(account_id)] = stored_folders.get(str(host.id)) or reusable or previous_folders
-            continue
-        if not pending:
-            host_folders = stored_folders.get(str(host.id)) if host else None
-            folders[str(account_id)] = reusable or previous_folders or host_folders or []
-            continue
-        if await _skip_join_for_flood(session, account):
-            folders[str(account_id)] = reusable or previous_folders
-            continue
-        try:
-            delay = task_join_delay_seconds(automation, task_key)
-            own_slugs = list(dict.fromkeys(
-                str(row.get("slug") or "") for row in reusable if row.get("slug")
-            ))
-            if own_slugs:
-                async with TelegramAccountClient.for_account(account) as client:
-                    for slug in own_slugs:
-                        await _join_addlist(client, slug)
-                        await log_active(
-                            automation.id,
-                            job_type,
-                            f"{actor_label(account)} вступил по своему addlist t.me/addlist/{slug} "
-                            f"({len(covered)} чатов пула одним запросом)",
-                        )
-                joined += await _mark_joined(
-                    session, account_id, [cid for cid in pending if cid in covered]
-                )
-                await apply_account_join_cooldown(
-                    session, automation.id, account_id, wait_seconds=delay
-                )
-                pending = [cid for cid in pending if cid not in covered]
-                folders[str(account_id)] = reusable
-                continue
-            host_row = _latest_folder_row(stored_folders.get(str(host.id))) if host else None
-            if pending and host_row and host_row.get("slug"):
-                host_cover = set(_int_list(host_row.get("chat_ids")))
-                hit = [cid for cid in pending if cid in host_cover]
-                if hit:
-                    async with TelegramAccountClient.for_account(account) as client:
-                        await _join_addlist(client, str(host_row["slug"]))
-                    joined += await _mark_joined(session, account_id, hit)
-                    reusable = [host_row]
-                    await log_active(
-                        automation.id,
-                        job_type,
-                        f"{actor_label(account)} вступил по addlist хоста "
-                        f"t.me/addlist/{host_row['slug']} "
-                        f"({len(hit)} чатов одним запросом)",
-                    )
-                    await apply_account_join_cooldown(
-                        session, automation.id, account_id, wait_seconds=delay
-                    )
-                    folders[str(account_id)] = reusable
-                    continue
-            if not pending:
-                folders[str(account_id)] = reusable
-                continue
-            if not host:
-                folders[str(account_id)] = reusable
-                continue
-            exportable = [
-                cid for cid in pending if await account_is_joined(session, cid, host.id)
-            ]
-            if not exportable:
-                folders[str(account_id)] = reusable
-                continue
-            cached = premium_cache.get(str(account_id))
-            premium = bool(cached) if cached is not None else await _account_is_premium(account)
-            premium_cache[str(account_id)] = premium
-            per_folder, _folder_cap = addlist_capacity(premium=premium)
-            batches = chunk_ids(exportable, per_folder)
-            new_rows = await _export_and_join_batches(
-                host=host,
-                worker=account,
-                chats=[chat_map[cid] for cid in exportable if cid in chat_map],
-                batches=batches,
-                previous=stored_folders.get(str(host.id)) or reusable,
-                chat_map=chat_map,
-            )
-            created_folders += len(new_rows)
-            exported_ids = [cid for row in new_rows for cid in _int_list(row.get("chat_ids"))]
-            joined += await _mark_joined(session, account_id, exported_ids)
-            if new_rows:
-                stored_folders[str(host.id)] = new_rows
-                slugs = [str(row.get("slug") or "") for row in new_rows if row.get("slug")]
-                await log_active(
-                    automation.id,
-                    job_type,
-                    f"{actor_label(account)} вступил в свой пул через addlist "
-                    f"({len(exported_ids)} чатов): "
-                    + ", ".join(f"t.me/addlist/{slug}" for slug in slugs),
-                )
-                await apply_account_join_cooldown(
-                    session, automation.id, account_id, wait_seconds=delay
-                )
-            folders[str(account_id)] = new_rows or reusable
-        except Exception as exc:
-            if _is_flood_error(exc):
-                _park_join_flood(account, exc)
-            logger.warning("Addlist join failed task=%s account=%s: %s", task_key, account_id, exc)
-            folders[str(account_id)] = reusable
-    if host and stored_folders.get(str(host.id)):
-        folders[str(host.id)] = stored_folders[str(host.id)]
-    host_rows = folders.get(str(host.id)) if host else None
-    if host_rows:
-        for account_id in workers:
-            key = str(account_id)
-            current = folders.get(key) or []
-            has_slug = any(isinstance(row, dict) and row.get("slug") for row in current)
-            if not has_slug:
-                folders[key] = host_rows
     pending_left = 0
     for account_id, assigned in assignment.items():
         pending_left += sum(
             1 for cid in assigned if not await account_is_joined(session, cid, account_id)
         )
+    key = _TASK_SETTINGS_KEY.get(task_key, task_key)
+    blob = dict(automation.module_settings or {})
+    settings = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
+    settings["chat_assignments"] = {str(aid): ids for aid, ids in assignment.items()}
+    settings["reserve_chat_ids"] = reserve
+    blob[key] = settings
+    automation.module_settings = blob
     plans[task_key] = {
-        "assignments": {str(key): value for key, value in assignment.items()},
-        "folders": folders,
-        "premium": premium_cache,
-        "host_account_id": host.id if host else workers[0],
+        "assignments": {str(aid): ids for aid, ids in assignment.items()},
+        "reserve": reserve,
+        "folders": stored_folders,
+        "waves": dict((stored_task or {}).get("waves") or {}) if isinstance((stored_task or {}).get("waves"), dict) else {},
+        "premium": dict((stored_task or {}).get("premium") or {}),
+        "host_account_id": (stored_task or {}).get("host_account_id") or workers[0],
         "joins_complete": pending_left == 0 and bool(assignment),
         "pending_joins": pending_left,
+        "manual": bool((stored_task or {}).get("manual") or manual),
         "updated_at": _utc_now().isoformat(),
     }
     _store_plans(automation, plans)
     await session.commit()
-    return {"joined": joined, "folders": created_folders, "assignment": assignment}
+    return {"joined": 0, "folders": 0, "assignment": assignment, "reserve": reserve}
 
 
 async def _bootstrap_host_for_export(
@@ -1393,28 +1313,128 @@ async def save_task_assignments(
     key = _TASK_SETTINGS_KEY.get(task_key, task_key)
     blob = dict(automation.module_settings or {})
     settings = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
-    clean = {str(int(aid)): _int_list(ids) for aid, ids in (assignments or {}).items() if int(aid) > 0}
+    plans = _plans_blob(automation)
+    stored = dict(plans.get(task_key) or {}) if isinstance(plans.get(task_key), dict) else {}
+    account_ids = [int(aid) for aid in (assignments or {}).keys() if int(aid) > 0]
+    union = [cid for ids in (assignments or {}).values() for cid in _int_list(ids)]
+    mapped, reserve = split_task_assignment(
+        account_ids,
+        union,
+        manual={int(aid): _int_list(ids) for aid, ids in (assignments or {}).items() if int(aid) > 0},
+        stored_reserve=_int_list(stored.get("reserve") or settings.get("reserve_chat_ids")),
+    )
+    clean = {str(int(aid)): ids for aid, ids in mapped.items() if int(aid) > 0}
     settings["chat_assignments"] = clean
-    union: list[int] = []
+    settings["reserve_chat_ids"] = reserve
+    assigned_union: list[int] = []
     seen: set[int] = set()
     for ids in clean.values():
         for cid in ids:
             if cid in seen:
                 continue
             seen.add(cid)
-            union.append(cid)
-    if union:
+            assigned_union.append(cid)
+    if assigned_union or reserve:
         current = _int_list(settings.get("chat_ids"))
-        settings["chat_ids"] = list(dict.fromkeys(current + union))
+        settings["chat_ids"] = list(dict.fromkeys(current + assigned_union + reserve))
     blob[key] = settings
-    plans = _plans_blob(automation)
-    stored = dict(plans.get(task_key) or {}) if isinstance(plans.get(task_key), dict) else {}
     stored["assignments"] = {k: v for k, v in clean.items()}
+    stored["reserve"] = reserve
     stored["manual"] = True
     stored["updated_at"] = _utc_now().isoformat()
     plans[task_key] = stored
     blob[TASK_JOINS_KEY] = plans
     automation.module_settings = blob
     automation.updated_at = _utc_now()
+    await _upsert_actor_memberships(session, automation.id, mapped)
     await session.commit()
-    return {"assignments": clean, "chat_ids": settings.get("chat_ids") or []}
+    return {
+        "assignments": clean,
+        "chat_ids": settings.get("chat_ids") or [],
+        "reserve_chat_ids": reserve,
+    }
+
+
+def _chat_usable_in_pool(chat: ChatTarget | None) -> bool:
+    if chat is None or getattr(chat, "black_boxed_at", None):
+        return False
+    if (getattr(chat, "mod_status", None) or "") == "moderated":
+        return False
+    if chat.comments_open is False:
+        return False
+    return True
+
+
+async def _take_reserve_replacement(
+    session: AsyncSession,
+    automation_id: int,
+    reserve: list[int],
+    used: set[int],
+) -> tuple[int | None, list[int]]:
+    kept: list[int] = []
+    picked: int | None = None
+    for cid in reserve:
+        if cid in used:
+            kept.append(cid)
+            continue
+        chat = await session.get(ChatTarget, cid)
+        if not _chat_usable_in_pool(chat) or int(getattr(chat, "custom_automation_id", 0) or 0) != automation_id:
+            continue
+        if picked is None:
+            picked = cid
+            continue
+        kept.append(cid)
+    return picked, kept
+
+
+async def replace_blackboxed_task_chat(session: AsyncSession, chat_target: ChatTarget) -> int:
+    """If a pool chat is blacklisted, pull a replacement from the reserve."""
+    automation_id = int(getattr(chat_target, "custom_automation_id", 0) or 0)
+    if automation_id <= 0:
+        return 0
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation is None:
+        return 0
+    dead_id = int(chat_target.id)
+    plans = _plans_blob(automation)
+    blob = dict(automation.module_settings or {})
+    replaced = 0
+    changed_any = False
+    for task_key, spec in list(plans.items()):
+        if not isinstance(spec, dict):
+            continue
+        assignments = {int(key): _int_list(value) for key, value in (spec.get("assignments") or {}).items()}
+        reserve = _int_list(spec.get("reserve"))
+        used = {cid for ids in assignments.values() for cid in ids if cid != dead_id}
+        task_changed = False
+        for aid, ids in list(assignments.items()):
+            if dead_id not in ids:
+                continue
+            next_ids = [cid for cid in ids if cid != dead_id]
+            pick, reserve = await _take_reserve_replacement(session, automation_id, reserve, used)
+            if pick:
+                next_ids.append(pick)
+                used.add(pick)
+                await _upsert_actor_memberships(session, automation_id, {aid: [pick]})
+                replaced += 1
+            assignments[aid] = next_ids
+            task_changed = True
+        reserve = [cid for cid in reserve if cid != dead_id]
+        if not task_changed and dead_id not in reserve:
+            continue
+        spec["assignments"] = {str(aid): ids for aid, ids in assignments.items()}
+        spec["reserve"] = reserve
+        spec["updated_at"] = _utc_now().isoformat()
+        plans[task_key] = spec
+        key = _TASK_SETTINGS_KEY.get(str(task_key), str(task_key))
+        settings = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
+        settings["chat_assignments"] = spec["assignments"]
+        settings["reserve_chat_ids"] = reserve
+        blob[key] = settings
+        changed_any = True
+    if not changed_any:
+        return 0
+    blob[TASK_JOINS_KEY] = plans
+    automation.module_settings = blob
+    automation.updated_at = _utc_now()
+    return replaced

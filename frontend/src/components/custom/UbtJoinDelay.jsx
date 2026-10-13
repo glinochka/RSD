@@ -19,7 +19,9 @@ const UbtJoinDelay = ({ settings, onPatch }) => {
         <Stepper value={Math.max(lo, hi)} min={lo} max={DELAY_MAX_SECONDS} onChange={(value) => onPatch({ join_delay_max: value })} />
         <span className="nc-muted">сек</span>
       </div>
-      <p className="nc-muted" style={{ marginTop: 8 }}>Отдельная пауза между джойнами. На комментарии и ответы не влияет.</p>
+      <p className="nc-muted" style={{ marginTop: 8 }}>
+        Пауза между джойнами внутри волны (15–20 вступлений). После волны аккаунт не вступает этот и следующий день. На комментарии не влияет.
+      </p>
     </div>
   );
 };

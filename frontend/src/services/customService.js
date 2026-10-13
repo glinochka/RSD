@@ -49,6 +49,21 @@ const handleResponse = async (response) => {
     let message = `HTTP ${response.status}`;
     if (typeof detail === 'string') {
       message = detail;
+    } else if (Array.isArray(detail)) {
+      const parts = detail.map((item) => {
+        if (typeof item === 'string') {
+          return item;
+        }
+        const loc = Array.isArray(item?.loc) ? item.loc.filter((part) => part !== 'body').join('.') : '';
+        const msg = item?.msg || item?.message;
+        if (loc && msg) {
+          return `${loc}: ${msg}`;
+        }
+        return msg || '';
+      }).filter(Boolean);
+      if (parts.length) {
+        message = parts.join('; ');
+      }
     } else if (detail && typeof detail.message === 'string') {
       message = detail.message;
     }
@@ -299,12 +314,12 @@ const customService = {
     return handleResponse(response);
   },
 
-  async saveTaskDistribute(automationId, { taskKey, assignments } = {}) {
+  async saveTaskDistribute(automationId, { taskKey, task_key: taskKeySnake, assignments } = {}) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_DISTRIBUTE(automationId)}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({
-        task_key: taskKey,
+        task_key: taskKey || taskKeySnake,
         assignments: assignments || {},
       }),
     });

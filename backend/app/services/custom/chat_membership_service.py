@@ -411,6 +411,12 @@ async def blackbox_unusable_chat(
         chat_target.comments_check_error = reason[:255]
     released = await release_memberships_for_chat(session, chat_target, reason=reason)
     logger.info("Black-boxed chat %s (%s), freed %s slots", chat_target.id, reason, released)
+    try:
+        from .chat_addlist_service import replace_blackboxed_task_chat
+
+        await replace_blackboxed_task_chat(session, chat_target)
+    except Exception:
+        logger.exception("Reserve replacement failed for chat %s", chat_target.id)
     return released
 
 

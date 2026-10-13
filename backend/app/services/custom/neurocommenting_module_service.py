@@ -47,6 +47,7 @@ DEFAULT_NC_SETTINGS: dict[str, Any] = {
     "delay_before_max": POST_COMMENT_DELAY_MAX_SECONDS,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
+    "reserve_chat_ids": [],
     "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
     "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "respect_night_hours": True,
@@ -110,6 +111,7 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
+    data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))
     data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
     try:
         prompt_id = incoming.get("prompt_id")

@@ -1042,6 +1042,7 @@ class TaskDistributeRequest(BaseModel):
 class TaskDistributeResponse(BaseModel):
     assignments: dict[str, list[int]] = Field(default_factory=dict)
     chat_ids: list[int] = Field(default_factory=list)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     add_errors: list[str] = Field(default_factory=list)
 
 
@@ -1053,6 +1054,7 @@ class NeurocommentingSettings(BaseModel):
     folder_ids: list[int] = Field(default_factory=list)
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     post_filter: str = "new"
     keywords: list[str] = Field(default_factory=list)
     probability: int = 100
@@ -1110,6 +1112,7 @@ class NeurochattingSettings(BaseModel):
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     reply_mode: str = "interval"
     keywords: list[str] = Field(default_factory=list)
     reply_condition: str = ""
@@ -1172,6 +1175,7 @@ class MasslookingSettings(BaseModel):
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     targets: list[str] = Field(default_factory=list)
     view_feed: bool = True
     stories_limit: int = 0
@@ -1258,6 +1262,7 @@ class ParserSettings(BaseModel):
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     targets: list[str] = Field(default_factory=list)
     source: str = "messages"
     do_join: bool = True
@@ -1314,6 +1319,7 @@ class ChatBroadcastsSettings(BaseModel):
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     only_joined: bool = True
     messages: list[dict[str, Any]] = Field(default_factory=list)
     first_mode: str = "template"
@@ -1424,6 +1430,7 @@ class NeuroshillingSettings(BaseModel):
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     channel_ids: list[int] = Field(default_factory=list)
     chat_shilling: bool = True
     post_shilling: bool = True
@@ -1485,6 +1492,7 @@ class WarmupSettings(BaseModel):
     chat_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
     mode: str = "auto"
     intensity: str = "auto"
     do_warmup_dms: bool = True

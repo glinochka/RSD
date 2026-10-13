@@ -341,9 +341,19 @@
 
 .tsk-log-row {
   display: flex;
-  gap: 10px;
-  padding: 4px 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
   color: #374151;
+}
+
+.tsk-log-row + .tsk-log-row {
+  border-top: 1px solid #eef2f6;
+}
+
+.tsk-log-row > span:first-child {
+  color: #6b7280;
+  font-size: 0.75rem;
 }
 
 .tsk-log-row--error { color: #b91c1c; }

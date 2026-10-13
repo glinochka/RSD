@@ -451,6 +451,25 @@ async def _try_join_chat(
                     account.id,
                     settle_exc,
                 )
+            from .chat_inspect_service import probe_comments_readonly
+
+            probe = await probe_comments_readonly(client, chat_target)
+            if probe.comments_open is True:
+                chat_target.comments_open = True
+                chat_target.comments_checked_at = _utc_now()
+                chat_target.comments_check_error = None
+            elif probe.comments_open is False:
+                err = (probe.error or "").lower()
+                reason = (
+                    "invalid_ref"
+                    if any(token in err for token in ("no user has", "username", "invite hash"))
+                    else "comments_closed"
+                )
+                return {
+                    "status": "blackbox",
+                    "error": probe.error or reason,
+                    "reason": reason,
+                }
 
         return {
             "status": "joined",
@@ -1273,6 +1292,154 @@ async def join_loaded_chats_for_accounts(
     }
 
 
+async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dict[str, Any]]:
+    """Join 15–20 random assigned chats per account, then rest today and tomorrow."""
+    from .chat_addlist_service import (
+        TASK_JOINS_KEY,
+        _int_list,
+        _log_job_type,
+        _plans_blob,
+        _store_plans,
+        collect_task_join_specs_resolved,
+        join_account_is_parked,
+        parse_wave_rest_until,
+        pick_join_wave,
+        task_join_delay_seconds,
+        wave_rest_until,
+    )
+    from .chat_membership_service import account_is_joined, apply_account_join_cooldown, get_membership
+    from .job_service import actor_label, chat_label, log_active
+
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        return []
+    now = _utc_now()
+    results: list[dict[str, Any]] = []
+    used_accounts: set[int] = set()
+    plans = _plans_blob(automation)
+    dirty = False
+    for spec in await collect_task_join_specs_resolved(session, automation):
+        task_key = str(spec.get("task_key") or "")
+        stored = dict(plans.get(task_key) or {}) if isinstance(plans.get(task_key), dict) else {}
+        assignments = {int(key): _int_list(value) for key, value in (stored.get("assignments") or {}).items()}
+        waves = dict(stored.get("waves") or {}) if isinstance(stored.get("waves"), dict) else {}
+        job_type = _log_job_type(task_key)
+        task_dirty = False
+        for account_id, chat_ids in assignments.items():
+            if account_id in used_accounts:
+                continue
+            account = await session.get(SocialAccount, account_id)
+            if not account or join_account_is_parked(account) or account_membership_should_idle(account):
+                continue
+            wave = dict(waves.get(str(account_id)) or {}) if isinstance(waves.get(str(account_id)), dict) else {}
+            rest_until = parse_wave_rest_until(wave.get("rest_until"))
+            if rest_until and rest_until > now:
+                continue
+            pending: list[int] = []
+            for cid in chat_ids:
+                chat = await session.get(ChatTarget, cid)
+                if not chat or chat.black_boxed_at or (getattr(chat, "mod_status", None) or "") == "moderated":
+                    continue
+                if chat.comments_open is False:
+                    continue
+                if await account_is_joined(session, cid, account_id):
+                    continue
+                pending.append(cid)
+            if not pending:
+                continue
+            wave_ids = [cid for cid in _int_list(wave.get("chat_ids")) if cid in pending]
+            started_wave = False
+            if not wave_ids:
+                wave_ids = pick_join_wave(pending)
+                started_wave = True
+                wave = {
+                    "chat_ids": wave_ids,
+                    "size": len(wave_ids),
+                    "started_at": now.isoformat(),
+                    "rest_until": None,
+                }
+                await log_active(
+                    automation_id,
+                    job_type,
+                    f"{actor_label(account)} волна вступлений: {len(wave_ids)} из {len(pending)} оставшихся",
+                )
+            pick_id = random.choice(wave_ids)
+            chat_target = await session.get(ChatTarget, pick_id)
+            membership = await get_membership(session, pick_id, account_id)
+            if chat_target is None or membership is None:
+                continue
+            membership.join_status = ChatJoinStatus.JOINING.value
+            membership.updated_at = now
+            await session.commit()
+            join_result = await _try_join_chat(session, chat_target, account)
+            await _apply_membership_result(
+                session,
+                membership,
+                chat_target,
+                account,
+                join_result,
+                automation_id=automation_id,
+                apply_cooldown=False,
+            )
+            delay = task_join_delay_seconds(automation, task_key)
+            await apply_account_join_cooldown(session, automation_id, account_id, wait_seconds=delay)
+            status = str(join_result.get("status") or "")
+            still = []
+            for cid in wave_ids:
+                if cid == pick_id and status in {"joined", "blackbox"}:
+                    continue
+                chat_left = await session.get(ChatTarget, cid)
+                if chat_left is None or chat_left.black_boxed_at or chat_left.comments_open is False:
+                    continue
+                if await account_is_joined(session, cid, account_id):
+                    continue
+                still.append(cid)
+            if not still:
+                rest = wave_rest_until(now)
+                wave["chat_ids"] = []
+                wave["rest_until"] = rest.isoformat()
+                await log_active(
+                    automation_id,
+                    job_type,
+                    f"{actor_label(account)} пауза вступлений до {rest.strftime('%d.%m %H:%M')} UTC "
+                    f"(этот и следующий день)",
+                )
+            else:
+                wave["chat_ids"] = still
+                if started_wave:
+                    wave["rest_until"] = None
+            waves[str(account_id)] = wave
+            used_accounts.add(account_id)
+            task_dirty = True
+            title = chat_label(chat_target) if chat_target else str(pick_id)
+            await log_active(
+                automation_id,
+                job_type,
+                f"{actor_label(account)} вступление {title}: {status or 'unknown'}",
+            )
+            results.append(
+                {
+                    "account_id": account_id,
+                    "chat_target_id": pick_id,
+                    "status": status,
+                    "task_key": task_key,
+                    "reason": "join_wave",
+                }
+            )
+        if task_dirty:
+            stored["waves"] = waves
+            stored["updated_at"] = now.isoformat()
+            plans[task_key] = stored
+            dirty = True
+    if dirty:
+        _store_plans(automation, plans)
+        blob = dict(automation.module_settings or {})
+        blob[TASK_JOINS_KEY] = plans
+        automation.module_settings = blob
+        await session.commit()
+    return results
+
+
 async def join_pending_chats(
     session: AsyncSession,
     automation_id: int,
@@ -1285,7 +1452,7 @@ async def join_pending_chats(
     """Join pending account×chat pairs. Scheduler: one pair per account per tick."""
     del sleeper
     from .pending_action_service import process_due_pending_actions
-    from .chat_addlist_service import ensure_task_joins_for_automation, join_pending_addlists
+    from .chat_addlist_service import ensure_task_joins_for_automation
 
     from .job_service import JOIN_JOB_TYPES, list_active_job_types
     from .work_mode import work_mode_from_automation
@@ -1298,12 +1465,13 @@ async def join_pending_chats(
     active = await list_active_job_types(automation_id)
     need_task_joins = bool(active & JOIN_JOB_TYPES)
     if need_task_joins:
+        await recover_stale_joining_memberships(session, automation_id)
         await ensure_task_joins_for_automation(session, automation_id)
-        await join_pending_addlists(session, automation_id)
+        wave_results = await join_task_waves(session, automation_id)
         if rate_limit and not farm_overlap_active_hours(mode=mode):
-            return []
+            return wave_results
         seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
-        return [seed] if seed else []
+        return [*wave_results, seed] if seed else wave_results
     else:
         await recover_stale_joining_memberships(session, automation_id)
         await process_due_pending_actions(session, automation_id)

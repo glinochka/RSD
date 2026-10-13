@@ -57,6 +57,7 @@ DEFAULT_BC_SETTINGS: dict[str, Any] = {
     "hide_in_work": False,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
+    "reserve_chat_ids": [],
     "presets": [],
 }
 
@@ -105,6 +106,7 @@ def normalize_bc_settings(raw: Any) -> dict[str, Any]:
     data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
+    data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))
     data["only_joined"] = bool(incoming.get("only_joined", True))
     data["messages"] = normalize_broadcast_messages(incoming.get("messages"))
     mode = str(incoming.get("first_mode") or "template").strip().lower()

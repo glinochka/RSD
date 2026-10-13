@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import customService from '../../services/customService';
 
+const TASK_CHATS_PER_ACCOUNT = 50;
+
 const chatLink = (chat) => {
   if (!chat) {
     return '';
@@ -20,18 +22,23 @@ const chatLink = (chat) => {
   return '';
 };
 
-const evenSplit = (accountIds, links) => {
+const evenSplit = (accountIds, links, cap = TASK_CHATS_PER_ACCOUNT) => {
   const assignment = {};
   accountIds.forEach((id) => {
     assignment[id] = [];
   });
-  links.forEach((link, index) => {
-    if (!accountIds.length) {
+  const leftover = [];
+  links.forEach((link) => {
+    const aid = accountIds
+      .filter((id) => (assignment[id] || []).length < cap)
+      .sort((a, b) => (assignment[a].length - assignment[b].length) || (a - b))[0];
+    if (aid == null) {
+      leftover.push(link);
       return;
     }
-    assignment[accountIds[index % accountIds.length]].push(link);
+    assignment[aid].push(link);
   });
-  return assignment;
+  return { assignment, leftover };
 };
 
 const linesOf = (value) => String(value || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -48,6 +55,7 @@ const UbtDistributeChats = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [drafts, setDrafts] = useState({});
+  const [reserveDraft, setReserveDraft] = useState('');
 
   const selectedAccounts = useMemo(
     () => accounts.filter((item) => (settings?.account_ids || []).includes(item.id)),
@@ -71,20 +79,33 @@ const UbtDistributeChats = ({
     const accountIds = selectedAccounts.map((item) => item.id);
     const stored = settings?.chat_assignments || {};
     const byId = Object.fromEntries(chats.map((item) => [String(item.id), chatLink(item)]));
+    const linkOf = (cid) => byId[String(cid)] || String(cid);
     let next = {};
     const hasStored = Object.keys(stored).some((key) => (stored[key] || []).length);
+    let leftover = [];
     if (hasStored) {
       accountIds.forEach((id) => {
-        next[id] = (stored[String(id)] || stored[id] || []).map((cid) => byId[String(cid)] || String(cid)).filter(Boolean);
+        next[id] = (stored[String(id)] || stored[id] || []).map(linkOf).filter(Boolean).slice(0, TASK_CHATS_PER_ACCOUNT);
+      });
+      const used = new Set(accountIds.flatMap((id) => next[id] || []));
+      const storedReserve = (settings?.reserve_chat_ids || []).map(linkOf).filter(Boolean);
+      leftover = storedReserve.filter((link) => !used.has(link));
+      selectedChats.map(chatLink).filter(Boolean).forEach((link) => {
+        if (!used.has(link) && !leftover.includes(link)) {
+          leftover.push(link);
+        }
       });
     } else {
-      next = evenSplit(accountIds, selectedChats.map(chatLink).filter(Boolean));
+      const split = evenSplit(accountIds, selectedChats.map(chatLink).filter(Boolean));
+      next = split.assignment;
+      leftover = split.leftover;
     }
     const texts = {};
     accountIds.forEach((id) => {
       texts[id] = (next[id] || []).join('\n');
     });
     setDrafts(texts);
+    setReserveDraft(leftover.join('\n'));
     setError(null);
     setOpen(true);
   };
@@ -98,13 +119,14 @@ const UbtDistributeChats = ({
         assignments[String(item.id)] = linesOf(drafts[item.id]);
       });
       const data = await customService.saveTaskDistribute(automationId, {
-        task_key: taskKey,
+        taskKey,
         assignments,
       });
       const mapped = data.assignments || {};
       onApplied?.({
         chat_assignments: mapped,
         chat_ids: data.chat_ids?.length ? data.chat_ids : settings.chat_ids,
+        reserve_chat_ids: data.reserve_chat_ids || [],
       });
       setOpen(false);
     } catch (err) {
@@ -131,27 +153,49 @@ const UbtDistributeChats = ({
               <button type="button" className="acc-icon-btn" onClick={() => setOpen(false)}>×</button>
             </div>
             <p className="nc-muted">
-              По одному аккаунту — свой столбик ссылок, одна ссылка в строке. Если окно не открывать, система распределит каналы сама.
+              На один аккаунт — не больше {TASK_CHATS_PER_ACCOUNT} ссылок. Лишние попадают в запасной пул:
+              если канал уйдёт в чёрный список (закрыты комментарии или модерация), вместо него подтянется запасной.
+            </p>
+            <p className="nc-muted">
+              Вступления ступенчатые: 15–20 случайных каналов, затем пауза этот и следующий день, и снова 15–20, пока пул не закончится.
             </p>
             {!selectedChats.length ? (
               <p className="nc-muted">Нет ссылок: выберите чаты или папку, в которой уже есть каналы.</p>
             ) : null}
             {error ? <p className="acc-flash acc-flash--error">{error}</p> : null}
             <div className="nc-distribute">
-              {selectedAccounts.map((item) => (
-                <div key={item.id} className="nc-distribute-col">
-                  <strong>{item.label || item.username || `#${item.id}`}</strong>
-                  <span className="nc-muted">{item.username ? `@${item.username}` : item.phone_number || `#${item.id}`}</span>
-                  <textarea
-                    className="nc-area"
-                    rows={12}
-                    value={drafts[item.id] || ''}
-                    onChange={(event) => setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
-                    placeholder={'https://t.me/channel\n@username'}
-                  />
-                  <span className="nc-muted">Строк: {linesOf(drafts[item.id]).length}</span>
-                </div>
-              ))}
+              {selectedAccounts.map((item) => {
+                const count = linesOf(drafts[item.id]).length;
+                const over = count > TASK_CHATS_PER_ACCOUNT;
+                return (
+                  <div key={item.id} className="nc-distribute-col">
+                    <strong>{item.label || item.username || `#${item.id}`}</strong>
+                    <span className="nc-muted">{item.username ? `@${item.username}` : item.phone_number || `#${item.id}`}</span>
+                    <textarea
+                      className="nc-area"
+                      rows={12}
+                      value={drafts[item.id] || ''}
+                      onChange={(event) => setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                      placeholder={'https://t.me/channel\n@username'}
+                    />
+                    <span className={over ? 'acc-flash acc-flash--error' : 'nc-muted'}>
+                      Строк: {count} / {TASK_CHATS_PER_ACCOUNT}{over ? ' — лишнее уйдёт в запас' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+              <div className="nc-distribute-col">
+                <strong>Запасной пул</strong>
+                <span className="nc-muted">Не назначены аккаунту</span>
+                <textarea
+                  className="nc-area"
+                  rows={12}
+                  value={reserveDraft}
+                  readOnly
+                  placeholder="Сюда попадут ссылки сверх 50 на аккаунт"
+                />
+                <span className="nc-muted">Строк: {linesOf(reserveDraft).length}</span>
+              </div>
             </div>
             <div className="nc-row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
               <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => setOpen(false)}>Отмена</button>

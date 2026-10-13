@@ -75,6 +75,21 @@ const proxyPurityTone = (score) => {
   return 'bad';
 };
 
+const formatLogWhen = (value) => {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${day}.${month}, ${hours}:${minutes}`;
+};
+
 const formatRelative = (value) => {
   if (!value) {
     return '—';
@@ -1514,19 +1529,16 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 {!telegramLogsLoading && !telegramLogsError && telegramLogs.length === 0 ? (
                   <p className="form-hint">Пока нет действий этого аккаунта в Telegram.</p>
                 ) : null}
-                <ul className="acc-log-list">
-                  {telegramLogs.map((item) => (
-                    <li key={item.id} className={`acc-log-row${item.result === 'error' ? ' is-error' : ''}`}>
-                      <div>
-                        <b>{item.message}</b>
-                        <small>
-                          {formatRelative(item.created_at)}
-                          {item.result === 'error' && item.error ? ` · ${item.error}` : ''}
-                        </small>
+                {telegramLogs.length ? (
+                  <div className="acc-log-list">
+                    {telegramLogs.map((item) => (
+                      <div key={item.id} className={`acc-log-row${item.result === 'error' ? ' is-error' : ''}`}>
+                        <span className="acc-log-time">{formatLogWhen(item.created_at)}</span>
+                        <span className="acc-log-msg">{item.message}</span>
                       </div>
-                    </li>
-                  ))}
-                </ul>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <p className="form-hint">
                 Прокси: {drawerAccount.proxy_label || 'авто из пула'}. В пуле: {formatUploadAge(uploadAgeAt(drawerAccount))}.

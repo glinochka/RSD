@@ -53,6 +53,7 @@ DEFAULT_CHAT_SETTINGS: dict[str, Any] = {
     "context_depth": 5,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
+    "reserve_chat_ids": [],
     "presets": [],
 }
 
@@ -112,6 +113,7 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
     )
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
+    data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))
     try:
         prompt_id = incoming.get("prompt_id")
         data["prompt_id"] = int(prompt_id) if prompt_id else None

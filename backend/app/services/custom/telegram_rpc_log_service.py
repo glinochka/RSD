@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import PoolAccount, TelegramAccountLog
+from ...alembic.models import CustomJob, PoolAccount, SocialAccount, TelegramAccountLog
 
 LOG_TTL = timedelta(days=3)
 
@@ -260,6 +260,36 @@ async def _automation_id_for_account(account_id: int) -> int | None:
         return None
 
 
+def _parse_log_ts(raw: Any) -> datetime | None:
+    if isinstance(raw, datetime):
+        return raw.replace(tzinfo=None) if raw.tzinfo else raw
+    text = str(raw or "").replace("Z", "")
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _account_log_needles(account: SocialAccount | None, account_id: int) -> list[str]:
+    from .job_service import actor_label
+
+    needles: list[str] = []
+    if account is not None:
+        label = actor_label(account)
+        if label:
+            needles.append(label)
+        phone = str(getattr(account, "phone_number", None) or "").strip()
+        if phone:
+            needles.append(phone)
+        name = str(getattr(account, "display_name", None) or getattr(account, "username", None) or "").strip()
+        if name:
+            needles.append(name.lstrip("@"))
+    needles.append(f"аккаунт #{account_id}")
+    return [item for item in needles if item]
+
+
 async def list_account_telegram_logs(
     session: AsyncSession,
     automation_id: int,
@@ -268,6 +298,11 @@ async def list_account_telegram_logs(
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     cutoff = _utc_now() - LOG_TTL
+    cap = max(1, min(int(limit or 200), 500))
+    account = await session.get(SocialAccount, account_id)
+    from .job_service import actor_label
+
+    label = actor_label(account) if account is not None else f"аккаунт #{account_id}"
     rows = (
         await session.execute(
             select(TelegramAccountLog)
@@ -276,18 +311,64 @@ async def list_account_telegram_logs(
                 TelegramAccountLog.created_at >= cutoff,
             )
             .order_by(TelegramAccountLog.id.desc())
-            .limit(max(1, min(int(limit or 200), 500)))
+            .limit(cap)
         )
     ).scalars().all()
-    _ = automation_id
-    return [
-        {
-            "id": row.id,
-            "message": row.message,
-            "rpc_name": row.rpc_name,
-            "result": row.result,
-            "error": row.error_message,
-            "created_at": row.created_at,
-        }
-        for row in rows
-    ]
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        message = row.message
+        if label and message and not message.startswith(label):
+            message = f"{label} {message}"
+        if row.error_message:
+            message = f"{message} ({row.error_message})"
+        key = (str(row.created_at or ""), message)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "id": row.id,
+                "message": message,
+                "rpc_name": row.rpc_name,
+                "result": row.result,
+                "error": row.error_message,
+                "created_at": row.created_at,
+            }
+        )
+    jobs = (
+        await session.execute(
+            select(CustomJob).where(CustomJob.custom_automation_id == automation_id)
+        )
+    ).scalars().all()
+    needles = _account_log_needles(account, account_id)
+    synthetic = 1_000_000_000
+    for job in jobs:
+        for index, row in enumerate(job.logs or []):
+            if not isinstance(row, dict):
+                continue
+            message = str(row.get("message") or "").strip()
+            if not message:
+                continue
+            ts = _parse_log_ts(row.get("ts"))
+            if ts is not None and ts < cutoff:
+                continue
+            if needles and not any(needle in message for needle in needles):
+                continue
+            key = (str(ts or ""), message)
+            if key in seen:
+                continue
+            seen.add(key)
+            synthetic += 1
+            items.append(
+                {
+                    "id": synthetic,
+                    "message": message,
+                    "rpc_name": "",
+                    "result": "error" if str(row.get("level") or "") == "error" else "ok",
+                    "error": None,
+                    "created_at": ts,
+                }
+            )
+    items.sort(key=lambda item: item.get("created_at") or datetime.min, reverse=True)
+    return items[:cap]

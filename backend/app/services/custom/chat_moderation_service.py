@@ -218,6 +218,15 @@ async def run_moderation_probe_pass(automation_id: int) -> dict[str, Any]:
                                 chat_target,
                                 reason="moderated_blackbox",
                             )
+                            try:
+                                from .chat_addlist_service import replace_blackboxed_task_chat
+
+                                await replace_blackboxed_task_chat(session, chat_target)
+                            except Exception:
+                                logger.exception(
+                                    "Reserve replacement failed for moderated chat %s",
+                                    chat_target.id,
+                                )
             else:
                 errors += 1
             try:

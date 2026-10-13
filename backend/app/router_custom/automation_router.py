@@ -637,6 +637,7 @@ async def save_automation_task_distribute(
         return TaskDistributeResponse(
             assignments=result.get("assignments") or {},
             chat_ids=result.get("chat_ids") or [],
+            reserve_chat_ids=result.get("reserve_chat_ids") or [],
             add_errors=errors,
         )
 

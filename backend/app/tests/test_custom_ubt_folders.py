@@ -744,3 +744,57 @@ class TestJobLifecycle:
         )
         assert flags["neurocommenting"] is True
         assert flags["discussion"] is False
+
+    def test_task_assignment_caps_at_50_and_reserve_holds_overflow(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from app.services.custom.chat_addlist_service import (
+            JOIN_WAVE_MAX,
+            JOIN_WAVE_MIN,
+            TASK_CHATS_PER_ACCOUNT,
+            pick_join_wave,
+            split_task_assignment,
+            wave_rest_until,
+        )
+
+        chats = list(range(1, 161))
+        assignment, reserve = split_task_assignment([1, 2, 3], chats)
+        assert all(len(ids) == TASK_CHATS_PER_ACCOUNT for ids in assignment.values())
+        assert len(reserve) == 10
+        assert sorted([cid for ids in assignment.values() for cid in ids] + reserve) == chats
+
+        manual, leftover = split_task_assignment(
+            [10, 20],
+            list(range(1, 81)),
+            manual={10: list(range(1, 81)), 20: []},
+        )
+        assert len(manual[10]) == 50
+        assert manual[20] == []
+        assert len(leftover) == 30
+        assert set(leftover).isdisjoint(manual[10])
+
+        class Seq:
+            def randint(self, lo, hi):
+                del hi
+                return lo
+
+            def sample(self, pool, size):
+                return list(pool)[:size]
+
+            def shuffle(self, items):
+                return items
+
+        wave = pick_join_wave(list(range(1, 40)), rng=Seq())
+        assert JOIN_WAVE_MIN <= len(wave) <= JOIN_WAVE_MAX
+        assert wave == list(range(1, JOIN_WAVE_MIN + 1))
+        short = pick_join_wave([7, 8, 9], rng=Seq())
+        assert sorted(short) == [7, 8, 9]
+
+        from datetime import timedelta
+
+        from app.services.custom.account_pacing import moscow_day_start_utc
+
+        now = datetime(2026, 10, 13, 18, 0, tzinfo=ZoneInfo("Europe/Moscow")).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        rest = wave_rest_until(now)
+        assert rest == moscow_day_start_utc(now) + timedelta(days=2)
