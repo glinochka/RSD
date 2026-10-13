@@ -920,7 +920,7 @@ class TestJobLifecycle:
             list(range(1, 61)),
             previous=claim_joined_folders(
                 {17: list(range(1, 17)), 32: []},
-                {32: list(range(1, 28))},
+                {17: [1, 2], 32: list(range(1, 28))},
                 folder_of,
                 list(range(1, 61)),
                 max_per_account=50,

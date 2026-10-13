@@ -313,12 +313,20 @@ def claim_joined_folders(
     """Give an account the folder it already joined, and take those chats off others."""
     cap = max(1, int(max_per_account or TASK_CHATS_PER_ACCOUNT))
     folders = {int(cid): int(fid) for cid, fid in (folder_of or {}).items() if fid}
-    claimed_folder: dict[int, int] = {}
+    folder_scores: dict[int, dict[int, int]] = {}
     for aid, ids in (joined or {}).items():
+        owner = int(aid)
         for cid in ids or []:
             fid = folders.get(int(cid))
-            if fid and fid not in claimed_folder:
-                claimed_folder[fid] = int(aid)
+            if not fid:
+                continue
+            by_account = folder_scores.setdefault(fid, {})
+            by_account[owner] = by_account.get(owner, 0) + 1
+    claimed_folder = {
+        fid: max(scores.items(), key=lambda item: (item[1], -item[0]))[0]
+        for fid, scores in folder_scores.items()
+        if scores
+    }
     if not claimed_folder:
         return {int(aid): list(ids or []) for aid, ids in (previous or {}).items()}
     claimed: dict[int, list[int]] = {aid: [] for aid in dict.fromkeys(claimed_folder.values())}
