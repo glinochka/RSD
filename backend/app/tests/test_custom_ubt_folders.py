@@ -799,3 +799,44 @@ class TestJobLifecycle:
         now = datetime(2026, 10, 13, 18, 0, tzinfo=ZoneInfo("Europe/Moscow")).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
         rest = wave_rest_until(now)
         assert rest == moscow_day_start_utc(now) + timedelta(days=2)
+
+    def test_sibling_tasks_keep_the_same_chat_owners(self):
+        from app.services.custom.chat_addlist_service import (
+            merge_assignment_previous,
+            sibling_previous,
+            split_task_assignment,
+        )
+
+        chatting = {1: [10, 20, 30], 2: [40, 50, 60]}
+        plans = {"neurochatting": {"assignments": {"1": [10, 20, 30], "2": [40, 50, 60]}}}
+        hint = sibling_previous(plans, "neuroshilling", [1, 2])
+        assert hint[1] == [10, 20, 30]
+        assert hint[2] == [40, 50, 60]
+        previous = merge_assignment_previous({}, hint)
+        assignment, reserve = split_task_assignment(
+            [1, 2],
+            [10, 20, 30, 40, 50, 60],
+            previous=previous,
+        )
+        assert assignment[1] == chatting[1]
+        assert assignment[2] == chatting[2]
+        assert reserve == []
+        other_accounts = sibling_previous(plans, "neuroshilling", [3, 4])
+        assert other_accounts == {}
+
+    def test_sibling_owners_win_over_conflicting_task_plan(self):
+        from app.services.custom.chat_addlist_service import (
+            merge_assignment_previous,
+            sibling_previous,
+            split_task_assignment,
+        )
+
+        plans = {"neurochatting": {"assignments": {"1": [10, 20], "2": [30, 40]}}}
+        swapped = {1: [30, 40], 2: [10, 20]}
+        hint = sibling_previous(plans, "neuroshilling", [1, 2])
+        previous = merge_assignment_previous(swapped, hint)
+        assignment, _ = split_task_assignment([1, 2], [10, 20, 30, 40, 50, 60], previous=previous)
+        assert assignment[1][:2] == [10, 20]
+        assert assignment[2][:2] == [30, 40]
+        assert 50 in assignment[1] + assignment[2]
+        assert 60 in assignment[1] + assignment[2]

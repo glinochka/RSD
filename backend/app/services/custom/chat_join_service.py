@@ -1293,17 +1293,18 @@ async def join_loaded_chats_for_accounts(
 
 
 async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dict[str, Any]]:
-    """Join 15–20 random assigned chats per account, then rest today and tomorrow."""
+    """Join 15–20 random chats per account across all tasks, then rest today and tomorrow."""
     from .chat_addlist_service import (
-        TASK_JOINS_KEY,
         _int_list,
         _log_job_type,
         _plans_blob,
-        _store_plans,
+        account_wave_state,
         collect_task_join_specs_resolved,
         join_account_is_parked,
+        load_join_waves,
         parse_wave_rest_until,
         pick_join_wave,
+        store_join_waves,
         task_join_delay_seconds,
         wave_rest_until,
     )
@@ -1315,134 +1316,138 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
         return []
     now = _utc_now()
     results: list[dict[str, Any]] = []
-    used_accounts: set[int] = set()
     plans = _plans_blob(automation)
-    dirty = False
+    pending_by_account: dict[int, list[int]] = {}
+    owners_by_chat: dict[tuple[int, int], list[str]] = {}
     for spec in await collect_task_join_specs_resolved(session, automation):
         task_key = str(spec.get("task_key") or "")
         stored = dict(plans.get(task_key) or {}) if isinstance(plans.get(task_key), dict) else {}
         assignments = {int(key): _int_list(value) for key, value in (stored.get("assignments") or {}).items()}
-        waves = dict(stored.get("waves") or {}) if isinstance(stored.get("waves"), dict) else {}
-        job_type = _log_job_type(task_key)
-        task_dirty = False
         for account_id, chat_ids in assignments.items():
-            if account_id in used_accounts:
-                continue
-            account = await session.get(SocialAccount, account_id)
-            if not account or join_account_is_parked(account) or account_membership_should_idle(account):
-                continue
-            wave = dict(waves.get(str(account_id)) or {}) if isinstance(waves.get(str(account_id)), dict) else {}
-            rest_until = parse_wave_rest_until(wave.get("rest_until"))
-            if rest_until and rest_until > now:
-                continue
-            pending: list[int] = []
+            bucket = pending_by_account.setdefault(account_id, [])
             for cid in chat_ids:
-                chat = await session.get(ChatTarget, cid)
-                if not chat or chat.black_boxed_at or (getattr(chat, "mod_status", None) or "") == "moderated":
-                    continue
-                if chat.comments_open is False:
-                    continue
-                if await account_is_joined(session, cid, account_id):
-                    continue
-                pending.append(cid)
-            if not pending:
+                owners_by_chat.setdefault((account_id, cid), []).append(task_key)
+                if cid not in bucket:
+                    bucket.append(cid)
+    waves = {}
+    dirty = False
+    for account_id, chat_ids in pending_by_account.items():
+        account = await session.get(SocialAccount, account_id)
+        if not account or join_account_is_parked(account) or account_membership_should_idle(account):
+            continue
+        wave = account_wave_state(automation, account_id, plans)
+        rest_until = parse_wave_rest_until(wave.get("rest_until"))
+        if rest_until and rest_until > now:
+            continue
+        pending: list[int] = []
+        for cid in chat_ids:
+            chat = await session.get(ChatTarget, cid)
+            if not chat or chat.black_boxed_at or (getattr(chat, "mod_status", None) or "") == "moderated":
                 continue
-            wave_ids = [cid for cid in _int_list(wave.get("chat_ids")) if cid in pending]
-            started_wave = False
-            if not wave_ids:
-                wave_ids = pick_join_wave(pending)
-                started_wave = True
-                wave = {
-                    "chat_ids": wave_ids,
-                    "size": len(wave_ids),
-                    "started_at": now.isoformat(),
-                    "rest_until": None,
-                }
+            if chat.comments_open is False:
+                continue
+            if await account_is_joined(session, cid, account_id):
+                continue
+            pending.append(cid)
+        if not pending:
+            continue
+        wave_ids = [cid for cid in _int_list(wave.get("chat_ids")) if cid in pending]
+        started_wave = False
+        if not wave_ids:
+            wave_ids = pick_join_wave(pending)
+            started_wave = True
+            wave = {
+                "chat_ids": wave_ids,
+                "size": len(wave_ids),
+                "started_at": now.isoformat(),
+                "rest_until": None,
+            }
+        pick_id = random.choice(wave_ids)
+        chat_target = await session.get(ChatTarget, pick_id)
+        membership = await get_membership(session, pick_id, account_id)
+        if chat_target is None or membership is None:
+            continue
+        owner_tasks = owners_by_chat.get((account_id, pick_id)) or []
+        job_types = list(dict.fromkeys(_log_job_type(key) for key in owner_tasks)) or ["join"]
+        if started_wave:
+            for job_type in job_types:
                 await log_active(
                     automation_id,
                     job_type,
-                    f"{actor_label(account)} волна вступлений: {len(wave_ids)} из {len(pending)} оставшихся",
+                    f"{actor_label(account)} волна вступлений: {len(wave_ids)} из {len(pending)} "
+                    f"по всем задачам",
                 )
-            pick_id = random.choice(wave_ids)
-            chat_target = await session.get(ChatTarget, pick_id)
-            membership = await get_membership(session, pick_id, account_id)
-            if chat_target is None or membership is None:
+        membership.join_status = ChatJoinStatus.JOINING.value
+        membership.updated_at = now
+        await session.commit()
+        join_result = await _try_join_chat(session, chat_target, account)
+        await _apply_membership_result(
+            session,
+            membership,
+            chat_target,
+            account,
+            join_result,
+            automation_id=automation_id,
+            apply_cooldown=False,
+        )
+        delay_task = owner_tasks[0] if owner_tasks else "neurocommenting"
+        delay = task_join_delay_seconds(automation, delay_task)
+        await apply_account_join_cooldown(session, automation_id, account_id, wait_seconds=delay)
+        status = str(join_result.get("status") or "")
+        still = []
+        for cid in wave_ids:
+            if cid == pick_id and status in {"joined", "blackbox"}:
                 continue
-            membership.join_status = ChatJoinStatus.JOINING.value
-            membership.updated_at = now
-            await session.commit()
-            join_result = await _try_join_chat(session, chat_target, account)
-            await _apply_membership_result(
-                session,
-                membership,
-                chat_target,
-                account,
-                join_result,
-                automation_id=automation_id,
-                apply_cooldown=False,
-            )
-            delay = task_join_delay_seconds(automation, task_key)
-            await apply_account_join_cooldown(session, automation_id, account_id, wait_seconds=delay)
-            status = str(join_result.get("status") or "")
-            still = []
-            for cid in wave_ids:
-                if cid == pick_id and status in {"joined", "blackbox"}:
-                    continue
-                chat_left = await session.get(ChatTarget, cid)
-                if chat_left is None or chat_left.black_boxed_at or chat_left.comments_open is False:
-                    continue
-                if await account_is_joined(session, cid, account_id):
-                    continue
-                still.append(cid)
-            if not still:
-                rest = wave_rest_until(now)
-                wave["chat_ids"] = []
-                wave["rest_until"] = rest.isoformat()
+            chat_left = await session.get(ChatTarget, cid)
+            if chat_left is None or chat_left.black_boxed_at or chat_left.comments_open is False:
+                continue
+            if await account_is_joined(session, cid, account_id):
+                continue
+            still.append(cid)
+        if not still:
+            rest = wave_rest_until(now)
+            wave["chat_ids"] = []
+            wave["rest_until"] = rest.isoformat()
+            for job_type in job_types:
                 await log_active(
                     automation_id,
                     job_type,
                     f"{actor_label(account)} пауза вступлений до {rest.strftime('%d.%m %H:%M')} UTC "
-                    f"(этот и следующий день)",
+                    f"(этот и следующий день, все задачи)",
                 )
-            else:
-                wave["chat_ids"] = still
-                if started_wave:
-                    wave["rest_until"] = None
-            waves[str(account_id)] = wave
-            used_accounts.add(account_id)
-            task_dirty = True
-            title = chat_label(chat_target) if chat_target else str(pick_id)
-            who = actor_label(account)
-            if status == "joined":
-                line = f"{who} вступил в {title}"
-            elif status == "blackbox":
-                line = f"{who}: {title} ушёл в чёрный список — комментарии закрыты или есть модерация"
-            elif status == "rate_limited":
-                line = f"{who} Telegram попросил подождать перед вступлением в {title}"
-            elif status == "banned":
-                line = f"{who} заблокирован в {title}"
-            else:
-                line = f"{who} не удалось вступить в {title}"
+        else:
+            wave["chat_ids"] = still
+            if started_wave:
+                wave["rest_until"] = None
+        waves[str(account_id)] = wave
+        dirty = True
+        title = chat_label(chat_target) if chat_target else str(pick_id)
+        who = actor_label(account)
+        if status == "joined":
+            line = f"{who} вступил в {title}"
+        elif status == "blackbox":
+            line = f"{who}: {title} ушёл в чёрный список — комментарии закрыты или есть модерация"
+        elif status == "rate_limited":
+            line = f"{who} Telegram попросил подождать перед вступлением в {title}"
+        elif status == "banned":
+            line = f"{who} заблокирован в {title}"
+        else:
+            line = f"{who} не удалось вступить в {title}"
+        for job_type in job_types:
             await log_active(automation_id, job_type, line)
-            results.append(
-                {
-                    "account_id": account_id,
-                    "chat_target_id": pick_id,
-                    "status": status,
-                    "task_key": task_key,
-                    "reason": "join_wave",
-                }
-            )
-        if task_dirty:
-            stored["waves"] = waves
-            stored["updated_at"] = now.isoformat()
-            plans[task_key] = stored
-            dirty = True
+        results.append(
+            {
+                "account_id": account_id,
+                "chat_target_id": pick_id,
+                "status": status,
+                "task_key": delay_task,
+                "reason": "join_wave",
+            }
+        )
     if dirty:
-        _store_plans(automation, plans)
-        blob = dict(automation.module_settings or {})
-        blob[TASK_JOINS_KEY] = plans
-        automation.module_settings = blob
+        existing = load_join_waves(automation)
+        existing.update(waves)
+        store_join_waves(automation, existing)
         await session.commit()
     return results
 

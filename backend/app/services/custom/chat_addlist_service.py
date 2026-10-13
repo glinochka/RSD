@@ -44,7 +44,9 @@ ADDLIST_CHATS_PREMIUM = 200
 ADDLIST_FOLDERS_DEFAULT = 2
 ADDLIST_FOLDERS_PREMIUM = 20
 TASK_JOINS_KEY = "_task_joins"
+TASK_WAVES_KEY = "_join_waves"
 HOST_BOOTSTRAP_JOINS_PER_TICK = 1
+_SHARED_PLAN_KEYS = {"_shared", "_waves"}
 TASK_CHATS_PER_ACCOUNT = 50
 JOIN_WAVE_MIN = 15
 JOIN_WAVE_MAX = 20
@@ -298,6 +300,96 @@ def split_task_assignment(
     reserve_source = [int(item) for item in dict.fromkeys([*(stored_reserve or []), *chats]) if int(item) > 0]
     reserve = [cid for cid in reserve_source if cid not in assigned]
     return assignment, reserve
+
+
+def sibling_previous(
+    plans: dict[str, Any] | None,
+    task_key: str,
+    account_ids: list[int],
+) -> dict[int, list[int]]:
+    """Chats already given to these accounts in other tasks — keep the same owners."""
+    workers = {int(aid) for aid in account_ids or [] if int(aid) > 0}
+    owner: dict[int, int] = {}
+    for other_key, spec in (plans or {}).items():
+        if str(other_key) in _SHARED_PLAN_KEYS or str(other_key) == str(task_key):
+            continue
+        if not isinstance(spec, dict):
+            continue
+        for key, value in (spec.get("assignments") or {}).items():
+            try:
+                aid = int(key)
+            except (TypeError, ValueError):
+                continue
+            if aid not in workers:
+                continue
+            for cid in _int_list(value):
+                owner.setdefault(cid, aid)
+    out: dict[int, list[int]] = {}
+    for cid, aid in owner.items():
+        out.setdefault(aid, []).append(cid)
+    return out
+
+
+def merge_assignment_previous(*sources: dict[int, list[int]] | None) -> dict[int, list[int]]:
+    """Later sources win when the same chat appears in more than one plan."""
+    owner: dict[int, int] = {}
+    for src in sources:
+        if not src:
+            continue
+        for aid, ids in src.items():
+            try:
+                account_id = int(aid)
+            except (TypeError, ValueError):
+                continue
+            for cid in ids or []:
+                try:
+                    owner[int(cid)] = account_id
+                except (TypeError, ValueError):
+                    continue
+    out: dict[int, list[int]] = {}
+    for cid, aid in owner.items():
+        out.setdefault(aid, []).append(cid)
+    return out
+
+
+def load_join_waves(automation: CustomAutomation | None) -> dict[str, Any]:
+    blob = getattr(automation, "module_settings", None) or {}
+    data = blob.get(TASK_WAVES_KEY) if isinstance(blob, dict) else None
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def store_join_waves(automation: CustomAutomation, waves: dict[str, Any]) -> None:
+    blob = dict(automation.module_settings or {})
+    blob[TASK_WAVES_KEY] = waves
+    automation.module_settings = blob
+    automation.updated_at = _utc_now()
+
+
+def account_wave_state(
+    automation: CustomAutomation | None,
+    account_id: int,
+    plans: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One rest/wave clock per account across all tasks."""
+    shared = load_join_waves(automation)
+    wave = dict(shared.get(str(account_id)) or {}) if isinstance(shared.get(str(account_id)), dict) else {}
+    rest = parse_wave_rest_until(wave.get("rest_until"))
+    if rest:
+        return wave
+    latest = wave
+    latest_rest = rest
+    for spec in (plans or {}).values():
+        if not isinstance(spec, dict):
+            continue
+        rows = spec.get("waves") if isinstance(spec.get("waves"), dict) else {}
+        row = rows.get(str(account_id)) if isinstance(rows, dict) else None
+        if not isinstance(row, dict):
+            continue
+        until = parse_wave_rest_until(row.get("rest_until"))
+        if until and (latest_rest is None or until > latest_rest):
+            latest_rest = until
+            latest = dict(row)
+    return latest
 
 
 def pick_join_wave(pending_ids: list[int], *, rng: Any = None) -> list[int]:
@@ -687,6 +779,11 @@ async def ensure_task_join_plan(
                     continue
                 chat_map[chat.id] = chat
         previous = {**previous, **manual}
+    if not manual:
+        previous = merge_assignment_previous(
+            previous,
+            sibling_previous(plans, task_key, workers),
+        )
     stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
     assignment, reserve = split_task_assignment(
         workers,
