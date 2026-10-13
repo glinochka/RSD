@@ -21,7 +21,7 @@ const STATUS_LABELS = {
   skipped: 'Пропущено',
 };
 
-const SKIP_EDIT_KEYS = new Set(['presets', 'enabled']);
+const SKIP_EDIT_KEYS = new Set(['presets', 'enabled', 'joins_complete']);
 const EXTRA_EDIT_FIELDS = {
   neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 180, join_delay_max: 240, probability: 100, max_per_chat: 10 },
   discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 180, join_delay_max: 240, probability: 30, max_per_chat: 1 },
@@ -35,6 +35,9 @@ const EXTRA_EDIT_FIELDS = {
 };
 
 const formatParamValue = (value) => {
+  if (typeof value === 'boolean') {
+    return value ? 'Да' : 'Нет';
+  }
   if (Array.isArray(value) || (value && typeof value === 'object')) {
     return JSON.stringify(value);
   }
@@ -44,9 +47,19 @@ const formatParamValue = (value) => {
   return String(value);
 };
 
+const formatShownParam = (value) => {
+  if (typeof value === 'boolean') {
+    return value ? 'Да' : 'Нет';
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+};
+
 const parseParamValue = (raw, original) => {
   if (typeof original === 'boolean') {
-    return raw === true || raw === 'true' || raw === '1';
+    return raw === true || raw === 'true' || raw === '1' || raw === 'Да';
   }
   if (typeof original === 'number') {
     const parsed = Number(raw);
@@ -302,7 +315,7 @@ const CustomAutomationTasksPage = () => {
               <div>
                 <div className="tsk-section-label">Логи</div>
                 <div className="tsk-logs">
-                  {(selected.logs || []).length === 0 ? 'Логи не сохранились — они хранятся 24 часа' : null}
+                  {(selected.logs || []).length === 0 ? 'Логи не сохранились — они хранятся 3 суток' : null}
                   {(selected.logs || []).map((row, index) => (
                     <div key={`${row.ts}-${index}`} className={`tsk-log-row ${row.level === 'error' ? 'tsk-log-row--error' : ''}`}>
                       <span>{formatWhen(row.ts)}</span>
@@ -353,7 +366,7 @@ const CustomAutomationTasksPage = () => {
                   <div className="tsk-section-label">Параметры запуска</div>
                   <dl className="tsk-kv">
                     {paramEntries(selected.params).map(([key, value]) => (
-                      <div key={key}><dt>{paramLabel(key)}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
+                      <div key={key}><dt>{paramLabel(key)}</dt><dd>{formatShownParam(value)}</dd></div>
                     ))}
                   </dl>
                 </div>

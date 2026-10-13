@@ -576,7 +576,7 @@ const CustomAutomationNeuroshillingPage = () => {
           <p className="nc-note">Часть выбранных аккаунтов уже в работе сегодня — для нового запуска выберите другие или включите «Скрыть в работе».</p>
         ) : null}
         <div className="nc-logs" style={{ marginTop: 12 }}>
-          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 24 часа.' : (activeJob.logs || []).map((row, index) => (
+          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>

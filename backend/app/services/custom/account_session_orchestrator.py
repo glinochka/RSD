@@ -20,6 +20,7 @@ from .account_pacing import (
     account_may_keep_alive,
     farm_overlap_active_hours,
     intercept_is_reauthorized,
+    intercept_parent_kept,
 )
 from .account_roles import account_is_live
 from .telegram_account_client import TelegramAccountClient
@@ -42,6 +43,7 @@ class AccountSessionHub:
     def __init__(self, automation_id: int) -> None:
         self.automation_id = automation_id
         self.clients: dict[int, TelegramAccountClient] = {}
+        self.parent_clients: dict[int, TelegramAccountClient] = {}
         self.cursor = 0
 
     async def sync(self, accounts: list[SocialAccount]) -> dict[str, int]:
@@ -56,6 +58,7 @@ class AccountSessionHub:
                 closed += 1
         for account in wanted.values():
             if account.id in self.clients:
+                await self._open_parent(account)
                 continue
             if _session_should_sleep(account):
                 continue
@@ -68,9 +71,10 @@ class AccountSessionHub:
         from .telegram_error_handler import looks_like_proxy_dead
 
         try:
-            wrapper = TelegramAccountClient.for_account(account)
+            wrapper = TelegramAccountClient.for_account(account, automation_id=self.automation_id)
             await wrapper.keep_alive()
             self.clients[account.id] = wrapper
+            await self._open_parent(account)
             async with async_session_maker() as session:
                 fresh = await session.get(SocialAccount, account.id)
                 if fresh is not None:
@@ -99,9 +103,10 @@ class AccountSessionHub:
                 return False
             await asyncio.sleep(2)
             try:
-                wrapper = TelegramAccountClient.for_account(fresh)
+                wrapper = TelegramAccountClient.for_account(fresh, automation_id=self.automation_id)
                 await wrapper.keep_alive()
                 self.clients[account.id] = wrapper
+                await self._open_parent(fresh)
                 async with async_session_maker() as session:
                     live = await session.get(SocialAccount, account.id)
                     if live is not None:
@@ -118,10 +123,35 @@ class AccountSessionHub:
                 return False
 
     async def close(self) -> None:
-        for account_id in list(self.clients):
+        ids = set(self.clients) | set(self.parent_clients)
+        for account_id in ids:
             await self._close(account_id)
 
+    async def _open_parent(self, account: SocialAccount) -> None:
+        if account.id in self.parent_clients:
+            return
+        if not intercept_parent_kept(account):
+            return
+        if not (getattr(account, "spare_session_file_path", None) or "").strip():
+            return
+        try:
+            parent = TelegramAccountClient.for_account(
+                account,
+                automation_id=self.automation_id,
+                use_parent=True,
+            )
+            await parent.keep_alive()
+            self.parent_clients[account.id] = parent
+        except Exception as exc:
+            logger.warning("Parent intercept session open failed %s: %s", account.id, exc)
+
     async def _close(self, account_id: int) -> None:
+        parent = self.parent_clients.pop(account_id, None)
+        if parent is not None:
+            try:
+                await parent.drop_alive()
+            except Exception:
+                logger.debug("Parent intercept session close failed %s", account_id, exc_info=True)
         client = self.clients.pop(account_id, None)
         if client is None:
             return
@@ -251,6 +281,13 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
         hub = _hubs.setdefault(automation_id, AccountSessionHub(automation_id))
         if asleep:
             sync = await hub.sync(accounts)
+            try:
+                from .account_session_guard_service import maybe_guard_hub_clients
+
+                guard = await maybe_guard_hub_clients(hub)
+                sync = {**sync, "guard": guard}
+            except Exception as guard_exc:
+                logger.debug("Session guard during night skipped: %s", guard_exc)
             return {"status": "sleeping", "reason": "night", **sync}
         active = await list_active_job_types(automation_id)
         gated: list[tuple[str, StreamFn]] = []

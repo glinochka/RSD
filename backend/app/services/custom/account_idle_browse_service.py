@@ -12,14 +12,13 @@ from typing import Any
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import AccountPool, AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
 from .account_pacing import (
     account_humanization_should_idle,
-    account_is_intercept,
     account_may_keep_alive,
     account_may_humanize,
     moscow_now,
@@ -118,7 +117,7 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int) -> list[
         .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
         .where(
             PoolAccount.custom_automation_id == automation_id,
-            AccountPool.is_default.is_(True),
+            or_(AccountPool.is_default.is_(True), AccountPool.purpose == "intercept"),
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
             SocialAccount.is_frozen.is_(False),
@@ -128,8 +127,7 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int) -> list[
     return [
         (pool_account, social)
         for pool_account, social in result.all()
-        if not account_is_intercept(social)
-        and account_may_humanize(social)
+        if account_may_humanize(social)
         and not account_humanization_should_idle(social)
     ]
 

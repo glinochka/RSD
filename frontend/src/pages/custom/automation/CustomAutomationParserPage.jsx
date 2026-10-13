@@ -502,7 +502,7 @@ const CustomAutomationParserPage = () => {
           <div className="nc-kpi"><strong>{data.summary?.users || 0}</strong><span>Собрано</span></div>
         </div>
         <div className="nc-logs" style={{ marginTop: 12 }}>
-          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 24 часа.' : (activeJob.logs || []).map((row, index) => (
+          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>

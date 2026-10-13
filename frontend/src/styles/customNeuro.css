@@ -682,9 +682,9 @@
   z-index: 40;
   background: rgba(15, 23, 42, 0.38);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 40px 16px;
+  padding: 24px 16px;
   overflow: auto;
 }
 
@@ -698,6 +698,8 @@
 
 .nc-modal--wide {
   width: min(1180px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
 }
 
 .nc-distribute {

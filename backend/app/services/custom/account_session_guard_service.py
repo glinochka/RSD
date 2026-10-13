@@ -239,10 +239,22 @@ async def _load_pool_account(
     return row
 
 
-async def enforce_authorizations(client: Any, account: SocialAccount, *, force: bool = False) -> dict[str, Any]:
+async def enforce_authorizations(
+    client: Any,
+    account: SocialAccount,
+    *,
+    force: bool = False,
+    parent: bool = False,
+) -> dict[str, Any]:
     if getattr(account, "session_guard_enabled", True) is False:
         return {"status": "disabled", "terminated": []}
-    from .account_pacing import account_is_intercept, account_may_keep_alive, intercept_is_reauthorized, intercept_is_quiet
+    from .account_pacing import (
+        account_is_intercept,
+        account_may_keep_alive,
+        intercept_is_reauthorized,
+        intercept_is_quiet,
+        intercept_parent_kept,
+    )
 
     if intercept_is_quiet(account):
         return {"status": "skipped", "terminated": [], "reason": "intercept_hold"}
@@ -272,11 +284,25 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
 
     raw = await list_authorizations_via_client(telethon)
     live = [serialize_authorization(item) for item in raw]
+    parent_kept = intercept_parent_kept(account)
+    if parent:
+        known = {"0"}
+        spare_hash = getattr(account, "spare_authorization_hash", None)
+        if spare_hash is not None:
+            known.add(str(int(spare_hash)))
+        takeover = False
+    else:
+        known = _hash_set(getattr(account, "known_auth_hashes", None))
+        takeover = (
+            account_is_intercept(account)
+            and intercept_is_reauthorized(account)
+            and not parent_kept
+        )
     plan = plan_session_guard(
-        _hash_set(getattr(account, "known_auth_hashes", None)),
+        known,
         live,
         paused=guard_is_paused(account),
-        takeover=account_is_intercept(account) and intercept_is_reauthorized(account),
+        takeover=takeover,
     )
     terminated: list[str] = []
     for hash_value in plan["terminate"]:
@@ -292,7 +318,8 @@ async def enforce_authorizations(client: Any, account: SocialAccount, *, force: 
         keep.discard("")
     else:
         keep = set(plan["keep"])
-    account.known_auth_hashes = sorted(keep)
+    if not parent:
+        account.known_auth_hashes = sorted(keep)
     account.telegram_session_count = len(live)
     account.session_guard_checked_at = _utc_now()
     account.updated_at = _utc_now()
@@ -316,11 +343,13 @@ async def guard_live_client(
     client: Any,
     *,
     force: bool = False,
+    parent: bool = False,
 ) -> dict[str, Any]:
     telethon = getattr(client, "client", client)
     if telethon is None:
         return {"status": "no_client", "terminated": []}
-    result = await enforce_authorizations(telethon, account, force=force)
+    parent = parent or bool(getattr(client, "_use_parent", False))
+    result = await enforce_authorizations(telethon, account, force=force, parent=parent)
     return result
 
 
@@ -340,6 +369,17 @@ async def maybe_guard_hub_clients(hub: Any) -> dict[str, int]:
                 result = await guard_live_client(session, account, wrapper, force=False)
             except Exception as exc:
                 logger.warning("Session guard tick failed for %s: %s", account_id, exc)
+                continue
+            scanned += 1
+            terminated += len(result.get("terminated") or [])
+        for account_id, wrapper in list(getattr(hub, "parent_clients", None) or {}).items():
+            account = await session.get(SocialAccount, account_id)
+            if account is None:
+                continue
+            try:
+                result = await guard_live_client(session, account, wrapper, force=False, parent=True)
+            except Exception as exc:
+                logger.warning("Parent session guard tick failed for %s: %s", account_id, exc)
                 continue
             scanned += 1
             terminated += len(result.get("terminated") or [])
@@ -377,8 +417,9 @@ async def adopt_account_sessions(
     if not row:
         return {"status": "not_found"}
     pool_account, social_account = row
-    from .account_pacing import ORIGIN_FARM, account_is_intercept, intercept_is_reauthorized
+    from .account_pacing import ORIGIN_FARM, account_is_intercept, intercept_can_adopt, intercept_is_reauthorized
     from ..account_pool_service import get_or_create_default_pool
+    from .session_hygiene_service import clear_parent_session
 
     if account_is_intercept(social_account) and not intercept_is_reauthorized(social_account):
         return {
@@ -387,11 +428,38 @@ async def adopt_account_sessions(
             "pool_account": pool_account,
             "social_account": social_account,
         }
+    if account_is_intercept(social_account) and not intercept_can_adopt(social_account):
+        return {
+            "status": "not_ready",
+            "error": "Новую сессию можно переводить в общий пул через 7 дней после переавторизации",
+            "pool_account": pool_account,
+            "social_account": social_account,
+        }
     if not social_account.session_file_path and not getattr(social_account, "encrypted_session", None):
         return {"status": "no_session", "pool_account": pool_account, "social_account": social_account}
     try:
         async with TelegramAccountClient.for_account(social_account) as client:
             raw = await list_authorizations_via_client(client)
+            if account_is_intercept(social_account):
+                from telethon.tl.functions.account import ResetAuthorizationRequest
+
+                live_items = [serialize_authorization(item) for item in raw]
+                for item in live_items:
+                    hash_value = str(item.get("hash") or "")
+                    if not hash_value or hash_value == "0" or item.get("current"):
+                        continue
+                    try:
+                        await client.client(ResetAuthorizationRequest(hash=int(hash_value)))
+                    except Exception as exc:
+                        logger.warning("Adopt could not drop parent session %s on %s: %s", hash_value, account_id, exc)
+                raw = await list_authorizations_via_client(client)
+                try:
+                    from .account_session_orchestrator import close_one_account_session
+
+                    await close_one_account_session(automation_id, account_id)
+                except Exception:
+                    pass
+                clear_parent_session(social_account)
     except Exception as exc:
         logger.warning("Adopt sessions failed for %s: %s", account_id, exc)
         return {

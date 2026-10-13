@@ -52,6 +52,7 @@ PHASE_RAMP = "ramp"
 ORIGIN_FARM = "farm"
 ORIGIN_INTERCEPT = "intercept"
 INTERCEPT_HOLD_HOURS = 24
+INTERCEPT_ADOPT_DAYS = 7
 INTERCEPT_STAGE_HOLD = "hold"
 INTERCEPT_STAGE_WAITING = "waiting"
 INTERCEPT_STAGE_REAUTH = "reauthorizing"
@@ -63,6 +64,8 @@ INTERCEPT_STAGE_SESSION = "session_invalid"
 INTERCEPT_STAGE_PROXY = "proxy_dead"
 LABEL_HOLD_24H = "Холд 24 часа"
 LABEL_REAUTHORIZED = "Сессия переавторизована"
+LABEL_PARENT_LIVE = "Родительская сессия жива"
+LABEL_WARMING = "Прогрев новой сессии"
 LABEL_CAN_ADOPT = "Можно заливать в основной пул"
 LABEL_REAUTH_RUNNING = "Идёт переавторизация"
 LABEL_REAUTH_WAITING = "Ожидает переавторизацию"
@@ -366,6 +369,26 @@ def intercept_is_reauthorized(account: SocialAccount | None) -> bool:
     return bool(getattr(account, "intercept_reauthorized_at", None))
 
 
+def intercept_parent_kept(account: SocialAccount | None) -> bool:
+    if not account_is_intercept(account) or not intercept_is_reauthorized(account):
+        return False
+    return bool((getattr(account, "spare_session_file_path", None) or "").strip())
+
+
+def intercept_adopt_until(account: SocialAccount | None) -> datetime | None:
+    at = _naive_utc(getattr(account, "intercept_reauthorized_at", None) if account else None)
+    if at is None:
+        return None
+    return at + timedelta(days=INTERCEPT_ADOPT_DAYS)
+
+
+def intercept_can_adopt(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    until = intercept_adopt_until(account)
+    if until is None:
+        return False
+    return (now or _utc_now()) >= until
+
+
 def intercept_error_code(account: SocialAccount | None) -> str | None:
     raw = str(getattr(account, "intercept_reauth_error", None) or "").strip()
     if not raw:
@@ -460,7 +483,14 @@ def intercept_labels(account: SocialAccount | None, *, now: datetime | None = No
     if stage == INTERCEPT_STAGE_REAUTH:
         return [LABEL_REAUTH_RUNNING]
     if stage == INTERCEPT_STAGE_READY:
-        return [LABEL_REAUTHORIZED, LABEL_CAN_ADOPT]
+        labels = [LABEL_REAUTHORIZED]
+        if intercept_parent_kept(account):
+            labels.append(LABEL_PARENT_LIVE)
+        if intercept_can_adopt(account, now=now):
+            labels.append(LABEL_CAN_ADOPT)
+        else:
+            labels.append(LABEL_WARMING)
+        return labels
     if stage == INTERCEPT_STAGE_NEED_2FA:
         return [LABEL_NEED_2FA]
     if stage == INTERCEPT_STAGE_SESSION:
@@ -481,19 +511,26 @@ def intercept_public_state(account: SocialAccount | None, *, now: datetime | Non
             "intercept_labels": [],
             "intercept_can_adopt": False,
             "intercept_can_reauth": False,
+            "intercept_can_change_2fa": False,
+            "intercept_parent_kept": False,
             "intercept_has_cloud_password": False,
             "intercept_hold_until": None,
+            "intercept_adopt_until": None,
             "intercept_reauthorized_at": None,
             "intercept_reauth_error": None,
         }
     stage = intercept_stage(account, now=now)
+    reauthorized = intercept_is_reauthorized(account)
     return {
         "intercept_stage": stage,
         "intercept_labels": intercept_labels(account, now=now),
-        "intercept_can_adopt": intercept_is_reauthorized(account),
+        "intercept_can_adopt": intercept_can_adopt(account, now=now),
         "intercept_can_reauth": stage != INTERCEPT_STAGE_REAUTH,
+        "intercept_can_change_2fa": reauthorized,
+        "intercept_parent_kept": intercept_parent_kept(account),
         "intercept_has_cloud_password": bool(getattr(account, "encrypted_cloud_password", None)),
         "intercept_hold_until": intercept_hold_until(account),
+        "intercept_adopt_until": intercept_adopt_until(account),
         "intercept_reauthorized_at": getattr(account, "intercept_reauthorized_at", None),
         "intercept_reauth_error": getattr(account, "intercept_reauth_error", None),
     }
@@ -546,6 +583,8 @@ def account_upload_age_hours(account: SocialAccount | None, *, now: datetime | N
 def account_upload_phase(account: SocialAccount | None, *, now: datetime | None = None) -> str:
     """Upload calendar: settle 24h → observe day 1 → reply day 2 → ramp."""
     if account_is_intercept(account):
+        if intercept_is_reauthorized(account):
+            return PHASE_OBSERVE
         return PHASE_SETTLE
     if SETTLE_HOURS <= 0:
         return PHASE_RAMP
@@ -604,17 +643,21 @@ def account_may_receive_peer(account: SocialAccount | None, *, now: datetime | N
 
 
 def account_may_join(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
+    if account_is_intercept(account):
+        return False
     return account_upload_phase(account, now=now) in {PHASE_OBSERVE, PHASE_REPLY, PHASE_RAMP}
 
 
 def account_uses_seed_channel_joins(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     """Day 1: join only via public search of seed channels, not the work chat queue."""
+    if account_is_intercept(account):
+        return False
     return account_upload_phase(account, now=now) == PHASE_OBSERVE
 
 
 def account_may_humanize(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     if account_is_intercept(account):
-        return False
+        return intercept_is_reauthorized(account)
     return account_upload_phase(account, now=now) in {PHASE_OBSERVE, PHASE_REPLY, PHASE_RAMP}
 
 

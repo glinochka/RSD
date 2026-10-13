@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import intercept_is_quiet
+from .account_pacing import intercept_is_quiet, intercept_parent_kept
 from .telegram_account_client import TelegramAccountClient
 from ...alembic.models import AccountPool, PoolAccount, SocialAccount
 
@@ -42,6 +42,11 @@ async def _load_pool_account(
         )
     ).one_or_none()
     return row
+
+
+def _client_for(account: SocialAccount) -> TelegramAccountClient:
+    """2FA is changed through the parent session while it is still alive."""
+    return TelegramAccountClient.for_account(account, use_parent=intercept_parent_kept(account))
 
 
 def _guard_quiet(account: SocialAccount) -> dict[str, Any] | None:
@@ -86,7 +91,7 @@ async def update_cloud_password(
     from telethon import password as pwd_mod
 
     try:
-        async with TelegramAccountClient.for_account(social_account) as wrapper:
+        async with _client_for(social_account) as wrapper:
             client = wrapper.client
             pwd = await client(GetPasswordRequest())
             has_password = bool(getattr(pwd, "has_password", False))
@@ -165,7 +170,7 @@ async def confirm_cloud_password_email(
     from telethon.tl.functions.account import ConfirmPasswordEmailRequest
 
     try:
-        async with TelegramAccountClient.for_account(social_account) as wrapper:
+        async with _client_for(social_account) as wrapper:
             await wrapper.client(ConfirmPasswordEmailRequest(code=token))
     except CloudPasswordError:
         raise

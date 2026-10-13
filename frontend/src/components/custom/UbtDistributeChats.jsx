@@ -5,7 +5,19 @@ const chatLink = (chat) => {
   if (!chat) {
     return '';
   }
-  return chat.invite_link || (chat.username ? `https://t.me/${chat.username}` : '') || String(chat.id);
+  const invite = String(chat.invite_link || '').trim();
+  if (invite) {
+    return invite;
+  }
+  const username = String(chat.username || '').trim().replace(/^@/, '');
+  if (username) {
+    return `https://t.me/${username}`;
+  }
+  const title = String(chat.title || '').trim();
+  if (/^(https?:\/\/|t\.me\/|@)/i.test(title)) {
+    return title.startsWith('@') ? `https://t.me/${title.slice(1)}` : title;
+  }
+  return '';
 };
 
 const evenSplit = (accountIds, links) => {
@@ -41,10 +53,19 @@ const UbtDistributeChats = ({
     () => accounts.filter((item) => (settings?.account_ids || []).includes(item.id)),
     [accounts, settings],
   );
-  const selectedChats = useMemo(
-    () => chats.filter((item) => (settings?.chat_ids || []).includes(item.id)),
-    [chats, settings],
-  );
+  const selectedChats = useMemo(() => {
+    const chatIds = new Set((settings?.chat_ids || []).map(Number));
+    const folderIds = new Set((settings?.folder_ids || []).map(Number));
+    return chats.filter((item) => {
+      if (chatIds.has(Number(item.id))) {
+        return true;
+      }
+      if (item.folder_id != null && folderIds.has(Number(item.folder_id))) {
+        return true;
+      }
+      return false;
+    });
+  }, [chats, settings]);
 
   const openModal = () => {
     const accountIds = selectedAccounts.map((item) => item.id);
@@ -112,6 +133,9 @@ const UbtDistributeChats = ({
             <p className="nc-muted">
               По одному аккаунту — свой столбик ссылок, одна ссылка в строке. Если окно не открывать, система распределит каналы сама.
             </p>
+            {!selectedChats.length ? (
+              <p className="nc-muted">Нет ссылок: выберите чаты или папку, в которой уже есть каналы.</p>
+            ) : null}
             {error ? <p className="acc-flash acc-flash--error">{error}</p> : null}
             <div className="nc-distribute">
               {selectedAccounts.map((item) => (

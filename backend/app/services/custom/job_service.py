@@ -15,13 +15,14 @@ from .chat_inspect_service import get_inspect_status
 
 logger = logging.getLogger(__name__)
 
-LOG_TTL = timedelta(hours=24)
+LOG_TTL = timedelta(days=3)
 MAX_JOB_LOGS = 2000
 ACTIVE_STATUSES = {"pending", "running", "processing", "awaiting_approval"}
 PAUSED_STATUS = "paused"
 VISIBLE_ACTIVE_STATUSES = ACTIVE_STATUSES | {PAUSED_STATUS}
 HISTORY_STATUSES = {"completed", "error", "cancelled", "skipped"}
 _SKIP_PARAM_KEYS = {"presets", "_job_id"}
+_READONLY_PARAM_KEYS = {"joins_complete"}
 PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling"}
 STREAM_JOB_TYPES = {
     "neurocommenting": "neurocommenting",
@@ -39,6 +40,7 @@ JOIN_JOB_TYPES = {
     "chat_broadcast",
     "parser",
     "masslooking",
+    "warmup",
     "join",
 }
 MODULE_BINDINGS = {
@@ -167,6 +169,21 @@ def _public_params(raw: Any) -> dict[str, Any]:
     for key in _SKIP_PARAM_KEYS:
         data.pop(key, None)
     return data
+
+
+def _stamp_joins_complete(items: list[dict[str, Any]], automation: CustomAutomation | None) -> None:
+    if not items:
+        return
+    from .chat_addlist_service import joins_complete_by_job_type
+
+    flags = joins_complete_by_job_type(automation)
+    for item in items:
+        job_type = str(item.get("job_type") or "")
+        if job_type not in flags:
+            continue
+        params = dict(item.get("params") or {})
+        params["joins_complete"] = flags[job_type]
+        item["params"] = params
 
 
 def _append_job_log(job: CustomJob, message: str, *, level: str = "info") -> None:
@@ -487,10 +504,12 @@ async def list_jobs(
         )
     ).scalars().all()
 
+    automation = await session.get(CustomAutomation, automation_id)
     items = [serialize_discovery(row) for row in discoveries]
     items.extend(serialize_import(row) for row in imports)
     items.extend(serialize_custom(row) for row in tracked)
     items.extend(_live_ephemeral(automation_id, items))
+    _stamp_joins_complete(items, automation)
     items.sort(key=lambda row: row.get("created_at") or datetime.min, reverse=True)
     filtered = [row for row in items if _matches(row, bucket=bucket or "all", category=category, search=search)]
     total = len(filtered)
@@ -851,7 +870,14 @@ def _apply_params_to_module(automation: CustomAutomation, job_type: str, params:
         return
     blob = dict(automation.module_settings or {})
     current = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
-    merged = {**current, **{k: v for k, v in params.items() if k not in _SKIP_PARAM_KEYS}}
+    merged = {
+        **current,
+        **{
+            k: v
+            for k, v in params.items()
+            if k not in _SKIP_PARAM_KEYS and k not in _READONLY_PARAM_KEYS
+        },
+    }
     merged["presets"] = current.get("presets") or []
     if "enabled" in current:
         merged["enabled"] = current.get("enabled")
@@ -973,7 +999,9 @@ async def update_job(
         return serialize_custom(job)
     if title:
         job.title = str(title).strip()[:255] or job.title
-    incoming = _public_params(params or {})
+    incoming = {
+        k: v for k, v in _public_params(params or {}).items() if k not in _READONLY_PARAM_KEYS
+    }
     if incoming:
         merged = {**_public_params(job.params), **incoming}
         if job.job_type in MODULE_BINDINGS or job.job_type == "warmup":

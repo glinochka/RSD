@@ -63,6 +63,7 @@ export const JOB_PARAM_LABELS = {
   source: 'Источник',
   targets: 'Цели',
   do_join: 'Вступать в чаты',
+  joins_complete: 'Завершено ли вступление в чаты',
   since_hours: 'Сообщения за, часов',
   member_limit: 'Лимит участников',
   skip_bots: 'Пропускать ботов',

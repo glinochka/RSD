@@ -677,6 +677,22 @@ class TestJobLifecycle:
         assert humanize_telegram_request(type("PingRequest", (), {})()) is None
         assert "прочитал" in (humanize_telegram_request(type("GetHistoryRequest", (), {})()) or "")
 
+        from types import SimpleNamespace as NS
+
+        from app.services.custom.telegram_rpc_log_service import install_telegram_rpc_logger
+
+        class Sender:
+            async def send(self, request, ordered=False):
+                return "ok"
+
+        sender = Sender()
+        client = NS(_sender=sender)
+        install_telegram_rpc_logger(client, account_id=7, automation_id=3)
+        assert client._rsd_account_id == 7
+        assert client._rsd_automation_id == 3
+        assert getattr(sender, "_rsd_rpc_logged", False) is True
+        assert sender.send is not Sender.send
+
     def test_manual_distribute_keeps_uneven_split_and_lists_addlists(self):
         from types import SimpleNamespace
 
@@ -712,3 +728,19 @@ class TestJobLifecycle:
         assert items[0]["url"] == "https://t.me/addlist/AbCd123456"
         assert items[0]["task_key"] == "neurocommenting"
         assert items[0]["chat_count"] == 3
+
+        from app.services.custom.chat_addlist_service import host_export_chat_ids, joins_complete_by_job_type
+
+        assert host_export_chat_ids([], [10, 20, 30]) == [10, 20, 30]
+        assert host_export_chat_ids([10], [10, 20]) == [10, 20]
+        flags = joins_complete_by_job_type(
+            SimpleNamespace(
+                module_settings={
+                    TASK_JOINS_KEY: {
+                        "neurocommenting": {"joins_complete": True, "folders": {}},
+                    }
+                }
+            )
+        )
+        assert flags["neurocommenting"] is True
+        assert flags["discussion"] is False

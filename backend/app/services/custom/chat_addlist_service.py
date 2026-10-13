@@ -308,8 +308,36 @@ def _int_list(raw: Any) -> list[int]:
     return items
 
 
-def _plans_blob(automation: CustomAutomation) -> dict[str, Any]:
-    blob = dict(automation.module_settings or {})
+_JOB_TYPE_TO_TASK = {
+    "neurocommenting": "neurocommenting",
+    "discussion": "neurochatting",
+    "shilling": "neuroshilling",
+    "chat_broadcast": "chat_broadcasts",
+    "parser": "parser",
+    "masslooking": "masslooking",
+    "warmup": "warmup",
+}
+
+
+def host_export_chat_ids(pending: list[int] | None, assigned: list[int] | None) -> list[int]:
+    """Chats the host must export: still-pending plus already-joined assigned."""
+    return list(dict.fromkeys([*(pending or []), *(assigned or [])]))
+
+
+def joins_complete_by_job_type(automation: CustomAutomation | None) -> dict[str, bool]:
+    plans = _plans_blob(automation) if automation is not None else {}
+    out: dict[str, bool] = {}
+    for job_type, task_key in _JOB_TYPE_TO_TASK.items():
+        spec = plans.get(task_key)
+        if isinstance(spec, dict) and "joins_complete" in spec:
+            out[job_type] = bool(spec.get("joins_complete"))
+        else:
+            out[job_type] = False
+    return out
+
+
+def _plans_blob(automation: CustomAutomation | None) -> dict[str, Any]:
+    blob = dict(getattr(automation, "module_settings", None) or {})
     plans = blob.get(TASK_JOINS_KEY)
     return dict(plans) if isinstance(plans, dict) else {}
 
@@ -604,6 +632,7 @@ async def ensure_task_join_plan(
         pending = [cid for cid in assigned if not await account_is_joined(session, cid, account_id)]
         pending_by_account[account_id] = pending
         union_pending.extend(pending)
+    export_ids = host_export_chat_ids(union_pending, list(chat_map.keys()))
     folder_slugs = {
         chat_id: chat_addlist_slug(chat)
         for chat_id, chat in chat_map.items()
@@ -616,7 +645,7 @@ async def ensure_task_join_plan(
         session,
         alive,
         ready_workers or workers,
-        list(dict.fromkeys(union_pending)) or list(chat_map.keys()),
+        export_ids,
     )
     if host and await _skip_join_for_flood(session, host):
         host = None
@@ -628,7 +657,7 @@ async def ensure_task_join_plan(
             session,
             host=host,
             chat_map=chat_map,
-            needed_ids=list(dict.fromkeys(union_pending)),
+            needed_ids=export_ids,
             folder_slugs=folder_slugs,
             job_type=job_type,
             automation=automation,
@@ -652,7 +681,8 @@ async def ensure_task_join_plan(
             folders[str(account_id)] = stored_folders.get(str(host.id)) or reusable or previous_folders
             continue
         if not pending:
-            folders[str(account_id)] = reusable or previous_folders
+            host_folders = stored_folders.get(str(host.id)) if host else None
+            folders[str(account_id)] = reusable or previous_folders or host_folders or []
             continue
         if await _skip_join_for_flood(session, account):
             folders[str(account_id)] = reusable or previous_folders
@@ -751,11 +781,26 @@ async def ensure_task_join_plan(
             folders[str(account_id)] = reusable
     if host and stored_folders.get(str(host.id)):
         folders[str(host.id)] = stored_folders[str(host.id)]
+    host_rows = folders.get(str(host.id)) if host else None
+    if host_rows:
+        for account_id in workers:
+            key = str(account_id)
+            current = folders.get(key) or []
+            has_slug = any(isinstance(row, dict) and row.get("slug") for row in current)
+            if not has_slug:
+                folders[key] = host_rows
+    pending_left = 0
+    for account_id, assigned in assignment.items():
+        pending_left += sum(
+            1 for cid in assigned if not await account_is_joined(session, cid, account_id)
+        )
     plans[task_key] = {
         "assignments": {str(key): value for key, value in assignment.items()},
         "folders": folders,
         "premium": premium_cache,
         "host_account_id": host.id if host else workers[0],
+        "joins_complete": pending_left == 0 and bool(assignment),
+        "pending_joins": pending_left,
         "updated_at": _utc_now().isoformat(),
     }
     _store_plans(automation, plans)
@@ -790,10 +835,6 @@ async def _bootstrap_host_for_export(
     automation_id = automation.id
     if await _skip_join_for_flood(session, host):
         return 0
-    if account_membership_should_idle(host):
-        return 0
-    if not farm_overlap_active_hours(mode=work_mode_from_automation(automation)):
-        return 0
     marked = 0
     missing = [cid for cid in needed_ids if not await account_is_joined(session, cid, host.id)]
     if not missing:
@@ -804,6 +845,10 @@ async def _bootstrap_host_for_export(
             needed_ids=needed_ids,
             stored_folders=stored_folders,
         )
+        return 0
+    if account_membership_should_idle(host):
+        return 0
+    if not farm_overlap_active_hours(mode=work_mode_from_automation(automation)):
         return 0
     slugs = list(dict.fromkeys(folder_slugs[cid] for cid in missing if folder_slugs.get(cid)))
     if slugs:

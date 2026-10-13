@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import PoolAccount, TelegramAccountLog
+
+LOG_TTL = timedelta(days=3)
 
 logger = logging.getLogger(__name__)
 
@@ -131,39 +133,53 @@ def humanize_telegram_request(request: Any) -> str | None:
 
 
 def install_telegram_rpc_logger(client: Any, *, account_id: int | None, automation_id: int | None = None) -> None:
-    if client is None or getattr(client, "_rsd_rpc_logged", False):
+    """Wrap Telethon MTProtoSender.send. Instance __call__ is never used."""
+    if client is None:
         return
-    original = client.__call__
+    if account_id:
+        client._rsd_account_id = account_id
+    if automation_id:
+        client._rsd_automation_id = automation_id
+    sender = getattr(client, "_sender", None)
+    if sender is None or not callable(getattr(sender, "send", None)):
+        return
+    if getattr(sender, "_rsd_rpc_logged", False):
+        return
+    original = sender.send
 
     async def wrapped(request, *args, **kwargs):
+        aid = getattr(client, "_rsd_account_id", None) or account_id
+        auto = getattr(client, "_rsd_automation_id", None) or automation_id
+        inner = getattr(request, "query", None) if request is not None else None
+        rpc = inner if inner is not None and type(request).__name__ == "InvokeWithLayerRequest" else request
         message = humanize_telegram_request(request)
+        rpc_name = type(rpc).__name__ if rpc is not None else type(request).__name__
         try:
             result = await original(request, *args, **kwargs)
         except Exception as exc:
             if message:
                 schedule_telegram_log(
-                    account_id,
-                    automation_id,
+                    aid,
+                    auto,
                     message,
-                    rpc_name=type(request).__name__,
+                    rpc_name=rpc_name,
                     result="error",
                     error=str(exc)[:400],
                 )
             raise
         if message:
             schedule_telegram_log(
-                account_id,
-                automation_id,
+                aid,
+                auto,
                 message,
-                rpc_name=type(request).__name__,
+                rpc_name=rpc_name,
                 result="ok",
             )
         return result
 
-    client.__call__ = wrapped
+    sender.send = wrapped
+    sender._rsd_rpc_logged = True
     client._rsd_rpc_logged = True
-    client._rsd_account_id = account_id
-    client._rsd_automation_id = automation_id
 
 
 def schedule_telegram_log(
@@ -205,7 +221,9 @@ async def persist_telegram_log(
     try:
         auto_id = int(automation_id) if automation_id else await _automation_id_for_account(account_id)
         if not auto_id:
+            logger.debug("Skip telegram log for account %s: no automation", account_id)
             return
+        cutoff = _utc_now() - LOG_TTL
         async with async_session_maker() as session:
             session.add(
                 TelegramAccountLog(
@@ -218,9 +236,15 @@ async def persist_telegram_log(
                     created_at=_utc_now(),
                 )
             )
+            await session.execute(
+                delete(TelegramAccountLog).where(
+                    TelegramAccountLog.social_account_id == int(account_id),
+                    TelegramAccountLog.created_at < cutoff,
+                )
+            )
             await session.commit()
     except Exception:
-        logger.debug("Could not persist telegram log for account %s", account_id, exc_info=True)
+        logger.warning("Could not persist telegram log for account %s", account_id, exc_info=True)
 
 
 async def _automation_id_for_account(account_id: int) -> int | None:
@@ -243,17 +267,19 @@ async def list_account_telegram_logs(
     *,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
+    cutoff = _utc_now() - LOG_TTL
     rows = (
         await session.execute(
             select(TelegramAccountLog)
             .where(
-                TelegramAccountLog.custom_automation_id == automation_id,
                 TelegramAccountLog.social_account_id == account_id,
+                TelegramAccountLog.created_at >= cutoff,
             )
             .order_by(TelegramAccountLog.id.desc())
             .limit(max(1, min(int(limit or 200), 500)))
         )
     ).scalars().all()
+    _ = automation_id
     return [
         {
             "id": row.id,

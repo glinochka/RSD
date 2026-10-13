@@ -458,7 +458,7 @@ const CustomAutomationMasslookingPage = () => {
           <div className="nc-kpi"><strong>{settings.max_per_account || '∞'}</strong><span>Лимит на аккаунт</span></div>
         </div>
         <div className="nc-logs" style={{ marginTop: 12 }}>
-          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 24 часа.' : (activeJob.logs || []).map((row, index) => (
+          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
             <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {row.message}</div>
           ))}
         </div>

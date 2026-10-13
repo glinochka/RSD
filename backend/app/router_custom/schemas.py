@@ -434,8 +434,11 @@ class AccountResponse(BaseModel):
     intercept_labels: list[str] = Field(default_factory=list)
     intercept_can_adopt: bool = False
     intercept_can_reauth: bool = False
+    intercept_can_change_2fa: bool = False
+    intercept_parent_kept: bool = False
     intercept_has_cloud_password: bool = False
     intercept_hold_until: Optional[datetime] = None
+    intercept_adopt_until: Optional[datetime] = None
     intercept_reauthorized_at: Optional[datetime] = None
     intercept_reauth_error: Optional[str] = None
 

@@ -571,6 +571,9 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
     stolen.intercept_reauthorized_at = now
     assert account_in_settle_rest(stolen, now=now) is False
     assert account_may_keep_alive(stolen, now=now) is True
+    assert account_may_humanize(stolen, now=now) is True
+    assert account_may_do_work(stolen, now=now) is False
+    assert account_upload_phase(stolen, now=now) == PHASE_OBSERVE
 
 
 def test_peer_opener_is_always_the_veteran(monkeypatch):
@@ -677,12 +680,15 @@ def test_intercept_labels_follow_hold_then_reauth():
         LABEL_HOLD_24H,
         LABEL_MINT_FAILED,
         LABEL_NEED_2FA,
+        LABEL_PARENT_LIVE,
         LABEL_PROXY_DEAD,
         LABEL_REAUTH_FAILED,
         LABEL_REAUTH_RUNNING,
         LABEL_REAUTH_WAITING,
         LABEL_REAUTHORIZED,
         LABEL_SESSION_DEAD,
+        LABEL_WARMING,
+        intercept_can_adopt,
         intercept_labels,
         intercept_needs_reauth,
         intercept_public_state,
@@ -718,8 +724,29 @@ def test_intercept_labels_follow_hold_then_reauth():
         intercept_reauth_started_at=None,
         encrypted_cloud_password=None,
     )
-    assert intercept_labels(ready, now=now) == [LABEL_REAUTHORIZED, LABEL_CAN_ADOPT]
-    assert intercept_public_state(ready, now=now)["intercept_can_adopt"] is True
+    assert intercept_labels(ready, now=now) == [LABEL_REAUTHORIZED, LABEL_WARMING]
+    assert intercept_public_state(ready, now=now)["intercept_can_adopt"] is False
+    assert intercept_can_adopt(ready, now=now) is False
+    parent_live = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(hours=30),
+        intercept_reauthorized_at=now,
+        intercept_reauth_error=None,
+        spare_session_file_path="sessions/44_parent.session",
+        encrypted_spare_session="parent",
+    )
+    assert LABEL_PARENT_LIVE in intercept_labels(parent_live, now=now)
+    aged_ready = SimpleNamespace(
+        origin="intercept",
+        created_at=now - timedelta(days=10),
+        intercept_reauthorized_at=now - timedelta(days=7),
+        intercept_reauth_error=None,
+        intercept_reauth_started_at=None,
+        encrypted_cloud_password=None,
+        spare_session_file_path="sessions/44_parent.session",
+    )
+    assert LABEL_CAN_ADOPT in intercept_labels(aged_ready, now=now)
+    assert intercept_public_state(aged_ready, now=now)["intercept_can_adopt"] is True
     failed = SimpleNamespace(
         origin="intercept",
         created_at=now - timedelta(hours=30),
@@ -786,7 +813,7 @@ def test_intercept_labels_follow_hold_then_reauth():
 
 
 @pytest.mark.asyncio
-async def test_intercept_reauth_promotes_spare_and_logs_out_old(monkeypatch):
+async def test_intercept_reauth_keeps_parent_and_does_not_log_out(monkeypatch):
     from datetime import datetime, timedelta
 
     from app.services.custom import intercept_reauth_service as svc
@@ -828,15 +855,14 @@ async def test_intercept_reauth_promotes_spare_and_logs_out_old(monkeypatch):
     monkeypatch.setattr(svc, "load_cloud_password", lambda _acc: "secret-2fa")
     monkeypatch.setattr(svc, "_mint_spare_session", mint)
     monkeypatch.setattr(svc, "account_has_spare", lambda _acc: True)
-    monkeypatch.setattr(svc, "promote_spare_session", lambda acc: True)
+    monkeypatch.setattr(svc, "install_new_keep_parent", lambda acc: True)
+    monkeypatch.setattr(svc, "_snapshot_known_from_new", AsyncMock())
 
     session = SimpleNamespace(flush=AsyncMock())
     result = await svc.reauth_intercept_account(session, account, 1, cloud_password="secret-2fa")
     assert result["status"] == "ok"
-    assert logged_out["n"] == 1
+    assert logged_out["n"] == 0
     assert account.intercept_reauthorized_at is not None
-    assert account.telegram_device["device_model"] == "Pixel"
-    assert account.spare_telegram_device is None
     assert account.intercept_reauth_error is None
     assert mint.await_args.kwargs.get("cloud_password") == "secret-2fa"
 
@@ -883,7 +909,7 @@ async def test_intercept_reauth_keeps_old_session_if_mint_fails(monkeypatch):
     monkeypatch.setattr(svc.TelegramAccountClient, "for_account", lambda *_a, **_k: FakeClient())
     monkeypatch.setattr(svc, "_mint_spare_session", AsyncMock(side_effect=RuntimeError("qr empty")))
     monkeypatch.setattr(svc, "account_has_spare", lambda _acc: False)
-    monkeypatch.setattr(svc, "promote_spare_session", lambda acc: False)
+    monkeypatch.setattr(svc, "install_new_keep_parent", lambda acc: False)
 
     session = SimpleNamespace(flush=AsyncMock())
     result = await svc.reauth_intercept_account(session, account, 1)
