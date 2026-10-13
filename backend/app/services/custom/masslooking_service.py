@@ -336,7 +336,7 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
         targets = normalize_story_targets(cfg.get("targets"))
         from .task_targets import resolve_task_chat_ids
 
-        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
+        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="masslooking"))
         if chat_ids:
             chats = (
                 await session.execute(

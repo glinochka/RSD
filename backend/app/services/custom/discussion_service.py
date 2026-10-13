@@ -591,7 +591,7 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
         max_daily = automation.max_daily_messages_per_account
         from .task_targets import resolve_task_chat_ids
 
-        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
+        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurochatting"))
         if chat_ids:
             chats = [
                 chat

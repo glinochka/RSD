@@ -1086,6 +1086,7 @@ class TaskPoolResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     task_key: str
+    resource_kind: str = "any"
     cap: int = 50
     account_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)

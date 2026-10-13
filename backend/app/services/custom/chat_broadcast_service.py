@@ -282,7 +282,7 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
 async def _target_chats(session: AsyncSession, automation_id: int, cfg: dict[str, Any], accounts: list[SocialAccount]) -> list[ChatTarget]:
     from .task_targets import resolve_task_chat_ids
 
-    pool_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
+    pool_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="chat_broadcasts"))
     only_joined = bool(cfg.get("only_joined", True)) and not pool_ids
     stmt = select(ChatTarget).where(
         ChatTarget.custom_automation_id == automation_id,

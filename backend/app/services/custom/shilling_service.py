@@ -1096,7 +1096,7 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
             return {"status": "skipped", "reason": "chat_shilling_off", "chats_processed": 0, "dialogues_sent": 0}
         from .task_targets import resolve_task_chat_ids
 
-        allowed_chats = set(await resolve_task_chat_ids(session, automation_id, cfg))
+        allowed_chats = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neuroshilling"))
 
         chats = [
             chat

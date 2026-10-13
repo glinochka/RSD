@@ -2,6 +2,16 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import customService from '../../services/customService';
 
 const TASK_CHATS_PER_ACCOUNT = 50;
+const KIND_HINT = {
+  channel: 'В пул этой задачи попадают только каналы — чаты из папок отсекаются.',
+  chat: 'В пул этой задачи попадают только чаты и группы — каналы из папок отсекаются.',
+  any: 'Каналы и чаты из выбранных папок перемешиваются в рабочих слотах.',
+};
+const KIND_UNIT = {
+  channel: 'каналов',
+  chat: 'чатов',
+  any: 'каналов',
+};
 
 const chatLink = (chat) => {
   if (!chat) {
@@ -167,6 +177,8 @@ const UbtDistributeChats = ({
   const mix = pool?.folder_mix || [];
   const reserve = pool?.reserve || [];
   const cap = pool?.cap || TASK_CHATS_PER_ACCOUNT;
+  const resourceKind = pool?.resource_kind || pool?.resourceKind || 'any';
+  const unit = KIND_UNIT[resourceKind] || KIND_UNIT.any;
   const assignedCount = pool?.assigned_count ?? selectedAccounts.reduce((sum, item) => sum + (item.assigned_count || 0), 0);
   const reserveCount = pool?.reserve_count ?? (settings?.reserve_chat_ids || []).length;
 
@@ -269,7 +281,7 @@ const UbtDistributeChats = ({
         <div>
           <strong>Пул задачи</strong>
           <p className="nc-muted">
-            {selectedAccounts.length} аккаунтов · {assignedCount} в работе · {reserveCount} в запасе
+            {selectedAccounts.length} аккаунтов · {assignedCount} {unit} в работе · {reserveCount} в запасе
             {pool?.live ? ' · задача в работе — изменения применятся сразу' : ''}
           </p>
         </div>
@@ -294,8 +306,8 @@ const UbtDistributeChats = ({
         </div>
       </div>
       <p className="nc-hint">
-        До {cap} каналов на аккаунт, остальные — запас. Новые папки лучше добавлять кнопкой «Папки»: они сразу перемешаются со слотами, а не лягут целиком в запас.
-        Уже вступившие каналы остаются у своих аккаунтов. Новые аккаунты забирают из запаса.
+        {KIND_HINT[resourceKind] || KIND_HINT.any} До {cap} на аккаунт, остальные — запас.
+        Новые папки лучше добавлять кнопкой «Папки». Уже вступившие остаются у своих аккаунтов; если аккаунт уже работал в папке, она к нему возвращается.
       </p>
       {messageHint ? <p className="acc-flash">{messageHint}</p> : null}
       {error && !open && !picker ? <p className="acc-flash acc-flash--error">{error}</p> : null}

@@ -684,7 +684,7 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
             return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "comments_sent": 0}
         from .task_targets import resolve_task_chat_ids
 
-        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg))
+        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurocommenting"))
         if chat_ids:
             chats = list(
                 (

@@ -8,6 +8,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import ChatTarget, UserFolderMember
 
+from .chat_scope import is_broadcast_channel, is_group_chat
+
+TASK_RESOURCE_KIND = {
+    "neurocommenting": "channel",
+    "neurochatting": "chat",
+    "neuroshilling": "any",
+    "chat_broadcasts": "chat",
+    "parser": "chat",
+    "masslooking": "any",
+    "warmup": "any",
+}
+
+
+def task_resource_kind(task_key: str | None) -> str:
+    """What a module may put in its working pool: channel, chat, or both."""
+    return TASK_RESOURCE_KIND.get(str(task_key or "").strip(), "any")
+
+
+def chat_matches_resource_kind(chat: ChatTarget | None, kind: str | None) -> bool:
+    if chat is None:
+        return False
+    normalized = str(kind or "any").strip().lower()
+    if normalized in {"", "any", "all", "*"}:
+        return True
+    ctype = str(getattr(chat, "chat_type", None) or "").strip().lower()
+    if normalized == "channel":
+        return is_broadcast_channel(chat) or not ctype
+    if normalized in {"chat", "group"}:
+        return bool(ctype) and is_group_chat(chat)
+    return True
+
 
 def as_int_list(raw: Any) -> list[int]:
     items: list[int] = []
@@ -37,6 +68,9 @@ async def resolve_task_chat_ids(
     session: AsyncSession,
     automation_id: int,
     settings: dict[str, Any] | None,
+    *,
+    kind: str | None = None,
+    task_key: str | None = None,
 ) -> list[int]:
     data = settings or {}
     ids = as_int_list(data.get("chat_ids"))
@@ -54,7 +88,15 @@ async def resolve_task_chat_ids(
             )
         ).scalars().all()
         ids.extend(int(item) for item in extra)
-    return list(dict.fromkeys(ids))
+    ids = list(dict.fromkeys(ids))
+    resource = str(kind or task_resource_kind(task_key) or "any").strip().lower()
+    if not ids or resource in {"", "any", "all", "*"}:
+        return ids
+    rows = (
+        await session.execute(select(ChatTarget).where(ChatTarget.id.in_(ids)))
+    ).scalars().all()
+    allowed = {int(chat.id) for chat in rows if chat_matches_resource_kind(chat, resource)}
+    return [cid for cid in ids if cid in allowed]
 
 
 async def resolve_user_folder_peers(

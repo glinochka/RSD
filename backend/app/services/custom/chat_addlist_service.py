@@ -233,6 +233,7 @@ def even_redistribute(
     max_per_account: int | None = None,
     shuffle: bool = True,
     rng: Any = None,
+    folder_of: dict[int, int] | None = None,
 ) -> dict[int, list[int]]:
     """Keep valid previous assignments, then fill least-loaded accounts.
 
@@ -242,6 +243,7 @@ def even_redistribute(
     instead of the first file filling every slot and the second sitting in reserve.
     Previous owners keep their chats up to the cap so adding accounts only
     draws from leftover / reserve.
+    Remaining chats prefer an account that already holds the same folder.
     """
     accounts = [int(item) for item in dict.fromkeys(account_ids or []) if int(item) > 0]
     chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
@@ -265,6 +267,13 @@ def even_redistribute(
                 continue
             assignment[int(aid)].append(chat_id)
             assigned.add(chat_id)
+    folder_map = {int(cid): int(fid) for cid, fid in (folder_of or {}).items() if fid}
+    account_folders: dict[int, set[int]] = {aid: set() for aid in accounts}
+    for aid, ids in assignment.items():
+        for cid in ids:
+            fid = folder_map.get(int(cid))
+            if fid:
+                account_folders[aid].add(fid)
     remaining = [cid for cid in chats if cid not in assigned]
     if shuffle:
         mixed = list(remaining)
@@ -280,10 +289,70 @@ def even_redistribute(
             eligible = [aid for aid in accounts if len(assignment[aid]) < cap]
         if not eligible:
             break
+        fid = folder_map.get(int(cid))
+        if fid:
+            preferred = [aid for aid in eligible if fid in account_folders[aid]]
+            if preferred:
+                eligible = preferred
         aid = min(eligible, key=lambda item: (len(assignment[item]), item))
         assignment[aid].append(cid)
         assigned.add(cid)
+        if fid:
+            account_folders[aid].add(fid)
     return assignment
+
+
+def claim_joined_folders(
+    previous: dict[int, list[int]] | None,
+    joined: dict[int, list[int]] | None,
+    folder_of: dict[int, int] | None,
+    chat_ids: list[int],
+    *,
+    max_per_account: int = TASK_CHATS_PER_ACCOUNT,
+) -> dict[int, list[int]]:
+    """Give an account the folder it already joined, and take those chats off others."""
+    cap = max(1, int(max_per_account or TASK_CHATS_PER_ACCOUNT))
+    folders = {int(cid): int(fid) for cid, fid in (folder_of or {}).items() if fid}
+    claimed_folder: dict[int, int] = {}
+    for aid, ids in (joined or {}).items():
+        for cid in ids or []:
+            fid = folders.get(int(cid))
+            if fid and fid not in claimed_folder:
+                claimed_folder[fid] = int(aid)
+    if not claimed_folder:
+        return {int(aid): list(ids or []) for aid, ids in (previous or {}).items()}
+    claimed: dict[int, list[int]] = {aid: [] for aid in dict.fromkeys(claimed_folder.values())}
+    seen: set[int] = set()
+    for aid, ids in (joined or {}).items():
+        if int(aid) not in claimed:
+            continue
+        for cid in ids or []:
+            chat_id = int(cid)
+            if chat_id in seen:
+                continue
+            if claimed_folder.get(folders.get(chat_id)) != int(aid):
+                continue
+            if len(claimed[int(aid)]) >= cap:
+                continue
+            claimed[int(aid)].append(chat_id)
+            seen.add(chat_id)
+    for cid in chat_ids:
+        chat_id = int(cid)
+        if chat_id in seen:
+            continue
+        owner = claimed_folder.get(folders.get(chat_id))
+        if not owner or len(claimed[owner]) >= cap:
+            continue
+        claimed[owner].append(chat_id)
+        seen.add(chat_id)
+    out: dict[int, list[int]] = {}
+    for aid, ids in (previous or {}).items():
+        if int(aid) in claimed:
+            continue
+        out[int(aid)] = [int(cid) for cid in ids or [] if int(cid) not in seen]
+    for aid, ids in claimed.items():
+        out[int(aid)] = list(ids)
+    return out
 
 
 def apply_task_chat_assignment(
@@ -295,6 +364,7 @@ def apply_task_chat_assignment(
     max_per_account: int = TASK_CHATS_PER_ACCOUNT,
     shuffle: bool = True,
     rng: Any = None,
+    folder_of: dict[int, int] | None = None,
 ) -> dict[int, list[int]]:
     """Honor an explicit per-account split; otherwise even-redistribute.
 
@@ -327,6 +397,7 @@ def apply_task_chat_assignment(
         max_per_account=cap,
         shuffle=shuffle,
         rng=rng,
+        folder_of=folder_of,
     )
 
 
@@ -340,6 +411,7 @@ def split_task_assignment(
     max_per_account: int = TASK_CHATS_PER_ACCOUNT,
     shuffle: bool = True,
     rng: Any = None,
+    folder_of: dict[int, int] | None = None,
 ) -> tuple[dict[int, list[int]], list[int]]:
     """Assign up to 50 chats per account; leftovers become the reserve pool."""
     chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
@@ -351,6 +423,7 @@ def split_task_assignment(
         max_per_account=max_per_account,
         shuffle=shuffle,
         rng=rng,
+        folder_of=folder_of,
     )
     assigned: set[int] = set()
     for ids in assignment.values():
@@ -820,7 +893,12 @@ async def collect_task_join_specs_resolved(session: AsyncSession, automation: Cu
     resolved: list[dict[str, Any]] = []
     live_ids: list[int] | None = None
     for spec in collect_task_join_specs(automation):
-        chats = await resolve_task_chat_ids(session, automation.id, spec.get("settings") or spec)
+        chats = await resolve_task_chat_ids(
+            session,
+            automation.id,
+            spec.get("settings") or spec,
+            task_key=spec.get("task_key"),
+        )
         if not chats:
             continue
         accounts = _int_list(spec.get("account_ids"))
@@ -1007,12 +1085,22 @@ async def ensure_task_join_plan(
             )
         )
     ).scalars().all()
+    from .task_targets import chat_matches_resource_kind, task_resource_kind
+
+    kind = task_resource_kind(task_key)
+    typed = [
+        chat
+        for chat in chats
+        if chat_matches_resource_kind(chat, kind)
+        and (getattr(chat, "mod_status", None) or "") != "moderated"
+    ]
+    typed_by_id = {chat.id: chat for chat in typed}
     chat_map = {
         chat.id: chat
-        for chat in chats
-        if (getattr(chat, "mod_status", None) or "") != "moderated" and chat.comments_open is not False
+        for chat in typed
+        if not (kind == "channel" and chat.comments_open is False)
     }
-    if not workers or not chat_map:
+    if not workers or not typed_by_id:
         return {"joined": 0, "folders": 0}
     plans = _plans_blob(automation)
     stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
@@ -1021,18 +1109,16 @@ async def ensure_task_join_plan(
     settings_assign = normalize_chat_assignments(
         module_settings_for_task(automation, task_key).get("chat_assignments")
     )
-    if mix:
-        previous = merge_assignment_previous(
-            sibling_previous(plans, task_key, workers),
-            await load_joined_assignment(session, automation.id, workers, list(chat_map.keys())),
-        )
-    else:
-        previous = merge_assignment_previous(
-            previous,
-            settings_assign,
-            sibling_previous(plans, task_key, workers),
-        )
-    extra_ids = [cid for ids in previous.values() for cid in ids if cid not in chat_map]
+    joined_map = await load_joined_assignment(session, automation.id, workers, list(typed_by_id.keys()))
+    extra_ids = [
+        cid
+        for ids in list(previous.values()) + list(joined_map.values()) + list(settings_assign.values())
+        for cid in ids
+        if cid not in chat_map
+    ]
+    for cid, chat in typed_by_id.items():
+        if cid in {item for ids in joined_map.values() for item in ids}:
+            chat_map[cid] = chat
     if extra_ids:
         extra_chats = (
             await session.execute(
@@ -1044,14 +1130,42 @@ async def ensure_task_join_plan(
             )
         ).scalars().all()
         for chat in extra_chats:
-            if (getattr(chat, "mod_status", None) or "") == "moderated" or chat.comments_open is False:
+            if (getattr(chat, "mod_status", None) or "") == "moderated":
+                continue
+            if not chat_matches_resource_kind(chat, kind):
                 continue
             chat_map[chat.id] = chat
+        joined_map = await load_joined_assignment(session, automation.id, workers, list(chat_map.keys()))
+    if mix:
+        previous = merge_assignment_previous(
+            sibling_previous(plans, task_key, workers),
+            joined_map,
+        )
+    else:
+        previous = merge_assignment_previous(
+            previous,
+            settings_assign,
+            sibling_previous(plans, task_key, workers),
+            joined_map,
+        )
+    folder_of = {
+        int(chat.id): int(chat.folder_id)
+        for chat in chat_map.values()
+        if getattr(chat, "folder_id", None)
+    }
+    previous = claim_joined_folders(
+        previous,
+        joined_map,
+        folder_of,
+        list(chat_map.keys()),
+        max_per_account=TASK_CHATS_PER_ACCOUNT,
+    )
     assignment, reserve = split_task_assignment(
         workers,
         list(chat_map.keys()),
         previous=previous,
         stored_reserve=_int_list((stored_task or {}).get("reserve")),
+        folder_of=folder_of,
     )
     await _upsert_actor_memberships(session, automation.id, assignment)
     stored_folders = (stored_task or {}).get("folders") if isinstance(stored_task, dict) else {}
@@ -1891,8 +2005,11 @@ async def serialize_task_pool(
             }
         )
     pending_left = int((stored or {}).get("pending_joins") or 0)
+    from .task_targets import task_resource_kind
+
     return {
         "task_key": task_key,
+        "resource_kind": task_resource_kind(task_key),
         "cap": TASK_CHATS_PER_ACCOUNT,
         "account_ids": account_ids,
         "folder_ids": folder_ids,
@@ -1943,7 +2060,12 @@ async def expand_task_pool(
     blob[key] = settings
     automation.module_settings = blob
     automation.updated_at = _utc_now()
-    resolved = await resolve_task_chat_ids(session, automation.id, settings)
+    resolved = await resolve_task_chat_ids(
+        session,
+        automation.id,
+        settings,
+        task_key=task_key,
+    )
     await ensure_task_join_plan(
         session,
         automation,

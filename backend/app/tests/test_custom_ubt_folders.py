@@ -110,6 +110,43 @@ class TestTaskChatFolders:
         assert chat.id in ids
         assert outsider.id not in ids
 
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="SEO Channel",
+            invite_link="https://t.me/seo_channel",
+            folder_id=folder.id,
+            chat_type="channel",
+            is_active=True,
+        )
+        group = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="SEO Group",
+            invite_link="https://t.me/seo_group",
+            folder_id=folder.id,
+            chat_type="chat",
+            is_active=True,
+        )
+        test_session.add_all([channel, group])
+        await test_session.commit()
+        channels = await resolve_task_chat_ids(
+            test_session,
+            custom_automation.id,
+            {"folder_ids": [folder.id]},
+            task_key="neurocommenting",
+        )
+        chats_only = await resolve_task_chat_ids(
+            test_session,
+            custom_automation.id,
+            {"folder_ids": [folder.id]},
+            task_key="neurochatting",
+        )
+        assert channel.id in channels
+        assert group.id not in channels
+        assert group.id in chats_only
+        assert channel.id not in chats_only
+
     async def test_chats_api_lists_folders_then_folder_contents(
         self,
         client: AsyncClient,
@@ -874,6 +911,27 @@ class TestJobLifecycle:
         assert pool_actor_status(parked) == "карантин"
         assert pool_actor_selectable(parked) is True
         assert pool_actor_status(None) == "нет в базе"
+
+        from app.services.custom.chat_addlist_service import claim_joined_folders
+
+        folder_of = {cid: 1 for cid in range(1, 61)}
+        stolen, leftover = split_task_assignment(
+            [32, 17],
+            list(range(1, 61)),
+            previous=claim_joined_folders(
+                {17: list(range(1, 17)), 32: []},
+                {32: list(range(1, 28))},
+                folder_of,
+                list(range(1, 61)),
+                max_per_account=50,
+            ),
+            shuffle=False,
+            folder_of=folder_of,
+        )
+        assert stolen[32][:27] == list(range(1, 28))
+        assert len(stolen[32]) == 50
+        assert set(stolen[32]).isdisjoint(stolen[17])
+        assert not set(range(1, 28)) & set(stolen[17])
 
     def test_sibling_tasks_keep_the_same_chat_owners(self):
         from app.services.custom.chat_addlist_service import (
