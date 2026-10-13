@@ -417,10 +417,7 @@ const CustomAutomationNeuroshillingPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Настройка кампании</h2>
-          <div className="nc-row">
-            <span className="nc-muted">{selectedFolders.size} пап. · {chosenGroups.length} групп · {chosenChannels.length} каналов</span>
-            <UbtDistributeChats automationId={id} taskKey="neuroshilling" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
-          </div>
+          <span className="nc-muted">{selectedFolders.size} пап. · {chosenGroups.length} групп · {chosenChannels.length} каналов</span>
         </div>
         <div className="nc-split">
           <div>
@@ -529,6 +526,15 @@ const CustomAutomationNeuroshillingPage = () => {
             <p className="nc-muted" style={{ marginTop: 10 }}>Сухой прогон ничего не отправляет. Живой тест — в <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_TEST(id)}>лаборатории</Link>.</p>
           </div>
         </div>
+        <UbtDistributeChats
+          automationId={id}
+          taskKey="neuroshilling"
+          accounts={data.accounts || []}
+          chats={data.chats || []}
+          folders={data.folders || []}
+          settings={settings}
+          onApplied={(partial) => persist(partial)}
+        />
       </div>
 
       <div className="nc-card">

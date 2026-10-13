@@ -332,12 +332,7 @@ const CustomAutomationChatBroadcastsPage = () => {
         <div className="nc-card">
           <div className="nc-card-head">
             <h2>Группы <span className="nc-muted">{settings.only_joined ? 'по чатам аккаунта' : `${selectedFolders.size} пап. · ${selectedChats.size} групп`}</span></h2>
-            <div className="nc-row">
-              {settings.only_joined ? null : (
-                <UbtDistributeChats automationId={id} taskKey="chat_broadcasts" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
-              )}
-              <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
-            </div>
+            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
           </div>
           <div style={{ marginBottom: 12 }}>
             <FeatureToggle
@@ -421,6 +416,17 @@ const CustomAutomationChatBroadcastsPage = () => {
             </div>
           ) : null}
           <p className="nc-hint" style={{ marginTop: 10 }}>Сколько ещё не разослано: {remaining}</p>
+          {settings.only_joined ? null : (
+            <UbtDistributeChats
+              automationId={id}
+              taskKey="chat_broadcasts"
+              accounts={data.accounts || []}
+              chats={data.chats || []}
+              folders={data.folders || []}
+              settings={settings}
+              onApplied={(partial) => persist(partial)}
+            />
+          )}
         </div>
 
         <div className="nc-card">

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
     AccountChatMembership,
+    ChatFolder,
     ChatJoinStatus,
     ChatMode,
     ChatSource,
@@ -202,11 +203,17 @@ def even_redistribute(
     *,
     premium: bool = False,
     max_per_account: int | None = None,
+    shuffle: bool = True,
+    rng: Any = None,
 ) -> dict[int, list[int]]:
     """Keep valid previous assignments, then fill least-loaded accounts.
 
     New workers receive leftover and overflow pending chats. Already assigned
     chats stay with their account so we do not yank memberships.
+    Incoming unassigned chats are shuffled so two folders mix in the working 50
+    instead of the first file filling every slot and the second sitting in reserve.
+    Previous owners keep their chats up to the cap so adding accounts only
+    draws from leftover / reserve.
     """
     accounts = [int(item) for item in dict.fromkeys(account_ids or []) if int(item) > 0]
     chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
@@ -218,18 +225,27 @@ def even_redistribute(
     even = max(1, min(cap, math.ceil(len(chats) / len(accounts))))
     assignment: dict[int, list[int]] = {aid: [] for aid in accounts}
     assigned: set[int] = set()
+    chat_set = set(chats)
     for aid, old in (previous or {}).items():
         if int(aid) not in assignment:
             continue
         for cid in old or []:
             chat_id = int(cid)
-            if chat_id not in chats or chat_id in assigned:
+            if chat_id not in chat_set or chat_id in assigned:
                 continue
-            if len(assignment[int(aid)]) >= even:
+            if len(assignment[int(aid)]) >= cap:
                 continue
             assignment[int(aid)].append(chat_id)
             assigned.add(chat_id)
     remaining = [cid for cid in chats if cid not in assigned]
+    if shuffle:
+        mixed = list(remaining)
+        picker = rng or random
+        try:
+            picker.shuffle(mixed)
+            remaining = mixed
+        except Exception:
+            remaining = mixed
     for cid in remaining:
         eligible = [aid for aid in accounts if len(assignment[aid]) < min(even, cap)]
         if not eligible:
@@ -249,6 +265,8 @@ def apply_task_chat_assignment(
     manual: dict[int, list[int]] | None = None,
     *,
     max_per_account: int = TASK_CHATS_PER_ACCOUNT,
+    shuffle: bool = True,
+    rng: Any = None,
 ) -> dict[int, list[int]]:
     """Honor an explicit per-account split; otherwise even-redistribute.
 
@@ -274,7 +292,14 @@ def apply_task_chat_assignment(
                 assignment[aid].append(chat_id)
                 assigned.add(chat_id)
         return assignment
-    return even_redistribute(accounts, chats, previous, max_per_account=cap)
+    return even_redistribute(
+        accounts,
+        chats,
+        previous,
+        max_per_account=cap,
+        shuffle=shuffle,
+        rng=rng,
+    )
 
 
 def split_task_assignment(
@@ -285,6 +310,8 @@ def split_task_assignment(
     stored_reserve: list[int] | None = None,
     *,
     max_per_account: int = TASK_CHATS_PER_ACCOUNT,
+    shuffle: bool = True,
+    rng: Any = None,
 ) -> tuple[dict[int, list[int]], list[int]]:
     """Assign up to 50 chats per account; leftovers become the reserve pool."""
     chats = [int(item) for item in dict.fromkeys(chat_ids or []) if int(item) > 0]
@@ -294,6 +321,8 @@ def split_task_assignment(
         previous=previous,
         manual=manual,
         max_per_account=max_per_account,
+        shuffle=shuffle,
+        rng=rng,
     )
     assigned: set[int] = set()
     for ids in assignment.values():
@@ -328,6 +357,36 @@ def sibling_previous(
     out: dict[int, list[int]] = {}
     for cid, aid in owner.items():
         out.setdefault(aid, []).append(cid)
+    return out
+
+
+async def load_joined_assignment(
+    session: AsyncSession,
+    automation_id: int,
+    account_ids: list[int],
+    chat_ids: list[int],
+) -> dict[int, list[int]]:
+    """Chats these accounts already joined — keep them when mixing a pool."""
+    accounts = [int(aid) for aid in account_ids or [] if int(aid) > 0]
+    chats = [int(cid) for cid in chat_ids or [] if int(cid) > 0]
+    if not accounts or not chats:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                AccountChatMembership.social_account_id,
+                AccountChatMembership.chat_target_id,
+            ).where(
+                AccountChatMembership.custom_automation_id == automation_id,
+                AccountChatMembership.social_account_id.in_(accounts),
+                AccountChatMembership.chat_target_id.in_(chats),
+                AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+            )
+        )
+    ).all()
+    out: dict[int, list[int]] = {}
+    for account_id, chat_id in rows:
+        out.setdefault(int(account_id), []).append(int(chat_id))
     return out
 
 
@@ -902,6 +961,8 @@ async def ensure_task_join_plan(
     task_key: str,
     account_ids: list[int],
     chat_ids: list[int],
+    *,
+    mix: bool = False,
 ) -> dict[str, Any]:
     """Keep per-account pools (max 50) and a reserve; joins happen in 15–20 waves."""
     alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
@@ -923,50 +984,49 @@ async def ensure_task_join_plan(
     if not workers or not chat_map:
         return {"joined": 0, "folders": 0}
     plans = _plans_blob(automation)
-    previous_raw = ((plans.get(task_key) or {}).get("assignments") if isinstance(plans.get(task_key), dict) else {}) or {}
+    stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
+    previous_raw = (stored_task or {}).get("assignments") or {}
     previous = {int(key): _int_list(value) for key, value in previous_raw.items()}
-    manual = {
-        int(key): value
-        for key, value in normalize_chat_assignments(
-            module_settings_for_task(automation, task_key).get("chat_assignments")
-        ).items()
-    }
-    if manual:
-        extra_ids = [cid for ids in manual.values() for cid in ids if cid not in chat_map]
-        if extra_ids:
-            extra_chats = (
-                await session.execute(
-                    select(ChatTarget).where(
-                        ChatTarget.custom_automation_id == automation.id,
-                        ChatTarget.id.in_(extra_ids),
-                        ChatTarget.black_boxed_at.is_(None),
-                    )
-                )
-            ).scalars().all()
-            for chat in extra_chats:
-                if (getattr(chat, "mod_status", None) or "") == "moderated" or chat.comments_open is False:
-                    continue
-                chat_map[chat.id] = chat
-        previous = {**previous, **manual}
-    if not manual:
+    settings_assign = normalize_chat_assignments(
+        module_settings_for_task(automation, task_key).get("chat_assignments")
+    )
+    if mix:
+        previous = merge_assignment_previous(
+            sibling_previous(plans, task_key, workers),
+            await load_joined_assignment(session, automation.id, workers, list(chat_map.keys())),
+        )
+    else:
         previous = merge_assignment_previous(
             previous,
+            settings_assign,
             sibling_previous(plans, task_key, workers),
         )
-    stored_task = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
+    extra_ids = [cid for ids in previous.values() for cid in ids if cid not in chat_map]
+    if extra_ids:
+        extra_chats = (
+            await session.execute(
+                select(ChatTarget).where(
+                    ChatTarget.custom_automation_id == automation.id,
+                    ChatTarget.id.in_(extra_ids),
+                    ChatTarget.black_boxed_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        for chat in extra_chats:
+            if (getattr(chat, "mod_status", None) or "") == "moderated" or chat.comments_open is False:
+                continue
+            chat_map[chat.id] = chat
     assignment, reserve = split_task_assignment(
         workers,
         list(chat_map.keys()),
         previous=previous,
-        manual=manual or None,
         stored_reserve=_int_list((stored_task or {}).get("reserve")),
     )
     await _upsert_actor_memberships(session, automation.id, assignment)
     stored_folders = (stored_task or {}).get("folders") if isinstance(stored_task, dict) else {}
     if not isinstance(stored_folders, dict):
         stored_folders = {}
-    if not manual:
-        stored_folders = merge_sibling_folders(plans, assignment, stored_folders)
+    stored_folders = merge_sibling_folders(plans, assignment, stored_folders)
     pending_left = 0
     for account_id, assigned in assignment.items():
         pending_left += sum(
@@ -988,7 +1048,7 @@ async def ensure_task_join_plan(
         "host_account_id": (stored_task or {}).get("host_account_id") or workers[0],
         "joins_complete": pending_left == 0 and bool(assignment),
         "pending_joins": pending_left,
-        "manual": bool((stored_task or {}).get("manual") or manual),
+        "manual": False if mix else bool((stored_task or {}).get("manual")),
         "updated_at": _utc_now().isoformat(),
     }
     _store_plans(automation, plans)
@@ -1573,6 +1633,286 @@ def list_task_addlists(automation: CustomAutomation | None) -> list[dict[str, An
                     }
                 )
     return items
+
+
+def _pool_chat_card(chat: ChatTarget, folders: dict[int, str], *, joined: bool = False) -> dict[str, Any]:
+    title = str(getattr(chat, "title", None) or "").strip()
+    link = str(getattr(chat, "invite_link", None) or "").strip()
+    username = str(getattr(chat, "username", None) or "").strip().lstrip("@")
+    if not link and username:
+        link = f"https://t.me/{username}"
+    folder_id = getattr(chat, "folder_id", None)
+    try:
+        folder_id = int(folder_id) if folder_id is not None else None
+    except (TypeError, ValueError):
+        folder_id = None
+    return {
+        "id": int(chat.id),
+        "title": title or link or (f"@{username}" if username else "") or f"чат #{chat.id}",
+        "link": link,
+        "folder_id": folder_id,
+        "folder_name": folders.get(folder_id) if folder_id else None,
+        "joined": bool(joined),
+    }
+
+
+async def _sync_live_job_pool(session: AsyncSession, automation: CustomAutomation, task_key: str) -> None:
+    from .job_service import VISIBLE_ACTIVE_STATUSES, log_active
+    from ...alembic.models import CustomJob
+
+    job_type = _log_job_type(task_key)
+    if job_type == "join":
+        return
+    settings = module_settings_for_task(automation, task_key)
+    jobs = (
+        await session.execute(
+            select(CustomJob).where(
+                CustomJob.custom_automation_id == automation.id,
+                CustomJob.job_type == job_type,
+                CustomJob.status.in_(tuple(VISIBLE_ACTIVE_STATUSES)),
+            )
+        )
+    ).scalars().all()
+    if not jobs:
+        return
+    slice_keys = (
+        "account_ids",
+        "folder_ids",
+        "chat_ids",
+        "channel_ids",
+        "chat_assignments",
+        "reserve_chat_ids",
+    )
+    for job in jobs:
+        merged = dict(job.params or {})
+        for key in slice_keys:
+            if key in settings:
+                merged[key] = settings.get(key)
+        job.params = merged
+        job.updated_at = _utc_now()
+    assigned = sum(len(_int_list(ids)) for ids in (settings.get("chat_assignments") or {}).values())
+    reserve = len(_int_list(settings.get("reserve_chat_ids")))
+    await log_active(
+        automation.id,
+        job_type,
+        f"Пул обновлён: {len(_int_list(settings.get('account_ids')))} аккаунтов, "
+        f"{assigned} каналов в работе, {reserve} в запасе",
+    )
+
+
+async def serialize_task_pool(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    task_key: str,
+) -> dict[str, Any]:
+    from .account_roles import account_is_task_ready
+    from .chat_folder_service import folder_payloads
+    from .job_service import VISIBLE_ACTIVE_STATUSES, actor_label
+    from .rotation_service import list_alive_session_accounts
+    from ...alembic.models import CustomJob, PoolAccount
+
+    settings = module_settings_for_task(automation, task_key)
+    plans = _plans_blob(automation)
+    stored = plans.get(task_key) if isinstance(plans.get(task_key), dict) else {}
+    assignments = {
+        int(key): _int_list(value)
+        for key, value in ((stored or {}).get("assignments") or settings.get("chat_assignments") or {}).items()
+    }
+    reserve_ids = _int_list((stored or {}).get("reserve") or settings.get("reserve_chat_ids"))
+    account_ids = _int_list(settings.get("account_ids")) or list(assignments.keys())
+    folder_ids = _int_list(settings.get("folder_ids"))
+    wanted = list(dict.fromkeys([cid for ids in assignments.values() for cid in ids] + reserve_ids))
+    chats = []
+    if wanted:
+        chats = list(
+            (
+                await session.execute(
+                    select(ChatTarget).where(
+                        ChatTarget.custom_automation_id == automation.id,
+                        ChatTarget.id.in_(wanted),
+                    )
+                )
+            ).scalars().all()
+        )
+    chat_map = {int(chat.id): chat for chat in chats}
+    folder_rows = await folder_payloads(session, automation.id)
+    folder_names = {int(item["id"]): str(item.get("name") or "") for item in folder_rows}
+    joined = await load_joined_assignment(session, automation.id, account_ids, wanted)
+    joined_set = {(aid, cid) for aid, ids in joined.items() for cid in ids}
+    alive = {account.id: account for account in await list_alive_session_accounts(session, automation.id)}
+    pool_rows = (
+        await session.execute(
+            select(PoolAccount).where(
+                PoolAccount.custom_automation_id == automation.id,
+                PoolAccount.social_account_id.in_(list(alive.keys()) or [0]),
+            )
+        )
+    ).scalars().all()
+    pool_by_account = {int(row.social_account_id): row for row in pool_rows}
+    account_items: list[dict[str, Any]] = []
+    for aid in account_ids:
+        account = alive.get(aid)
+        cards = []
+        joined_count = 0
+        for cid in assignments.get(aid) or []:
+            chat = chat_map.get(cid)
+            is_joined = (aid, cid) in joined_set
+            if is_joined:
+                joined_count += 1
+            if chat is None:
+                cards.append(
+                    {
+                        "id": cid,
+                        "title": f"чат #{cid}",
+                        "link": "",
+                        "folder_id": None,
+                        "folder_name": None,
+                        "joined": is_joined,
+                    }
+                )
+                continue
+            cards.append(_pool_chat_card(chat, folder_names, joined=is_joined))
+        account_items.append(
+            {
+                "id": aid,
+                "label": actor_label(account) if account else f"аккаунт #{aid}",
+                "username": getattr(account, "username", None) if account else None,
+                "phone_number": getattr(account, "phone_number", None) if account else None,
+                "assigned": cards,
+                "assigned_count": len(cards),
+                "joined_count": joined_count,
+            }
+        )
+    reserve_cards = []
+    for cid in reserve_ids:
+        chat = chat_map.get(cid)
+        if chat is None:
+            reserve_cards.append(
+                {
+                    "id": cid,
+                    "title": f"чат #{cid}",
+                    "link": "",
+                    "folder_id": None,
+                    "folder_name": None,
+                    "joined": False,
+                }
+            )
+            continue
+        reserve_cards.append(_pool_chat_card(chat, folder_names, joined=False))
+    mix_map: dict[Any, dict[str, Any]] = {}
+    for card in [item for row in account_items for item in row["assigned"]] + reserve_cards:
+        key = card.get("folder_id") or 0
+        row = mix_map.setdefault(
+            key,
+            {
+                "id": card.get("folder_id"),
+                "name": card.get("folder_name") or "Без папки",
+                "total": 0,
+                "assigned": 0,
+                "reserve": 0,
+            },
+        )
+        row["total"] += 1
+    assigned_ids = {cid for ids in assignments.values() for cid in ids}
+    for card in [item for row in account_items for item in row["assigned"]]:
+        key = card.get("folder_id") or 0
+        mix_map[key]["assigned"] += 1
+    for card in reserve_cards:
+        key = card.get("folder_id") or 0
+        mix_map[key]["reserve"] += 1
+    job_type = _log_job_type(task_key)
+    live = False
+    if job_type != "join":
+        live = bool(
+            await session.scalar(
+                select(func.count(CustomJob.id)).where(
+                    CustomJob.custom_automation_id == automation.id,
+                    CustomJob.job_type == job_type,
+                    CustomJob.status.in_(tuple(VISIBLE_ACTIVE_STATUSES)),
+                )
+            )
+        )
+    available_accounts = []
+    selected_accounts = set(account_ids)
+    for account in alive.values():
+        pool = pool_by_account.get(account.id)
+        eligible = account_is_task_ready(pool, account)
+        available_accounts.append(
+            {
+                "id": account.id,
+                "label": actor_label(account),
+                "username": getattr(account, "username", None),
+                "phone_number": getattr(account, "phone_number", None),
+                "eligible": eligible,
+                "selected": account.id in selected_accounts,
+            }
+        )
+    pending_left = int((stored or {}).get("pending_joins") or 0)
+    return {
+        "task_key": task_key,
+        "cap": TASK_CHATS_PER_ACCOUNT,
+        "account_ids": account_ids,
+        "folder_ids": folder_ids,
+        "chat_ids": _int_list(settings.get("chat_ids")),
+        "assignments": {str(aid): ids for aid, ids in assignments.items()},
+        "reserve_chat_ids": reserve_ids,
+        "accounts": account_items,
+        "reserve": reserve_cards,
+        "folder_mix": list(mix_map.values()),
+        "available_accounts": available_accounts,
+        "available_folders": [
+            {**item, "selected": int(item["id"]) in set(folder_ids)}
+            for item in folder_rows
+        ],
+        "pending_joins": pending_left,
+        "joins_complete": bool((stored or {}).get("joins_complete")),
+        "live": bool(live),
+        "assigned_count": len(assigned_ids),
+        "reserve_count": len(reserve_ids),
+    }
+
+
+async def expand_task_pool(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    task_key: str,
+    *,
+    account_ids: list[int] | None = None,
+    folder_ids: list[int] | None = None,
+    chat_ids: list[int] | None = None,
+    mode: str = "fill",
+) -> dict[str, Any]:
+    """Add accounts/folders to a running task and optionally remix unjoined chats."""
+    from .task_targets import resolve_task_chat_ids
+
+    key = _TASK_SETTINGS_KEY.get(task_key, task_key)
+    blob = dict(automation.module_settings or {})
+    settings = dict(blob.get(key) or {}) if isinstance(blob.get(key), dict) else {}
+    if account_ids is not None:
+        settings["account_ids"] = _int_list(account_ids)
+    if folder_ids is not None:
+        settings["folder_ids"] = _int_list(folder_ids)
+    if chat_ids is not None:
+        settings["chat_ids"] = _int_list(chat_ids)
+    mix = str(mode or "fill").strip().lower() == "mix"
+    if mix:
+        settings["chat_assignments"] = {}
+    blob[key] = settings
+    automation.module_settings = blob
+    automation.updated_at = _utc_now()
+    resolved = await resolve_task_chat_ids(session, automation.id, settings)
+    await ensure_task_join_plan(
+        session,
+        automation,
+        task_key,
+        _int_list(settings.get("account_ids")),
+        resolved,
+        mix=mix,
+    )
+    automation = await session.get(CustomAutomation, automation.id) or automation
+    await _sync_live_job_pool(session, automation, task_key)
+    await session.commit()
+    return await serialize_task_pool(session, automation, task_key)
 
 
 async def save_task_assignments(

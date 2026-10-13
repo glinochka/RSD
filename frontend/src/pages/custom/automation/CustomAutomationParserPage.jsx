@@ -363,7 +363,6 @@ const CustomAutomationParserPage = () => {
             <h2>Чаты и каналы</h2>
             <div className="nc-row">
               <span className="nc-muted">Целей: {targetCount}</span>
-              <UbtDistributeChats automationId={id} taskKey="parser" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
             </div>
           </div>
           <textarea className="nc-area" value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@groupname\nhttps://t.me/group\n-1001234567890'} />
@@ -393,6 +392,15 @@ const CustomAutomationParserPage = () => {
               </div>
             )}
           </div>
+          <UbtDistributeChats
+            automationId={id}
+            taskKey="parser"
+            accounts={data.accounts || []}
+            chats={data.chats || []}
+            folders={data.folders || []}
+            settings={settings}
+            onApplied={(partial) => persist(partial)}
+          />
           <div className="nc-setting">
             <div className="nc-setting-copy">
               <strong>Вступать перед сбором</strong>

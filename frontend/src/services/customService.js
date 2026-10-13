@@ -314,6 +314,34 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getTaskPool(automationId, taskKey) {
+    const params = new URLSearchParams({ task_key: taskKey || '' });
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_POOL(automationId)}?${params.toString()}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async saveTaskPool(automationId, { taskKey, task_key: taskKeySnake, accountIds, folderIds, chatIds, mode } = {}) {
+    const body = { task_key: taskKey || taskKeySnake, mode: mode || 'fill' };
+    if (accountIds) {
+      body.account_ids = accountIds;
+    }
+    if (folderIds) {
+      body.folder_ids = folderIds;
+    }
+    if (chatIds) {
+      body.chat_ids = chatIds;
+    }
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_POOL(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    return handleResponse(response);
+  },
+
   async saveTaskDistribute(automationId, { taskKey, task_key: taskKeySnake, assignments } = {}) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_DISTRIBUTE(automationId)}`, {
       method: 'POST',

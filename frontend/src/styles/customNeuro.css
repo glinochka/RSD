@@ -147,6 +147,12 @@
   background: #f3f3f3;
 }
 
+.nc-item.is-off,
+.nc-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .nc-item strong {
   display: block;
   font-size: 0.875rem;
@@ -724,6 +730,139 @@
   white-space: pre;
 }
 
+.nc-pool {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #eef2f6;
+}
+
+.nc-pool-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.nc-pool-head p {
+  margin: 4px 0 0;
+}
+
+.nc-pool-mix {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.nc-pool-mix-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 160px) minmax(80px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.nc-pool-mix-name {
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-pool-mix-track {
+  height: 8px;
+  border-radius: 99px;
+  background: #eef2f6;
+  overflow: hidden;
+}
+
+.nc-pool-mix-track span {
+  display: block;
+  height: 100%;
+  background: #0f172a;
+  border-radius: 99px;
+}
+
+.nc-pool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nc-pool-account {
+  border: 1px solid #eef2f6;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.nc-pool-account-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nc-pool-account-btn strong {
+  display: block;
+}
+
+.nc-pool-count {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.nc-pool-meter {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 99px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.nc-pool-meter span {
+  display: block;
+  height: 100%;
+  background: #2563eb;
+  border-radius: 99px;
+}
+
+.nc-pool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.nc-pool-chip {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  font-size: 0.75rem;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-pool-chip.is-joined {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
 .nc-addlists {
   margin-top: 12px;
   display: flex;
@@ -754,7 +893,8 @@
   .nc-kpis--5,
   .nc-mode,
   .nc-mode--3,
-  .nc-distribute {
+  .nc-distribute,
+  .nc-pool-mix-row {
     grid-template-columns: 1fr;
   }
 }

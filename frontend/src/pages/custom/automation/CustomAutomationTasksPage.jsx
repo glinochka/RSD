@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import FeatureToggle from '../../../components/FeatureToggle';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
+import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
 import { paramLabel, resultLabel } from './jobParamLabels';
 import { humanizeUbtLog } from './ubtLogText';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -10,6 +11,7 @@ import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customTasks.css';
 import '../../../styles/customSolutionNav.css';
+import '../../../styles/customNeuro.css';
 
 const STATUS_LABELS = {
   pending: 'Ожидает',
@@ -22,7 +24,17 @@ const STATUS_LABELS = {
   skipped: 'Пропущено',
 };
 
-const SKIP_EDIT_KEYS = new Set(['presets', 'enabled', 'joins_complete']);
+const SKIP_EDIT_KEYS = new Set(['presets', 'enabled', 'joins_complete', 'chat_assignments', 'reserve_chat_ids']);
+const HIDE_PARAM_KEYS = new Set(['presets', 'chat_assignments', 'reserve_chat_ids']);
+const JOB_TASK_KEY = {
+  neurocommenting: 'neurocommenting',
+  discussion: 'neurochatting',
+  shilling: 'neuroshilling',
+  chat_broadcast: 'chat_broadcasts',
+  parser: 'parser',
+  masslooking: 'masslooking',
+  warmup: 'warmup',
+};
 const EXTRA_EDIT_FIELDS = {
   neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 180, join_delay_max: 240, probability: 100, max_per_chat: 10 },
   discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 180, join_delay_max: 240, probability: 30, max_per_chat: 1 },
@@ -141,7 +153,9 @@ const formatDuration = (seconds) => {
   return `${hours} ч ${mins % 60} мин`;
 };
 
-const paramEntries = (params) => Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
+const paramEntries = (params) => Object.entries(params || {}).filter(([key, value]) => (
+  value !== undefined && value !== null && value !== '' && !HIDE_PARAM_KEYS.has(key)
+));
 const resultEntries = (result) => paramEntries(result).filter(([key]) => key !== 'items');
 
 const CustomAutomationTasksPage = () => {
@@ -375,6 +389,16 @@ const CustomAutomationTasksPage = () => {
                     ))}
                   </dl>
                 </div>
+              ) : null}
+
+              {JOB_TASK_KEY[selected.job_type] ? (
+                <UbtDistributeChats
+                  key={`${selected.id}-${JOB_TASK_KEY[selected.job_type]}`}
+                  automationId={id}
+                  taskKey={JOB_TASK_KEY[selected.job_type]}
+                  settings={selected.params}
+                  onApplied={() => loadJobs()}
+                />
               ) : null}
 
               {resultEntries(selected.result).length || selected.error ? (

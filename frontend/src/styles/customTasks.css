@@ -458,6 +458,12 @@
   box-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
 }
 
+.tsk-detail .nc-pool {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}
+
 @media (max-width: 900px) {
   .tsk-split {
     grid-template-columns: 1fr;

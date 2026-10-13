@@ -400,10 +400,7 @@ const CustomAutomationWarmupPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Целевые группы / каналы</h2>
-          <div className="nc-row">
-            <UbtDistributeChats automationId={id} taskKey="warmup" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
-            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
-          </div>
+          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
         </div>
         <p className="nc-hint">Сюда попадают чаты, в которые аккаунт может вступить после прогрева. Пусто = вступления идут из общего списка чатов, не из случайного интернета.</p>
         <UbtAddlistLinks automationId={id} taskKey="warmup" />
@@ -453,6 +450,15 @@ const CustomAutomationWarmupPage = () => {
             ))}
           </div>
         ) : <p className="nc-muted" style={{ marginTop: 10 }}>Цели не выбраны. Аккаунт не вступает в случайные группы.</p>}
+        <UbtDistributeChats
+          automationId={id}
+          taskKey="warmup"
+          accounts={data.accounts || []}
+          chats={data.chats || []}
+          folders={data.folders || []}
+          settings={settings}
+          onApplied={(partial) => persist(partial)}
+        />
       </div>
 
       <div className="nc-card">

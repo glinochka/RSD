@@ -63,6 +63,8 @@ from .schemas import (
     TaskAddlistListResponse,
     TaskDistributeRequest,
     TaskDistributeResponse,
+    TaskPoolRequest,
+    TaskPoolResponse,
     NeurocommentingModuleResponse,
     NeurocommentingSettings,
     NeurocommentingChannelsRequest,
@@ -601,6 +603,53 @@ async def list_automation_addlists(
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
         return TaskAddlistListResponse(items=list_task_addlists(row))
+
+
+@router.get("/automations/{automation_id}/task-pool", response_model=TaskPoolResponse)
+async def get_automation_task_pool(
+    automation_id: int,
+    task_key: str = Query(..., min_length=1),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_addlist_service import serialize_task_pool
+
+    del automation
+    async with async_session_maker() as session:
+        row = await session.get(CustomAutomation, automation_id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        return TaskPoolResponse.model_validate(await serialize_task_pool(session, row, task_key))
+
+
+@router.post("/automations/{automation_id}/task-pool", response_model=TaskPoolResponse)
+async def save_automation_task_pool(
+    automation_id: int,
+    payload: TaskPoolRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_addlist_service import expand_task_pool
+
+    del automation
+    task_key = str(payload.task_key or "").strip()
+    if not task_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Укажите модуль")
+    mode = str(payload.mode or "fill").strip().lower()
+    if mode not in {"fill", "mix"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode: fill или mix")
+    async with async_session_maker() as session:
+        row = await session.get(CustomAutomation, automation_id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        data = await expand_task_pool(
+            session,
+            row,
+            task_key,
+            account_ids=payload.account_ids,
+            folder_ids=payload.folder_ids,
+            chat_ids=payload.chat_ids,
+            mode=mode,
+        )
+        return TaskPoolResponse.model_validate(data)
 
 
 @router.post("/automations/{automation_id}/task-distribute", response_model=TaskDistributeResponse)

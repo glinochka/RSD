@@ -338,6 +338,7 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_STATS_BLACKLIST_BULK: (id) => `/api/custom/automations/${id}/stats/blacklist-bulk`,
   CUSTOM_AUTOMATION_ADDLISTS: (id) => `/api/custom/automations/${id}/addlists`,
   CUSTOM_AUTOMATION_TASK_DISTRIBUTE: (id) => `/api/custom/automations/${id}/task-distribute`,
+  CUSTOM_AUTOMATION_TASK_POOL: (id) => `/api/custom/automations/${id}/task-pool`,
   CUSTOM_AUTOMATION_ACCOUNT_TELEGRAM_LOGS: (id, accountId) =>
     `/api/custom/automations/${id}/accounts/${accountId}/telegram-logs`,
   CUSTOM_AUTOMATION_NEUROCOMMENTING: (id) => `/api/custom/automations/${id}/modules/neurocommenting`,

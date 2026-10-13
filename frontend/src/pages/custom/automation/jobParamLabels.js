@@ -5,6 +5,7 @@ export const JOB_PARAM_LABELS = {
   channel_ids: 'Каналы',
   blacklisted_account_ids: 'Чёрный список аккаунтов',
   chat_assignments: 'Распределение по аккаунтам',
+  reserve_chat_ids: 'Запасной пул',
   post_filter: 'Фильтр постов',
   keywords: 'Ключевые слова',
   probability: 'Вероятность, %',

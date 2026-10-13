@@ -336,7 +336,6 @@ const CustomAutomationMasslookingPage = () => {
                 onChange={(event) => setFolderId(event.target.value)}
               />
               <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск канала" />
-              <UbtDistributeChats automationId={id} taskKey="masslooking" accounts={data.accounts || []} chats={data.chats || []} settings={settings} onApplied={(partial) => persist(partial)} />
               <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
             </div>
             <div className="nc-list" style={{ marginTop: 8 }}>
@@ -353,6 +352,15 @@ const CustomAutomationMasslookingPage = () => {
               <p className="nc-muted" style={{ marginTop: 8 }}>Из папок: {chosenChats.map((item) => item.title).join(', ')}</p>
             ) : null}
             <UbtAddlistLinks automationId={id} taskKey="masslooking" />
+            <UbtDistributeChats
+              automationId={id}
+              taskKey="masslooking"
+              accounts={data.accounts || []}
+              chats={data.chats || []}
+              folders={data.folders || []}
+              settings={settings}
+              onApplied={(partial) => persist(partial)}
+            />
           </div>
           <div className="nc-setting nc-setting--muted" style={{ marginTop: 8 }}>
             <div className="nc-setting-copy">

@@ -314,17 +314,7 @@ const CustomAutomationNeurocommentingPage = () => {
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Целевые каналы <span className="nc-muted">{selectedFolders.size} пап. · {selectedChats.size} кан.</span></h2>
-          <div className="nc-row">
-            <UbtDistributeChats
-              automationId={id}
-              taskKey="neurocommenting"
-              accounts={data.accounts || []}
-              chats={data.chats || []}
-              settings={settings}
-              onApplied={(partial) => persist(partial)}
-            />
-            <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
-          </div>
+          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
         </div>
         <div className="nc-row">
           <button type="button" className={`nc-chip ${chatTab === 'links' ? 'is-on' : ''}`} onClick={() => setChatTab('links')}>Юзернейм / ссылка</button>
@@ -389,6 +379,15 @@ const CustomAutomationNeurocommentingPage = () => {
           </div>
         ) : null}
         <UbtAddlistLinks automationId={id} taskKey="neurocommenting" />
+        <UbtDistributeChats
+          automationId={id}
+          taskKey="neurocommenting"
+          accounts={data.accounts || []}
+          chats={data.chats || []}
+          folders={data.folders || []}
+          settings={settings}
+          onApplied={(partial) => persist(partial)}
+        />
       </div>
 
       <div className="nc-card">

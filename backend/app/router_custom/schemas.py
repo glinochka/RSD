@@ -1046,6 +1046,63 @@ class TaskDistributeResponse(BaseModel):
     add_errors: list[str] = Field(default_factory=list)
 
 
+class TaskPoolChatItem(BaseModel):
+    id: int
+    title: str = ""
+    link: str = ""
+    folder_id: Optional[int] = None
+    folder_name: Optional[str] = None
+    joined: bool = False
+
+
+class TaskPoolAccountItem(BaseModel):
+    id: int
+    label: str = ""
+    username: Optional[str] = None
+    phone_number: Optional[str] = None
+    assigned: list[TaskPoolChatItem] = Field(default_factory=list)
+    assigned_count: int = 0
+    joined_count: int = 0
+
+
+class TaskPoolFolderMix(BaseModel):
+    id: Optional[int] = None
+    name: str = ""
+    total: int = 0
+    assigned: int = 0
+    reserve: int = 0
+
+
+class TaskPoolRequest(BaseModel):
+    task_key: str
+    account_ids: Optional[list[int]] = None
+    folder_ids: Optional[list[int]] = None
+    chat_ids: Optional[list[int]] = None
+    mode: str = "fill"
+
+
+class TaskPoolResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    task_key: str
+    cap: int = 50
+    account_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
+    accounts: list[TaskPoolAccountItem] = Field(default_factory=list)
+    reserve: list[TaskPoolChatItem] = Field(default_factory=list)
+    folder_mix: list[TaskPoolFolderMix] = Field(default_factory=list)
+    available_accounts: list[dict[str, Any]] = Field(default_factory=list)
+    available_folders: list[dict[str, Any]] = Field(default_factory=list)
+    pending_joins: int = 0
+    joins_complete: bool = False
+    live: bool = False
+    assigned_count: int = 0
+    reserve_count: int = 0
+
+
 class NeurocommentingSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
 

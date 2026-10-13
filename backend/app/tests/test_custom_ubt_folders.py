@@ -800,6 +800,48 @@ class TestJobLifecycle:
         rest = wave_rest_until(now)
         assert rest == moscow_day_start_utc(now) + timedelta(days=2)
 
+    def test_shuffle_mixes_folders_fill_keeps_existing_mix_keeps_joined(self):
+        from app.services.custom.chat_addlist_service import even_redistribute, split_task_assignment
+
+        folder1 = list(range(1, 101))
+        folder2 = list(range(101, 201))
+        chats = folder1 + folder2
+        sequential, _ = split_task_assignment([1], chats, shuffle=False)
+        assert sequential[1] == list(range(1, 51))
+        assert set(sequential[1]).issubset(set(folder1))
+
+        class Reverse:
+            def shuffle(self, items):
+                items.reverse()
+
+        mixed, reserve = split_task_assignment([1], chats, shuffle=True, rng=Reverse())
+        assert mixed[1] == list(range(200, 150, -1))
+        assert set(mixed[1]).issubset(set(folder2))
+        assert not set(mixed[1]).issubset(set(folder1))
+        assert 1 in reserve
+
+        previous = {1: list(range(1, 51))}
+        filled, leftover = split_task_assignment(
+            [1, 2],
+            list(range(1, 61)),
+            previous=previous,
+            shuffle=False,
+        )
+        assert filled[1] == list(range(1, 51))
+        assert filled[2] == list(range(51, 61))
+        assert leftover == []
+
+        remixed = even_redistribute(
+            [1],
+            chats,
+            previous={1: [1, 2, 3]},
+            shuffle=True,
+            rng=Reverse(),
+            max_per_account=50,
+        )
+        assert remixed[1][:3] == [1, 2, 3]
+        assert remixed[1][3:] == list(range(200, 153, -1))
+
     def test_sibling_tasks_keep_the_same_chat_owners(self):
         from app.services.custom.chat_addlist_service import (
             merge_assignment_previous,
