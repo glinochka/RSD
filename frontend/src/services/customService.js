@@ -314,6 +314,20 @@ const customService = {
     return handleResponse(response);
   },
 
+  async createTaskAddlist(automationId, { accountId, chatIds, taskKey, title } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ADDLISTS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        account_id: accountId,
+        chat_ids: chatIds || [],
+        task_key: taskKey || 'neurocommenting',
+        title: title || '',
+      }),
+    });
+    return handleResponse(response);
+  },
+
   async getTaskPool(automationId, taskKey) {
     const params = new URLSearchParams({ task_key: taskKey || '' });
     const response = await fetch(

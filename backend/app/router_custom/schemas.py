@@ -1034,6 +1034,13 @@ class TaskAddlistListResponse(BaseModel):
     items: list[TaskAddlistItem] = Field(default_factory=list)
 
 
+class TaskAddlistCreateRequest(BaseModel):
+    account_id: int
+    chat_ids: list[int] = Field(default_factory=list)
+    task_key: str = "neurocommenting"
+    title: str = ""
+
+
 class TaskDistributeRequest(BaseModel):
     task_key: str
     assignments: dict[str, list[str]] = Field(default_factory=dict)

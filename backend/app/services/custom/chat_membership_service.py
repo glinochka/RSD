@@ -1222,6 +1222,47 @@ async def recover_reader_after_error(
     return False
 
 
+async def list_joined_task_chats(
+    session: AsyncSession,
+    automation_id: int,
+    account_ids: list[int],
+    chat_ids: list[int] | set[int] | None = None,
+    *,
+    limit: int = 20,
+) -> list[ChatTarget]:
+    """Chats from this task pool that at least one assigned account already joined."""
+    accounts = [int(aid) for aid in dict.fromkeys(account_ids or []) if int(aid) > 0]
+    if not accounts:
+        return []
+    filters = [
+        ChatTarget.custom_automation_id == automation_id,
+        ChatTarget.black_boxed_at.is_(None),
+        AccountChatMembership.custom_automation_id == automation_id,
+        AccountChatMembership.social_account_id.in_(accounts),
+        AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+    ]
+    if chat_ids is not None:
+        wanted = [int(cid) for cid in dict.fromkeys(chat_ids) if int(cid) > 0]
+        if not wanted:
+            return []
+        filters.append(ChatTarget.id.in_(wanted))
+    rows = (
+        await session.execute(
+            select(ChatTarget)
+            .join(AccountChatMembership, AccountChatMembership.chat_target_id == ChatTarget.id)
+            .where(*filters)
+            .distinct()
+            .order_by(
+                ChatTarget.last_scanned_at.is_(None).desc(),
+                ChatTarget.last_scanned_at.asc(),
+                ChatTarget.id.asc(),
+            )
+            .limit(max(1, int(limit or 20)))
+        )
+    ).scalars().all()
+    return list(rows)
+
+
 async def list_watchable_chats(
     session: AsyncSession,
     automation_id: int,

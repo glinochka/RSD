@@ -60,6 +60,7 @@ from .schemas import (
     ChatBlackboxRequest,
     ChatBlackboxBulkRequest,
     TelegramAccountLogListResponse,
+    TaskAddlistCreateRequest,
     TaskAddlistListResponse,
     TaskDistributeRequest,
     TaskDistributeResponse,
@@ -603,6 +604,32 @@ async def list_automation_addlists(
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
         return TaskAddlistListResponse(items=list_task_addlists(row))
+
+
+@router.post("/automations/{automation_id}/addlists")
+async def create_automation_addlist(
+    automation_id: int,
+    payload: TaskAddlistCreateRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_addlist_service import export_manual_addlist
+
+    del automation
+    async with async_session_maker() as session:
+        row = await session.get(CustomAutomation, automation_id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        try:
+            return await export_manual_addlist(
+                session,
+                row,
+                account_id=payload.account_id,
+                chat_ids=payload.chat_ids,
+                task_key=payload.task_key,
+                title=payload.title,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/automations/{automation_id}/task-pool", response_model=TaskPoolResponse)

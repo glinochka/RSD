@@ -625,6 +625,8 @@ def attach_addlist_row(plans: dict[str, Any], account_id: int, row: dict[str, An
         "url": str(row.get("url") or addlist_url(slug)),
         "filter_id": row.get("filter_id"),
         "chat_ids": _int_list(row.get("chat_ids")),
+        "title": str(row.get("title") or "").strip() or None,
+        "manual": bool(row.get("manual")),
     }
     for key, spec in list((plans or {}).items()):
         if str(key) in _SHARED_PLAN_KEYS or not isinstance(spec, dict):
@@ -723,18 +725,29 @@ def account_wave_state(
     return latest
 
 
-def pick_join_wave(pending_ids: list[int], *, rng: Any = None) -> list[int]:
+def pick_join_wave(pending_ids: list[int], *, rng: Any = None, size: int | None = None) -> list[int]:
     """Random 15–20 chats (or all remaining) for one join wave."""
     pool = [int(item) for item in dict.fromkeys(pending_ids or []) if int(item) > 0]
     if not pool:
         return []
     picker = rng or random
-    size = min(len(pool), picker.randint(JOIN_WAVE_MIN, JOIN_WAVE_MAX))
-    if size >= len(pool):
+    want = int(size) if size is not None else picker.randint(JOIN_WAVE_MIN, JOIN_WAVE_MAX)
+    take = min(len(pool), max(1, want))
+    if take >= len(pool):
         shuffled = list(pool)
         picker.shuffle(shuffled)
         return shuffled
-    return picker.sample(pool, size)
+    return picker.sample(pool, take)
+
+
+def wave_quota_hit(wave: dict[str, Any] | None, already_joined: int = 0) -> bool:
+    """True when this day's successful joins already reached the wave target."""
+    data = wave if isinstance(wave, dict) else {}
+    tracked = data.get("joined")
+    target = int(data.get("size") or JOIN_WAVE_MIN)
+    if tracked is not None:
+        return int(tracked) >= max(1, target)
+    return int(already_joined or 0) >= JOIN_WAVE_MIN
 
 
 def wave_rest_until(now: datetime | None = None) -> datetime:
@@ -1606,6 +1619,7 @@ async def _upsert_shareable_folder(
     *,
     filter_id: int | None = None,
     slug: str | None = None,
+    title: str | None = None,
 ) -> tuple[str | None, int | None]:
     """Create or grow a Telegram folder + addlist. Host must already be in `chats`."""
     from telethon.tl import types
@@ -1619,7 +1633,8 @@ async def _upsert_shareable_folder(
     filters = await telethon(GetDialogFiltersRequest())
     existing = list(getattr(filters, "filters", None) or [])
     used = {int(getattr(item, "id", 0) or 0) for item in existing}
-    title = f"UBT {chats[0].id}"[:12]
+    raw_title = str(title or "").strip() or f"UBT {chats[0].id}"
+    title = raw_title[:32]
     if filter_id and filter_id in used:
         chosen = int(filter_id)
     else:
@@ -1757,6 +1772,111 @@ _TASK_TITLES = {
 }
 
 
+async def export_manual_addlist(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    *,
+    account_id: int,
+    chat_ids: list[int],
+    task_key: str | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Build a t.me/addlist from chats this account already joined."""
+    from .job_service import actor_label, log_active
+    from .rotation_service import list_alive_session_accounts
+    from .telegram_account_client import TelegramAccountClient
+
+    wanted = _int_list(chat_ids)
+    if not wanted:
+        raise ValueError("Выберите каналы или чаты, в которых аккаунт уже состоит")
+    roster = {account.id: account for account in await list_alive_session_accounts(session, automation.id, exclude_flood=False)}
+    extra = await session.get(SocialAccount, int(account_id))
+    if extra is not None:
+        roster[int(extra.id)] = extra
+    account = roster.get(int(account_id))
+    if account is None:
+        raise ValueError("Аккаунт не найден")
+    chats = list(
+        (
+            await session.execute(
+                select(ChatTarget).where(
+                    ChatTarget.custom_automation_id == automation.id,
+                    ChatTarget.id.in_(wanted),
+                    ChatTarget.black_boxed_at.is_(None),
+                )
+            )
+        ).scalars().all()
+    )
+    chat_map = {int(chat.id): chat for chat in chats}
+    missing = [cid for cid in wanted if cid not in chat_map]
+    if missing:
+        raise ValueError("Часть выбранных чатов не найдена в этой автоматизации")
+    joined: list[ChatTarget] = []
+    skipped: list[str] = []
+    for cid in wanted:
+        chat = chat_map[cid]
+        if await account_is_joined(session, cid, account.id):
+            joined.append(chat)
+        else:
+            skipped.append(str(getattr(chat, "title", None) or chat.invite_link or f"#{cid}"))
+    if not joined:
+        raise ValueError("Аккаунт ещё не состоит в выбранных чатах")
+    premium = await _account_is_premium(account)
+    per_folder, _cap = addlist_capacity(premium=premium)
+    if len(joined) > per_folder:
+        joined = joined[:per_folder]
+    label = str(title or "").strip() or f"UBT {actor_label(account)}"
+    try:
+        async with TelegramAccountClient.for_account(account) as client:
+            slug, filter_id = await _upsert_shareable_folder(client, joined, title=label)
+    except Exception as exc:
+        logger.warning("Manual addlist failed account=%s: %s", account.id, exc)
+        raise ValueError("Telegram не собрал папку. Проверьте сессию аккаунта.") from exc
+    if not slug:
+        raise ValueError("Telegram не вернул ссылку addlist")
+    row = {
+        "slug": slug,
+        "url": addlist_url(slug),
+        "filter_id": filter_id,
+        "chat_ids": [int(chat.id) for chat in joined],
+        "title": label,
+        "manual": True,
+    }
+    for chat in joined:
+        set_chat_addlist_slug(chat, slug)
+    plans = _plans_blob(automation)
+    key = str(task_key or "").strip() or "neurocommenting"
+    spec = dict(plans.get(key) or {}) if isinstance(plans.get(key), dict) else {}
+    folders = dict(spec.get("folders") or {})
+    rows = [item for item in (folders.get(str(account.id)) or []) if isinstance(item, dict)]
+    rows.append(row)
+    folders[str(account.id)] = rows
+    spec["folders"] = folders
+    plans[key] = spec
+    attach_addlist_row(plans, account.id, row)
+    _store_plans(automation, plans)
+    await session.commit()
+    job_type = _log_job_type(key)
+    if job_type != "join":
+        await log_active(
+            automation.id,
+            job_type,
+            f"{actor_label(account)} собрал addlist {row['url']} ({len(row['chat_ids'])} чатов)",
+        )
+    if skipped:
+        logger.info("Manual addlist skipped unjoined chats account=%s: %s", account.id, skipped[:8])
+    return {
+        "task_key": key,
+        "task_title": label,
+        "account_id": account.id,
+        "slug": slug,
+        "url": row["url"],
+        "chat_ids": row["chat_ids"],
+        "chat_count": len(row["chat_ids"]),
+        "skipped": skipped,
+    }
+
+
 def list_task_addlists(automation: CustomAutomation | None) -> list[dict[str, Any]]:
     """Collected t.me/addlist links for already-built Telegram folders."""
     if automation is None:
@@ -1765,7 +1885,7 @@ def list_task_addlists(automation: CustomAutomation | None) -> list[dict[str, An
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for task_key, spec in plans.items():
-        if not isinstance(spec, dict):
+        if str(task_key) in _SHARED_PLAN_KEYS or not isinstance(spec, dict):
             continue
         folders = spec.get("folders") or {}
         title = _TASK_TITLES.get(str(task_key), str(task_key))
@@ -1785,7 +1905,7 @@ def list_task_addlists(automation: CustomAutomation | None) -> list[dict[str, An
                 items.append(
                     {
                         "task_key": str(task_key),
-                        "task_title": title,
+                        "task_title": str(row.get("title") or title),
                         "account_id": account_id,
                         "slug": slug,
                         "url": url,

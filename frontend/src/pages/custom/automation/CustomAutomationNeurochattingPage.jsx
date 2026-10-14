@@ -13,7 +13,6 @@ import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './
 import { humanizeUbtLog } from './ubtLogText';
 import { ACTION_DELAY_MAX_SECONDS } from './delayLimits';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
-import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
@@ -389,7 +388,6 @@ const CustomAutomationNeurochattingPage = () => {
             ))}
           </div>
         ) : null}
-        <UbtAddlistLinks automationId={id} taskKey="neurochatting" />
         <UbtDistributeChats
           automationId={id}
           taskKey="neurochatting"

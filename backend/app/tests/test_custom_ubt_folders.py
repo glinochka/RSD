@@ -830,6 +830,13 @@ class TestJobLifecycle:
         assert wave == list(range(1, JOIN_WAVE_MIN + 1))
         short = pick_join_wave([7, 8, 9], rng=Seq())
         assert sorted(short) == [7, 8, 9]
+        refill = pick_join_wave(list(range(1, 40)), rng=Seq(), size=4)
+        assert refill == [1, 2, 3, 4]
+        from app.services.custom.chat_addlist_service import wave_quota_hit
+        assert wave_quota_hit({"joined": 2, "size": 18}, already_joined=2) is False
+        assert wave_quota_hit({"joined": 18, "size": 18}, already_joined=18) is True
+        assert wave_quota_hit({}, already_joined=2) is False
+        assert wave_quota_hit({}, already_joined=16) is True
 
         from datetime import timedelta
 

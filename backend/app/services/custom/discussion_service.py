@@ -26,6 +26,7 @@ from .chat_membership_service import (
     ensure_watcher_membership,
     get_reader_account,
     is_chat_watchable,
+    list_joined_task_chats,
     list_watchable_chats,
     recover_reader_after_error,
 )
@@ -592,21 +593,18 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
         from .task_targets import resolve_task_chat_ids
 
         chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurochatting"))
-        if chat_ids:
-            chats = [
-                chat
-                for chat in (
-                    await session.execute(
-                        select(ChatTarget).where(
-                            ChatTarget.custom_automation_id == automation_id,
-                            ChatTarget.id.in_(chat_ids),
-                            ChatTarget.black_boxed_at.is_(None),
-                        )
-                    )
-                ).scalars().all()
-                if is_group_chat(chat)
-            ]
-        else:
+        chats = [
+            chat
+            for chat in await list_joined_task_chats(
+                session,
+                automation_id,
+                _as_int_list(cfg.get("account_ids")),
+                chat_ids,
+                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
+            )
+            if is_group_chat(chat)
+        ]
+        if not chats:
             chats = [
                 chat
                 for chat in await list_watchable_chats(

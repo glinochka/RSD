@@ -441,8 +441,14 @@ def test_channel_posts_ignore_old_history():
 
     chat = SimpleNamespace(last_message_id=None)
     posts, latest, reason = collect_new_channel_posts([old, stale, fresh], chat, now=now)
-    assert posts == []
+    assert [item.id for item in posts] == [20]
     assert latest == 20
+    assert reason is None
+
+    empty_cursor = SimpleNamespace(last_message_id=None)
+    posts, latest, reason = collect_new_channel_posts([old, stale], empty_cursor, now=now)
+    assert posts == []
+    assert latest == 19
     assert reason == "armed_cursor"
 
     chat.last_message_id = "18"

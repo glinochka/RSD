@@ -20,6 +20,7 @@ from .chat_membership_service import (
     ensure_watcher_membership,
     get_reader_account,
     is_chat_watchable,
+    list_joined_task_chats,
     list_watchable_chats,
     recover_reader_after_error,
     retire_reader_and_replace,
@@ -118,7 +119,11 @@ def set_post_cursor(chat_target, message_id: int) -> None:
 
 
 def collect_new_channel_posts(history, chat_target, *, lab_mode: bool = False, now: datetime | None = None):
-    """Keep only posts the watcher has not seen yet. First scan arms the cursor."""
+    """Keep only posts the watcher has not seen yet.
+
+    First scan comments on a still-fresh post if there is one; otherwise arms
+    the cursor so we do not dump comments on old history.
+    """
     messages = []
     for msg in history or []:
         if not msg or not getattr(msg, "text", None) or getattr(msg, "id", None) is None:
@@ -131,6 +136,9 @@ def collect_new_channel_posts(history, chat_target, *, lab_mode: bool = False, n
         return fresh, latest, None
     cursor = post_cursor_id(chat_target)
     if latest and cursor <= 0:
+        fresh = [item for item in messages if is_fresh_channel_post(item, now=now, lab_mode=False)]
+        if fresh:
+            return [fresh[-1]], latest, None
         return [], latest, "armed_cursor"
     new_posts = [
         item
@@ -685,19 +693,18 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
         from .task_targets import resolve_task_chat_ids
 
         chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurocommenting"))
-        if chat_ids:
-            chats = list(
-                (
-                    await session.execute(
-                        select(ChatTarget).where(
-                            ChatTarget.custom_automation_id == automation_id,
-                            ChatTarget.id.in_(chat_ids),
-                            ChatTarget.black_boxed_at.is_(None),
-                        )
-                    )
-                ).scalars().all()
+        chats = [
+            chat
+            for chat in await list_joined_task_chats(
+                session,
+                automation_id,
+                _as_int_list(cfg.get("account_ids")),
+                chat_ids,
+                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
             )
-        else:
+            if is_broadcast_channel(chat) or not chat.chat_type
+        ]
+        if not chats:
             chats = [
                 chat
                 for chat in await list_watchable_chats(

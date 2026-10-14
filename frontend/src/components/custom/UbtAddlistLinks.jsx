@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import customService from '../../services/customService';
 
-const UbtAddlistLinks = ({ automationId, taskKey, emptyText }) => {
+const UbtAddlistLinks = ({ automationId, taskKey, emptyText, refreshKey }) => {
   const [items, setItems] = useState([]);
   const [copied, setCopied] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -24,7 +24,7 @@ const UbtAddlistLinks = ({ automationId, taskKey, emptyText }) => {
     return () => {
       cancelled = true;
     };
-  }, [automationId, taskKey]);
+  }, [automationId, taskKey, refreshKey]);
 
   if (!items.length) {
     if (!emptyText || !loaded) {
@@ -39,7 +39,7 @@ const UbtAddlistLinks = ({ automationId, taskKey, emptyText }) => {
       {items.map((item) => (
         <div key={`${item.url}-${item.account_id}`} className="nc-addlist-row">
           <a href={item.url} target="_blank" rel="noreferrer">{item.url}</a>
-          <span className="nc-muted">{item.chat_count} чатов{item.task_title ? ` · ${item.task_title}` : ''}</span>
+          <span className="nc-muted">{item.chat_count} чатов{item.task_title ? ` · ${item.task_title}` : ''}{item.account_id ? ` · аккаунт #${item.account_id}` : ''}</span>
           <button
             type="button"
             className="acc-btn acc-btn--ghost"

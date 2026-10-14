@@ -283,17 +283,10 @@ async def _target_chats(session: AsyncSession, automation_id: int, cfg: dict[str
     from .task_targets import resolve_task_chat_ids
 
     pool_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="chat_broadcasts"))
-    only_joined = bool(cfg.get("only_joined", True)) and not pool_ids
-    stmt = select(ChatTarget).where(
-        ChatTarget.custom_automation_id == automation_id,
-        ChatTarget.black_boxed_at.is_(None),
-    )
-    if pool_ids:
-        stmt = stmt.where(ChatTarget.id.in_(pool_ids))
-    elif only_joined:
-        if not accounts:
-            return []
-        joined_ids = (
+    if not accounts:
+        return []
+    joined_ids = set(
+        (
             await session.execute(
                 select(AccountChatMembership.chat_target_id).where(
                     AccountChatMembership.custom_automation_id == automation_id,
@@ -302,11 +295,14 @@ async def _target_chats(session: AsyncSession, automation_id: int, cfg: dict[str
                 )
             )
         ).scalars().all()
-        if not joined_ids:
-            return []
-        stmt = stmt.where(ChatTarget.id.in_(set(joined_ids)))
-    else:
+    )
+    if not joined_ids:
         return []
+    stmt = select(ChatTarget).where(
+        ChatTarget.custom_automation_id == automation_id,
+        ChatTarget.black_boxed_at.is_(None),
+        ChatTarget.id.in_(joined_ids if not pool_ids else (pool_ids & joined_ids)),
+    )
     chats = list((await session.execute(stmt)).scalars().all())
     return [chat for chat in chats if is_group_chat(chat) and not is_paused(chat)]
 

@@ -1327,6 +1327,7 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
         store_join_waves,
         task_join_delay_seconds,
         warmup_task_joins_enabled,
+        wave_quota_hit,
         wave_rest_until,
     )
     from .chat_membership_service import account_is_joined, apply_account_join_cooldown, get_membership
@@ -1362,10 +1363,8 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
         if not account or join_account_is_parked(account) or account_membership_should_idle(account):
             continue
         wave = account_wave_state(automation, account_id, plans)
-        rest_until = parse_wave_rest_until(wave.get("rest_until"))
-        if rest_until and rest_until > now:
-            continue
         pending: list[int] = []
+        already_joined = 0
         for cid in chat_ids:
             chat = await session.get(ChatTarget, cid)
             if not chat or chat.black_boxed_at or (getattr(chat, "mod_status", None) or "") == "moderated":
@@ -1373,8 +1372,15 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
             if chat.comments_open is False:
                 continue
             if await account_is_joined(session, cid, account_id):
+                already_joined += 1
                 continue
             pending.append(cid)
+        rest_until = parse_wave_rest_until(wave.get("rest_until"))
+        if rest_until and rest_until > now:
+            if not pending or wave_quota_hit(wave, already_joined):
+                continue
+            wave["rest_until"] = None
+            dirty = True
         if not pending:
             continue
         wave_ids = [cid for cid in _int_list(wave.get("chat_ids")) if cid in pending]
@@ -1407,7 +1413,8 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
                     rest = wave_rest_until(now)
                     wave = {
                         "chat_ids": [],
-                        "size": len(cover),
+                        "size": max(len(cover), JOIN_WAVE_MIN),
+                        "joined": marked,
                         "started_at": now.isoformat(),
                         "rest_until": rest.isoformat(),
                     }
@@ -1438,11 +1445,17 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
                     if "flood" in type(exc).__name__.lower() or "floodwait" in str(exc).lower():
                         _park_join_flood(account, exc)
                         continue
-            wave_ids = pick_join_wave(pending)
+            leftover = 0
+            prior_joined = int(wave.get("joined") or 0)
+            prior_size = int(wave.get("size") or 0)
+            if prior_size and prior_joined < prior_size and not parse_wave_rest_until(wave.get("rest_until")):
+                leftover = prior_size - prior_joined
+            wave_ids = pick_join_wave(pending, size=leftover or None)
             started_wave = True
             wave = {
                 "chat_ids": wave_ids,
-                "size": len(wave_ids),
+                "size": prior_size if leftover else len(wave_ids),
+                "joined": prior_joined if leftover else 0,
                 "started_at": now.isoformat(),
                 "rest_until": None,
             }
@@ -1480,6 +1493,8 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
         delay = task_join_delay_seconds(automation, delay_task)
         await apply_account_join_cooldown(session, automation_id, account_id, wait_seconds=delay)
         status = str(join_result.get("status") or "")
+        if status == "joined":
+            wave["joined"] = int(wave.get("joined") or 0) + 1
         still = []
         for cid in wave_ids:
             if cid == pick_id and status in {"joined", "blackbox"}:
@@ -1491,52 +1506,77 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
                 continue
             still.append(cid)
         if not still:
-            rest = wave_rest_until(now)
-            wave["chat_ids"] = []
-            wave["rest_until"] = rest.isoformat()
-            for job_type in job_types:
-                await log_active(
-                    automation_id,
-                    job_type,
-                    f"{actor_label(account)} пауза вступлений до {rest.strftime('%d.%m %H:%M')} UTC "
-                    f"(этот и следующий день, все задачи)",
-                )
-            joined_ids = [
-                cid for cid in chat_ids if await account_is_joined(session, cid, account_id)
-            ]
-            if len(joined_ids) >= JOIN_WAVE_MIN:
-                grown_map = {
-                    chat.id: chat
-                    for chat in (
-                        await session.execute(select(ChatTarget).where(ChatTarget.id.in_(joined_ids)))
-                    ).scalars().all()
-                }
-                prior_folders: dict[str, Any] = {}
-                for spec in plans.values():
-                    if not isinstance(spec, dict):
-                        continue
-                    folders = spec.get("folders") if isinstance(spec.get("folders"), dict) else {}
-                    rows = folders.get(str(account_id))
-                    if rows:
-                        prior_folders[str(account_id)] = list(rows)
-                        break
-                grown = await _grow_host_folder_after_join(
-                    session,
-                    host=account,
-                    chat_map=grown_map,
-                    needed_ids=joined_ids,
-                    stored_folders=prior_folders,
-                )
-                if grown:
-                    attach_addlist_row(plans, account_id, grown)
-                    _store_plans(automation, plans)
-                    for job_type in job_types:
-                        await log_active(
-                            automation_id,
-                            job_type,
-                            f"{actor_label(account)} собрал папку t.me/addlist/{grown.get('slug')} "
-                            f"({len(_int_list(grown.get('chat_ids')))} каналов) — другие задачи вступят по ней",
-                        )
+            leftover = []
+            for cid in pending:
+                if cid == pick_id:
+                    continue
+                chat_left = await session.get(ChatTarget, cid)
+                if chat_left is None or chat_left.black_boxed_at or chat_left.comments_open is False:
+                    continue
+                if (getattr(chat_left, "mod_status", None) or "") == "moderated":
+                    continue
+                if await account_is_joined(session, cid, account_id):
+                    continue
+                leftover.append(cid)
+            need = max(0, int(wave.get("size") or JOIN_WAVE_MIN) - int(wave.get("joined") or 0))
+            if leftover and need > 0:
+                extra = pick_join_wave(leftover, size=need)
+                wave["chat_ids"] = extra
+                wave["rest_until"] = None
+                for job_type in job_types:
+                    await log_active(
+                        automation_id,
+                        job_type,
+                        f"{actor_label(account)} добор волны: ещё {len(extra)} вступлений "
+                        f"({int(wave.get('joined') or 0)} уже вошёл сегодня)",
+                    )
+            else:
+                rest = wave_rest_until(now)
+                wave["chat_ids"] = []
+                wave["rest_until"] = rest.isoformat()
+                for job_type in job_types:
+                    await log_active(
+                        automation_id,
+                        job_type,
+                        f"{actor_label(account)} пауза вступлений до {rest.strftime('%d.%m %H:%M')} UTC "
+                        f"(этот и следующий день, все задачи)",
+                    )
+                joined_ids = [
+                    cid for cid in chat_ids if await account_is_joined(session, cid, account_id)
+                ]
+                if len(joined_ids) >= JOIN_WAVE_MIN:
+                    grown_map = {
+                        chat.id: chat
+                        for chat in (
+                            await session.execute(select(ChatTarget).where(ChatTarget.id.in_(joined_ids)))
+                        ).scalars().all()
+                    }
+                    prior_folders: dict[str, Any] = {}
+                    for spec in plans.values():
+                        if not isinstance(spec, dict):
+                            continue
+                        folders = spec.get("folders") if isinstance(spec.get("folders"), dict) else {}
+                        rows = folders.get(str(account_id))
+                        if rows:
+                            prior_folders[str(account_id)] = list(rows)
+                            break
+                    grown = await _grow_host_folder_after_join(
+                        session,
+                        host=account,
+                        chat_map=grown_map,
+                        needed_ids=joined_ids,
+                        stored_folders=prior_folders,
+                    )
+                    if grown:
+                        attach_addlist_row(plans, account_id, grown)
+                        _store_plans(automation, plans)
+                        for job_type in job_types:
+                            await log_active(
+                                automation_id,
+                                job_type,
+                                f"{actor_label(account)} собрал папку t.me/addlist/{grown.get('slug')} "
+                                f"({len(_int_list(grown.get('chat_ids')))} каналов) — другие задачи вступят по ней",
+                            )
         else:
             wave["chat_ids"] = still
             if started_wave:

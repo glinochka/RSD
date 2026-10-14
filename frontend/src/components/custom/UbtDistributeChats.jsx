@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import customService from '../../services/customService';
+import UbtAddlistLinks from './UbtAddlistLinks';
 
 const TASK_CHATS_PER_ACCOUNT = 50;
 const KIND_HINT = {
@@ -77,13 +78,26 @@ const MixBar = ({ mix = [] }) => {
   );
 };
 
-const ChatChip = ({ chat }) => {
+const ChatChip = ({ chat, picked, onToggle }) => {
   const title = chat.title || chat.link || `#${chat.id}`;
   const label = chat.folder_name ? `${chat.folder_name} · ${title}` : title;
+  if (!onToggle) {
+    return (
+      <span className={`nc-pool-chip ${chat.joined ? 'is-joined' : ''}`} title={chat.link || label}>
+        {chat.joined ? 'вступил · ' : ''}{label}
+      </span>
+    );
+  }
   return (
-    <span className={`nc-pool-chip ${chat.joined ? 'is-joined' : ''}`} title={chat.link || label}>
-      {chat.joined ? 'вступил · ' : ''}{label}
-    </span>
+    <button
+      type="button"
+      className={`nc-pool-chip ${chat.joined ? 'is-joined' : ''} ${picked ? 'is-picked' : ''}`}
+      title={chat.joined ? 'Добавить в addlist' : 'Сначала нужно вступить'}
+      disabled={!chat.joined}
+      onClick={() => chat.joined && onToggle(chat.id)}
+    >
+      {picked ? 'выбран · ' : chat.joined ? 'вступил · ' : ''}{label}
+    </button>
   );
 };
 
@@ -107,7 +121,9 @@ const UbtDistributeChats = ({
   const [showReserve, setShowReserve] = useState(false);
   const [pickedAccounts, setPickedAccounts] = useState([]);
   const [pickedFolders, setPickedFolders] = useState([]);
+  const [pickedChats, setPickedChats] = useState({});
   const [messageHint, setMessageHint] = useState(null);
+  const [addlistRefresh, setAddlistRefresh] = useState(0);
 
   const loadPool = useCallback(async () => {
     if (!automationId || !taskKey) {
@@ -275,6 +291,38 @@ const UbtDistributeChats = ({
     setList((prev) => (prev.includes(ident) ? prev.filter((item) => item !== ident) : [...prev, ident]));
   };
 
+  const toggleChat = (accountId, chatId) => {
+    setPickedChats((prev) => {
+      const current = prev[accountId] || [];
+      const next = current.includes(chatId) ? current.filter((id) => id !== chatId) : [...current, chatId];
+      return { ...prev, [accountId]: next };
+    });
+  };
+
+  const makeAddlist = async (account) => {
+    const ids = pickedChats[account.id] || [];
+    if (!ids.length) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await customService.createTaskAddlist(automationId, {
+        accountId: account.id,
+        chatIds: ids,
+        taskKey,
+        title: account.label || account.username || '',
+      });
+      setPickedChats((prev) => ({ ...prev, [account.id]: [] }));
+      setAddlistRefresh((prev) => prev + 1);
+      setMessageHint(`Addlist готов: ${data.url} (${data.chat_count} чатов)`);
+    } catch (err) {
+      setError(err.message || 'Не удалось собрать addlist');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="nc-pool">
       <div className="nc-pool-head">
@@ -308,6 +356,7 @@ const UbtDistributeChats = ({
       <p className="nc-hint">
         {KIND_HINT[resourceKind] || KIND_HINT.any} До {cap} на аккаунт, остальные — запас.
         Новые папки лучше добавлять кнопкой «Папки». Уже вступившие остаются у своих аккаунтов; если аккаунт уже работал в папке, она к нему возвращается.
+        Комментарии идут в каналы, куда аккаунт уже вошёл, не дожидаясь полной пятидесятки. Addlist можно собрать вручную: откройте аккаунт и отметьте вступившие.
       </p>
       {messageHint ? <p className="acc-flash">{messageHint}</p> : null}
       {error && !open && !picker ? <p className="acc-flash acc-flash--error">{error}</p> : null}
@@ -338,8 +387,27 @@ const UbtDistributeChats = ({
                 {openRow ? (
                   <div className="nc-pool-chips">
                     {(item.assigned || []).length
-                      ? item.assigned.map((chat) => <ChatChip key={chat.id} chat={chat} />)
+                      ? item.assigned.map((chat) => (
+                        <ChatChip
+                          key={chat.id}
+                          chat={chat}
+                          picked={(pickedChats[item.id] || []).includes(chat.id)}
+                          onToggle={(chatId) => toggleChat(item.id, chatId)}
+                        />
+                      ))
                       : <span className="nc-muted">Пока пусто — нажмите «Перемешать» или «Вручную»</span>}
+                    {(pickedChats[item.id] || []).length ? (
+                      <button
+                        type="button"
+                        className="acc-btn acc-btn--ghost"
+                        disabled={busy}
+                        onClick={() => makeAddlist(item)}
+                      >
+                        {busy ? 'Собираем…' : `Собрать addlist (${pickedChats[item.id].length})`}
+                      </button>
+                    ) : (item.joined_count ? (
+                      <span className="nc-muted">Отметьте вступившие — соберём addlist для повторного входа</span>
+                    ) : null)}
                   </div>
                 ) : null}
               </div>
@@ -364,6 +432,12 @@ const UbtDistributeChats = ({
           </div>
         </div>
       )}
+      <UbtAddlistLinks
+        automationId={automationId}
+        taskKey={taskKey}
+        refreshKey={addlistRefresh}
+        emptyText="После вступлений здесь появятся addlist-ссылки. Можно собрать вручную из вступивших каналов."
+      />
 
       {picker === 'accounts' ? (
         <div className="nc-modal-backdrop" onClick={() => setPicker(null)}>

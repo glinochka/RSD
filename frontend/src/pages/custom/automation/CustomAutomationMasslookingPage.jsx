@@ -14,7 +14,6 @@ import { humanizeUbtLog } from './ubtLogText';
 import { DELAY_MAX_SECONDS } from './delayLimits';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
-import UbtAddlistLinks from '../../../components/custom/UbtAddlistLinks';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
@@ -351,7 +350,6 @@ const CustomAutomationMasslookingPage = () => {
             {chosenChats.length ? (
               <p className="nc-muted" style={{ marginTop: 8 }}>Из папок: {chosenChats.map((item) => item.title).join(', ')}</p>
             ) : null}
-            <UbtAddlistLinks automationId={id} taskKey="masslooking" />
             <UbtDistributeChats
               automationId={id}
               taskKey="masslooking"
