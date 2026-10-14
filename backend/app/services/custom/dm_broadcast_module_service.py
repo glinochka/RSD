@@ -14,7 +14,12 @@ from ...alembic.models import (
     SocialAccount,
 )
 from .account_roles import account_is_task_ready
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import (
+    COMMENT_GAP_MAX_DEFAULT,
+    COMMENT_GAP_MIN_DEFAULT,
+    DELAY_MAX_SECONDS,
+    apply_account_pacing,
+)
 from .chat_broadcast_service import normalize_broadcast_messages
 from .job_service import list_jobs
 from .proxy_service import proxy_label
@@ -35,6 +40,9 @@ DEFAULT_DM_SETTINGS: dict[str, Any] = {
     "respect_night_hours": True,
     "work_mode": "count",
     "max_messages": 100,
+    "max_per_account": 15,
+    "comment_delay_min": COMMENT_GAP_MIN_DEFAULT,
+    "comment_delay_max": COMMENT_GAP_MAX_DEFAULT,
     "delay_peer_min": 30,
     "delay_peer_max": 90,
     "delay_msg_min": 3,
@@ -130,6 +138,7 @@ def normalize_dm_settings(raw: Any) -> dict[str, Any]:
         data["delay_msg_min"],
         _clamp_int(incoming.get("delay_msg_max") if incoming.get("delay_msg_max") is not None else 8, 8, lo=0, hi=DELAY_MAX_SECONDS),
     )
+    apply_account_pacing(data, incoming, cap_default=15)
     data["errors_until_stop"] = _clamp_int(incoming.get("errors_until_stop") or 10, 10, lo=1, hi=50)
     data["end_at"] = str(incoming.get("end_at") or "").strip()[:32]
     data["require_proxy"] = bool(incoming.get("require_proxy"))

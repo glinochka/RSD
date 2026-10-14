@@ -5,6 +5,7 @@ import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
 import Stepper from '../../../components/custom/UbtStepper';
+import UbtAccountPacing from '../../../components/custom/UbtAccountPacing';
 import customService from '../../../services/customService';
 import { toggleNumericId, ubtModulePath } from './customNav';
 import { DELAY_MAX_SECONDS } from './delayLimits';
@@ -365,6 +366,7 @@ const CustomAutomationDmBroadcastsPage = () => {
           <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.rec)}>Рекомендуемые</button>
           <button type="button" className="nc-chip" onClick={() => patch(DELAY_PRESETS.max)}>Медленнее</button>
         </div>
+        <UbtAccountPacing settings={settings} onPatch={patch} noun="диалогов" />
         <div className="nc-row" style={{ marginTop: 12 }}>
           <UbtCheck checked={Boolean(settings.skip_sent)} onChange={(value) => persistFlag({ skip_sent: value })}>Пропускать уже отправленные</UbtCheck>
           <UbtCheck checked={Boolean(settings.skip_errors)} onChange={(value) => persistFlag({ skip_errors: value })}>Пропускать ошибки</UbtCheck>

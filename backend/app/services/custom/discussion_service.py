@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .module_delays import clamp_action_delay_pair
+from .module_delays import action_gap_seconds, clamp_action_delay_pair, daily_account_cap
 from .chat_scope import (
     apply_entity_metadata,
     commit_chat_scan,
@@ -33,9 +33,9 @@ from .chat_membership_service import (
 from .conversation_guard import sanitize_public_text
 from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
 from .prompt_service import render_prompt
-from .account_pacing import account_should_idle, farm_overlap_active_hours
+from .account_pacing import account_is_resting, account_should_idle, farm_overlap_active_hours, schedule_account_target_rest
 from .module_account_filters import no_accounts_picked, skip_account_for_module
-from .rotation_service import record_successful_send
+from .rotation_service import current_daily_messages_sent, record_successful_send
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -287,7 +287,7 @@ async def _assigned_account_for_thread(
         return None
     if account_should_idle(account):
         return None
-    if account.daily_messages_sent >= max_daily:
+    if current_daily_messages_sent(account) >= max_daily:
         return None
     if not account.session_file_path:
         return None
@@ -496,6 +496,10 @@ async def process_chat_target(
     account = reader
     if not account or not account.session_file_path:
         return await _skip_chat(session, chat_target, "no_account")
+    if account_is_resting(account) or account_should_idle(account):
+        return await _skip_chat(session, chat_target, "account_rest")
+    if current_daily_messages_sent(account) >= max_daily:
+        return await _skip_chat(session, chat_target, "account_cap")
     joined = await account_is_joined(session, chat_target.id, account.id)
     if not joined:
         if only_joined or not is_public_readable(chat_target):
@@ -510,7 +514,7 @@ async def process_chat_target(
     for index, msg in enumerate(messages):
         if sent >= replies_this_run or sent_today + sent >= chat_limit:
             break
-        if account.daily_messages_sent >= max_daily:
+        if current_daily_messages_sent(account) >= max_daily:
             break
         sender = getattr(msg, "sender", None)
         sender_username = getattr(sender, "username", None)
@@ -539,7 +543,7 @@ async def process_chat_target(
             continue
 
         chosen = account
-        if not chosen or chosen.daily_messages_sent >= max_daily or not chosen.session_file_path:
+        if not chosen or current_daily_messages_sent(chosen) >= max_daily or not chosen.session_file_path:
             continue
         if not await account_is_joined(session, chat_target.id, chosen.id) and (only_joined or not is_public_readable(chat_target)):
             continue
@@ -564,6 +568,7 @@ async def process_chat_target(
         success = await _send_reply(session, automation_id, chat_target, chosen, msg, reply)
         if success:
             sent += 1
+            schedule_account_target_rest(chosen, seconds=action_gap_seconds(cfg))
             if chosen is not account:
                 await session.commit()
 
@@ -589,7 +594,9 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "replies_sent": 0}
         if no_accounts_picked(cfg):
             return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "replies_sent": 0}
-        max_daily = automation.max_daily_messages_per_account
+        cap = daily_account_cap(cfg, cap_default=15)
+        farm = int(automation.max_daily_messages_per_account or 0)
+        max_daily = min(farm, cap) if farm > 0 else cap
         from .task_targets import resolve_task_chat_ids
 
         chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurochatting"))

@@ -171,6 +171,31 @@ def _public_params(raw: Any) -> dict[str, Any]:
     return data
 
 
+_PACING_JOB_TYPES = {
+    "neurocommenting",
+    "discussion",
+    "shilling",
+    "chat_broadcast",
+    "dm_broadcast",
+}
+
+
+def _fill_pacing_params(job_type: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Show daily-cap / pause keys even on jobs launched before those fields existed."""
+    from .module_delays import apply_account_pacing, clamp_join_delay_pair
+
+    data = dict(params or {})
+    if job_type in _PACING_JOB_TYPES:
+        filled: dict[str, Any] = {}
+        apply_account_pacing(filled, data, cap_default=15)
+        for key, value in filled.items():
+            if data.get(key) in (None, ""):
+                data[key] = value
+    if job_type in JOIN_JOB_TYPES:
+        data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(data)
+    return data
+
+
 def _stamp_joins_complete(items: list[dict[str, Any]], automation: CustomAutomation | None) -> None:
     if not items:
         return
@@ -384,7 +409,7 @@ def serialize_custom(job: CustomJob) -> dict[str, Any]:
         created_at=job.created_at,
         started_at=job.started_at or job.created_at,
         completed_at=None if status == PAUSED_STATUS else job.completed_at,
-        params=_public_params(job.params),
+        params=_fill_pacing_params(job.job_type, _public_params(job.params)),
         result=job.result or {},
         logs=job.logs or [],
         error=job.error,
@@ -533,6 +558,10 @@ async def spawn_job(
     title: str | None = None,
 ) -> int:
     meta = JOB_META.get(job_type, {"category": "module", "title": job_type})
+    raw = dict(params or {})
+    if job_type in MODULE_BINDINGS or job_type == "warmup":
+        raw = _public_params(_normalize_module_params(job_type, raw))
+    raw = _fill_pacing_params(job_type, _public_params(raw))
     async with async_session_maker() as session:
         job = CustomJob(
             custom_automation_id=automation_id,
@@ -540,7 +569,7 @@ async def spawn_job(
             job_type=job_type,
             title=title or meta["title"],
             status="pending",
-            params=params or {},
+            params=raw,
             result={},
             logs=[{"ts": _iso(_utc_now()), "level": "info", "message": "Задача поставлена в очередь"}],
             created_at=_utc_now(),

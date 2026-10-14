@@ -25,7 +25,46 @@ const STATUS_LABELS = {
 };
 
 const SKIP_EDIT_KEYS = new Set(['presets', 'enabled', 'joins_complete', 'chat_assignments', 'reserve_chat_ids']);
-const HIDE_PARAM_KEYS = new Set(['presets', 'chat_assignments', 'reserve_chat_ids']);
+const HIDE_PARAM_KEYS = new Set([
+  'presets',
+  'chat_assignments',
+  'reserve_chat_ids',
+  'account_ids',
+  'chat_ids',
+  'folder_ids',
+  'channel_ids',
+  'blacklisted_account_ids',
+  'keywords',
+  'messages',
+  'recipients',
+  'joins_complete',
+  'enabled',
+]);
+const MINUTE_PARAM_KEYS = new Set([
+  'join_delay_min',
+  'join_delay_max',
+  'comment_delay_min',
+  'comment_delay_max',
+  'delay_before_min',
+  'delay_before_max',
+]);
+const PARAM_ORDER = [
+  'max_per_account',
+  'comment_delay_min',
+  'comment_delay_max',
+  'max_per_chat',
+  'max_replies_per_run',
+  'join_delay_min',
+  'join_delay_max',
+  'delay_before_min',
+  'delay_before_max',
+  'probability',
+  'post_filter',
+  'min_words',
+  'respect_night_hours',
+  'require_proxy',
+  'hide_in_work',
+];
 const JOB_TASK_KEY = {
   neurocommenting: 'neurocommenting',
   discussion: 'neurochatting',
@@ -37,10 +76,10 @@ const JOB_TASK_KEY = {
 };
 const EXTRA_EDIT_FIELDS = {
   neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, max_per_account: 15 },
-  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, probability: 30, max_per_chat: 1 },
-  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400 },
-  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400 },
-  dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8 },
+  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 30, max_per_chat: 1, max_per_account: 15 },
+  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
+  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
+  dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
   masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 1200, join_delay_max: 2400, max_per_account: 50 },
   masspriming: { delay_min: 8, delay_max: 25, max_per_account: 20 },
   parser: { delay_chat: 5, delay_user: 1, join_delay_min: 1200, join_delay_max: 2400, member_limit: 1000 },
@@ -60,15 +99,24 @@ const formatParamValue = (value) => {
   return String(value);
 };
 
-const formatShownParam = (value) => {
+const formatShownParam = (key, value) => {
   if (typeof value === 'boolean') {
     return value ? 'Да' : 'Нет';
   }
-  if (typeof value === 'object') {
+  if (MINUTE_PARAM_KEYS.has(key) && Number.isFinite(Number(value))) {
+    const mins = Math.max(1, Math.round(Number(value) / 60));
+    return `${mins} мин`;
+  }
+  if (Array.isArray(value) || (value && typeof value === 'object')) {
     return JSON.stringify(value);
   }
   return String(value);
 };
+
+const shownParams = (job) => ({
+  ...(EXTRA_EDIT_FIELDS[job?.job_type] || {}),
+  ...(job?.params || {}),
+});
 
 const parseParamValue = (raw, original) => {
   if (typeof original === 'boolean') {
@@ -153,9 +201,32 @@ const formatDuration = (seconds) => {
   return `${hours} ч ${mins % 60} мин`;
 };
 
-const paramEntries = (params) => Object.entries(params || {}).filter(([key, value]) => (
-  value !== undefined && value !== null && value !== '' && !HIDE_PARAM_KEYS.has(key)
-));
+const paramEntries = (params) => {
+  const entries = Object.entries(params || {}).filter(([key, value]) => {
+    if (HIDE_PARAM_KEYS.has(key) || value === undefined || value === null || value === '') {
+      return false;
+    }
+    if (Array.isArray(value) && value.length === 0) {
+      return false;
+    }
+    return true;
+  });
+  entries.sort((a, b) => {
+    const ia = PARAM_ORDER.indexOf(a[0]);
+    const ib = PARAM_ORDER.indexOf(b[0]);
+    if (ia === -1 && ib === -1) {
+      return 0;
+    }
+    if (ia === -1) {
+      return 1;
+    }
+    if (ib === -1) {
+      return -1;
+    }
+    return ia - ib;
+  });
+  return entries;
+};
 const resultEntries = (result) => paramEntries(result).filter(([key]) => key !== 'items');
 
 const CustomAutomationTasksPage = () => {
@@ -387,12 +458,12 @@ const CustomAutomationTasksPage = () => {
                     ))}
                   </div>
                 </div>
-              ) : paramEntries(selected.params).length ? (
+              ) : paramEntries(shownParams(selected)).length ? (
                 <div>
                   <div className="tsk-section-label">Параметры запуска</div>
                   <dl className="tsk-kv">
-                    {paramEntries(selected.params).map(([key, value]) => (
-                      <div key={key}><dt>{paramLabel(key)}</dt><dd>{formatShownParam(value)}</dd></div>
+                    {paramEntries(shownParams(selected)).map(([key, value]) => (
+                      <div key={key}><dt>{paramLabel(key)}</dt><dd>{formatShownParam(key, value)}</dd></div>
                     ))}
                   </dl>
                 </div>

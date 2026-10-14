@@ -6,6 +6,7 @@ import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
 import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
+import UbtAccountPacing from '../../../components/custom/UbtAccountPacing';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -490,6 +491,7 @@ const CustomAutomationChatBroadcastsPage = () => {
             <Stepper value={settings.delay_msg_max} min={settings.delay_msg_min} max={DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_msg_max: value })} />
             <span className="nc-muted">с</span>
           </div>
+          <UbtAccountPacing settings={settings} onPatch={patch} noun="рассылок" />
           <UbtJoinDelay settings={settings} onPatch={patch} />
           <div className="nc-card-head"><h2>Объём рассылки</h2></div>
           <div className="nc-mode">

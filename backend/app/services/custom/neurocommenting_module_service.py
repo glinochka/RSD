@@ -28,8 +28,8 @@ from .module_delays import (
     COMMENT_GAP_MIN_DEFAULT,
     JOIN_DELAY_MAX_DEFAULT,
     JOIN_DELAY_MIN_DEFAULT,
+    apply_account_pacing,
     clamp_action_delay_pair,
-    clamp_comment_gap_pair,
     clamp_join_delay_pair,
 )
 from .neurocommenting_service import (
@@ -104,11 +104,7 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
         data["min_words"] = max(0, min(2000, int(incoming.get("min_words") or 0)))
     except (TypeError, ValueError):
         data["min_words"] = 0
-    try:
-        max_account = incoming.get("max_per_account")
-        data["max_per_account"] = max(1, min(200, int(max_account))) if max_account not in (None, "") else 15
-    except (TypeError, ValueError):
-        data["max_per_account"] = 15
+    apply_account_pacing(data, incoming, cap_default=15)
     try:
         data["max_per_chat"] = max(1, min(50, int(incoming.get("max_per_chat") or 10)))
     except (TypeError, ValueError):
@@ -119,7 +115,6 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
         default_max=POST_COMMENT_DELAY_MAX_SECONDS,
     )
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
-    data["comment_delay_min"], data["comment_delay_max"] = clamp_comment_gap_pair(incoming)
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))

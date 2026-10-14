@@ -22,7 +22,15 @@ from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
 from .discussion_service import DEFAULT_DISCUSSION_PROMPT
 from .job_service import list_jobs
-from .module_delays import JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_action_delay_pair, clamp_join_delay_pair
+from .module_delays import (
+    COMMENT_GAP_MAX_DEFAULT,
+    COMMENT_GAP_MIN_DEFAULT,
+    JOIN_DELAY_MAX_DEFAULT,
+    JOIN_DELAY_MIN_DEFAULT,
+    apply_account_pacing,
+    clamp_action_delay_pair,
+    clamp_join_delay_pair,
+)
 from .lead_keywords import normalize_lead_keywords
 from .prompt_service import activate_prompt, create_named_prompt, list_prompts
 from .account_roles import account_is_task_ready
@@ -40,6 +48,7 @@ DEFAULT_CHAT_SETTINGS: dict[str, Any] = {
     "work_mode": "count",
     "work_always": False,
     "max_per_chat": 1,
+    "max_per_account": 15,
     "max_replies_per_run": 1,
     "only_joined": False,
     "respect_night_hours": True,
@@ -47,6 +56,8 @@ DEFAULT_CHAT_SETTINGS: dict[str, Any] = {
     "delay_before_max": 78,
     "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
     "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
+    "comment_delay_min": COMMENT_GAP_MIN_DEFAULT,
+    "comment_delay_max": COMMENT_GAP_MAX_DEFAULT,
     "prompt_id": None,
     "require_proxy": False,
     "hide_in_work": False,
@@ -112,6 +123,7 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
         incoming, default_min=42, default_max=78
     )
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
+    apply_account_pacing(data, incoming, cap_default=15)
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))
     try:

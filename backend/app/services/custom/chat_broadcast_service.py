@@ -20,12 +20,12 @@ from .account_pacing import (
     schedule_account_target_rest,
 )
 from .module_account_filters import no_accounts_picked, skip_account_for_module
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, action_gap_seconds, daily_account_cap
 from .chat_membership_service import account_is_joined
 from .chat_scope import is_group_chat, is_paused
 from .conversation_guard import sanitize_public_text
 from .human_dm import human_send_public
-from .rotation_service import record_successful_send
+from .rotation_service import current_daily_messages_sent, record_successful_send
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from .telegram_invite import chat_entity_key
@@ -271,6 +271,8 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
             continue
         if account_should_idle(account):
             continue
+        if current_daily_messages_sent(account) >= daily_account_cap(cfg, cap_default=15):
+            continue
         if not account.session_file_path:
             continue
         if not (_media_root() / account.session_file_path).exists():
@@ -383,6 +385,8 @@ async def run_chat_broadcast_pass(automation_id: int, run_config: dict[str, Any]
                     continue
                 if not await account_is_joined(session, chat.id, picked.id):
                     continue
+                if current_daily_messages_sent(picked) >= daily_account_cap(cfg, cap_default=15):
+                    break
                 factor = activity_interval_scale(picked) if warmup_slow else 1
                 chain = list(messages)
                 if first_mode == "ai":
@@ -413,14 +417,14 @@ async def run_chat_broadcast_pass(automation_id: int, run_config: dict[str, Any]
                         consecutive_errors += 1
                         if not skip_errors or consecutive_errors >= errors_until_stop:
                             if bool(cfg.get("limit_rate", True)):
-                                schedule_account_target_rest(picked)
+                                schedule_account_target_rest(picked, seconds=action_gap_seconds(cfg))
                                 await session.commit()
                             return {"status": "stopped", "reason": "errors", "sent": sent, "chats": chats_ok}
                         break
                 if ok_chat:
                     chats_ok += 1
                     if bool(cfg.get("limit_rate", True)):
-                        schedule_account_target_rest(picked)
+                        schedule_account_target_rest(picked, seconds=action_gap_seconds(cfg))
                         await session.commit()
                     await asyncio.sleep(random.uniform(g_lo, g_hi) * factor)
             if sent >= max_messages:

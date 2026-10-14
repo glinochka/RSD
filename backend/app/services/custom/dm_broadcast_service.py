@@ -15,15 +15,16 @@ from .account_pacing import (
     activity_interval_scale,
     account_should_idle,
     farm_overlap_active_hours,
+    schedule_account_target_rest,
 )
 from .module_account_filters import no_accounts_picked, skip_account_for_module
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, action_gap_seconds, daily_account_cap
 from .chat_broadcast_service import apply_spintax, normalize_broadcast_messages
 from .conversation_guard import sanitize_public_text
 from .dm_broadcast_module_service import ACTION, normalize_dm_recipients, normalize_dm_settings
 from .human_dm import human_send_reply
 from .humanization_session import inspect_peer_profile
-from .rotation_service import record_successful_send
+from .rotation_service import current_daily_messages_sent, record_successful_send
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import AutomationActionLog, CustomAutomation, PoolAccount, SocialAccount
@@ -140,6 +141,8 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
         if skip_account_for_module(cfg, account, _pool):
             continue
         if account_should_idle(account):
+            continue
+        if current_daily_messages_sent(account) >= daily_account_cap(cfg, cap_default=15):
             continue
         if not account.session_file_path:
             continue
@@ -303,6 +306,8 @@ async def run_dm_broadcast_pass(automation_id: int, run_config: dict[str, Any] |
                     continue
                 if account_should_idle(picked):
                     continue
+                if current_daily_messages_sent(picked) >= daily_account_cap(cfg, cap_default=15):
+                    break
                 factor = activity_interval_scale(picked)
                 chain = list(messages)
                 if first_mode == "ai":
@@ -336,6 +341,8 @@ async def run_dm_broadcast_pass(automation_id: int, run_config: dict[str, Any] |
                         break
                 if ok_peer:
                     peers_ok += 1
+                    schedule_account_target_rest(picked, seconds=action_gap_seconds(cfg))
+                    await session.commit()
                     await asyncio.sleep(random.uniform(p_lo, p_hi) * factor)
             if sent >= max_messages:
                 break

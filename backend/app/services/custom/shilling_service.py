@@ -21,13 +21,18 @@ from .chat_membership_service import (
     is_chat_watchable,
     list_watchable_chats,
 )
-from .account_pacing import account_active_window, in_account_active_hours
+from .account_pacing import account_active_window, in_account_active_hours, schedule_account_target_rest
 from .module_account_filters import no_accounts_picked, skip_account_for_module
-from .module_delays import DELAY_MAX_SECONDS
+from .module_delays import DELAY_MAX_SECONDS, action_gap_seconds, daily_account_cap
 from .conversation_guard import sanitize_public_text
 from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
-from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
+from .rotation_service import (
+    accounts_are_distinct,
+    current_daily_messages_sent,
+    record_successful_send,
+    select_account_for_action,
+)
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry, is_comments_unusable
@@ -294,6 +299,8 @@ async def _pick_speaker_pair(
         if account.id in blocked:
             excluded.add(account.id)
         if skip_account_for_module(cfg, account, pool):
+            excluded.add(account.id)
+        if current_daily_messages_sent(account) >= daily_account_cap(cfg, cap_default=15):
             excluded.add(account.id)
         if bool(cfg.get("skip_fresh")) and account_humanization_stage(account) == STAGE_CAUTIOUS:
             excluded.add(account.id)
@@ -685,6 +692,9 @@ async def perform_shilling_dialogue(
         },
     )
     await _leave_shilling_guests(session, chat_target, [account_a, account_b])
+    gap_cfg = _module_cfg(automation)
+    schedule_account_target_rest(account_a, seconds=action_gap_seconds(gap_cfg))
+    schedule_account_target_rest(account_b, seconds=action_gap_seconds(gap_cfg))
     return {
         "status": "ok",
         "setup_account_id": account_a.id,

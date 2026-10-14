@@ -494,6 +494,12 @@ class TestJobLifecycle:
         assert live["can_edit"] is True
         assert live["can_cancel"] is True
         assert "presets" not in live["params"]
+        assert live["params"]["max_per_account"] == 15
+        assert live["params"]["comment_delay_min"] == 20 * 60
+        assert live["params"]["comment_delay_max"] == 40 * 60
+        assert live["params"]["join_delay_min"] == 20 * 60
+        assert live["params"]["join_delay_max"] == 40 * 60
+        assert live["params"]["delay_before_min"] == 90
 
         running.status = PAUSED_STATUS
         paused = serialize_custom(running)
@@ -633,6 +639,21 @@ class TestJobLifecycle:
         migrated = normalize_nc_settings({"join_delay_min": 180, "join_delay_max": 240})
         assert migrated["join_delay_min"] == JOIN_DELAY_MIN_DEFAULT
         assert migrated["join_delay_max"] == 40 * 60
+
+        from app.services.custom.chat_broadcast_module_service import normalize_bc_settings
+        from app.services.custom.dm_broadcast_module_service import normalize_dm_settings
+        from app.services.custom.neurochatting_module_service import normalize_chat_settings
+        from app.services.custom.neuroshilling_module_service import normalize_shill_settings
+
+        for normalized in (
+            normalize_chat_settings({}),
+            normalize_shill_settings({}),
+            normalize_bc_settings({}),
+            normalize_dm_settings({}),
+        ):
+            assert normalized["max_per_account"] == 15
+            assert normalized["comment_delay_min"] == 20 * 60
+            assert normalized["comment_delay_max"] == 40 * 60
 
     def test_folder_grows_chat_ids_instead_of_resetting(self):
         from app.services.custom.chat_addlist_service import merge_folder_chat_ids

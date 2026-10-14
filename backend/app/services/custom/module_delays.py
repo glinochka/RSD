@@ -1,4 +1,5 @@
 """Shared delay caps for UBT module settings (seconds)."""
+import random
 from typing import Any
 
 DELAY_MAX_SECONDS = 90 * 60
@@ -73,3 +74,25 @@ def clamp_comment_gap_pair(incoming: Any) -> tuple[int, int]:
     lo = max(60, min(DELAY_MAX_SECONDS, lo))
     hi = max(lo, min(DELAY_MAX_SECONDS, hi))
     return lo, hi
+
+
+def apply_account_pacing(data: dict[str, Any], incoming: Any, *, cap_default: int = 15) -> None:
+    """Daily cap + pause between actions for any UBT module."""
+    raw = incoming if isinstance(incoming, dict) else {}
+    try:
+        cap = raw.get("max_per_account")
+        data["max_per_account"] = max(1, min(200, int(cap))) if cap not in (None, "") else int(cap_default)
+    except (TypeError, ValueError):
+        data["max_per_account"] = int(cap_default)
+    data["comment_delay_min"], data["comment_delay_max"] = clamp_comment_gap_pair(raw)
+
+
+def daily_account_cap(incoming: Any, *, cap_default: int = 15) -> int:
+    data: dict[str, Any] = {}
+    apply_account_pacing(data, incoming, cap_default=cap_default)
+    return int(data["max_per_account"])
+
+
+def action_gap_seconds(incoming: Any) -> float:
+    lo, hi = clamp_comment_gap_pair(incoming)
+    return random.uniform(lo, hi)

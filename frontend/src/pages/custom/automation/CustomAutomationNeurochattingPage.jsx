@@ -6,6 +6,7 @@ import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
 import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
+import UbtAccountPacing from '../../../components/custom/UbtAccountPacing';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
@@ -313,6 +314,7 @@ const CustomAutomationNeurochattingPage = () => {
             <span className="nc-muted">Макс. сообщений на группу / день</span>
             <Stepper value={settings.max_per_chat} min={1} max={20} onChange={(value) => patch({ max_per_chat: value })} />
           </div>
+          <UbtAccountPacing settings={settings} onPatch={patch} noun="ответов" />
           {settings.work_mode === 'time' ? (
             <div style={{ marginTop: 12 }}>
               <FeatureToggle compact title="Работать всегда" description="Игнорировать окна активности. Ночной простой по Москве можно оставить отдельно." checked={Boolean(settings.work_always)} onChange={(value) => persistFlag({ work_always: value })} />
