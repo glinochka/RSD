@@ -23,7 +23,15 @@ from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .job_service import list_jobs
 from .lead_keywords import normalize_lead_keywords
-from .module_delays import JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_action_delay_pair, clamp_join_delay_pair
+from .module_delays import (
+    COMMENT_GAP_MAX_DEFAULT,
+    COMMENT_GAP_MIN_DEFAULT,
+    JOIN_DELAY_MAX_DEFAULT,
+    JOIN_DELAY_MIN_DEFAULT,
+    clamp_action_delay_pair,
+    clamp_comment_gap_pair,
+    clamp_join_delay_pair,
+)
 from .neurocommenting_service import (
     DEFAULT_NEUROCOMMENTING_PROMPT,
     POST_COMMENT_DELAY_MAX_SECONDS,
@@ -41,10 +49,12 @@ DEFAULT_NC_SETTINGS: dict[str, Any] = {
     "keywords": [],
     "probability": 100,
     "min_words": 0,
-    "max_per_account": None,
+    "max_per_account": 15,
     "max_per_chat": 10,
     "delay_before_min": POST_COMMENT_DELAY_MIN_SECONDS,
     "delay_before_max": POST_COMMENT_DELAY_MAX_SECONDS,
+    "comment_delay_min": COMMENT_GAP_MIN_DEFAULT,
+    "comment_delay_max": COMMENT_GAP_MAX_DEFAULT,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
     "reserve_chat_ids": [],
@@ -96,9 +106,9 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
         data["min_words"] = 0
     try:
         max_account = incoming.get("max_per_account")
-        data["max_per_account"] = max(1, min(200, int(max_account))) if max_account not in (None, "") else None
+        data["max_per_account"] = max(1, min(200, int(max_account))) if max_account not in (None, "") else 15
     except (TypeError, ValueError):
-        data["max_per_account"] = None
+        data["max_per_account"] = 15
     try:
         data["max_per_chat"] = max(1, min(50, int(incoming.get("max_per_chat") or 10)))
     except (TypeError, ValueError):
@@ -109,6 +119,7 @@ def normalize_nc_settings(raw: Any) -> dict[str, Any]:
         default_max=POST_COMMENT_DELAY_MAX_SECONDS,
     )
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
+    data["comment_delay_min"], data["comment_delay_max"] = clamp_comment_gap_pair(incoming)
     data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))

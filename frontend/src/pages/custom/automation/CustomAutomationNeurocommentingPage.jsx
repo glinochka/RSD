@@ -11,7 +11,7 @@ import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { humanizeUbtLog } from './ubtLogText';
-import { ACTION_DELAY_MAX_SECONDS } from './delayLimits';
+import { ACTION_DELAY_MAX_SECONDS, COMMENT_GAP_MAX_DEFAULT, COMMENT_GAP_MIN_DEFAULT, DELAY_MAX_SECONDS } from './delayLimits';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
@@ -299,6 +299,10 @@ const CustomAutomationNeurocommentingPage = () => {
         <div className="nc-card">
           <div className="nc-card-head"><h2>Лимиты</h2></div>
           <div className="nc-row">
+            <span className="nc-muted">Максимум комментариев в день на аккаунт</span>
+            <Stepper value={settings.max_per_account ?? 15} min={1} max={200} onChange={(value) => patch({ max_per_account: value })} />
+          </div>
+          <div className="nc-row" style={{ marginTop: 10 }}>
             <span className="nc-muted">Макс. комментариев на чат / день</span>
             <Stepper value={settings.max_per_chat} min={1} max={50} onChange={(value) => patch({ max_per_chat: value })} />
           </div>
@@ -306,7 +310,6 @@ const CustomAutomationNeurocommentingPage = () => {
             <span className="nc-muted">Мин. слов в посте</span>
             <Stepper value={settings.min_words} min={0} max={500} onChange={(value) => patch({ min_words: value })} />
           </div>
-          <p className="nc-muted" style={{ marginTop: 12 }}>Суточный лимит аккаунта берётся из прогрева и ротации.</p>
         </div>
       </div>
 
@@ -427,15 +430,34 @@ const CustomAutomationNeurocommentingPage = () => {
           <span className="nc-muted">сек</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Это антибот-пауза после публикации поста. FloodWait Telegram обрабатывается сам: короткие ждут на месте, длинные откладывают задачу.</p>
+        <div className="nc-row" style={{ marginTop: 14 }}>
+          <span className="nc-muted">Пауза между комментариями</span>
+          <Stepper
+            value={settings.comment_delay_min ?? COMMENT_GAP_MIN_DEFAULT}
+            min={60}
+            max={DELAY_MAX_SECONDS}
+            onChange={(value) => patch({ comment_delay_min: value, comment_delay_max: Math.max(value, settings.comment_delay_max ?? COMMENT_GAP_MAX_DEFAULT) })}
+          />
+          <span className="nc-muted">до</span>
+          <Stepper
+            value={Math.max(settings.comment_delay_min ?? COMMENT_GAP_MIN_DEFAULT, settings.comment_delay_max ?? COMMENT_GAP_MAX_DEFAULT)}
+            min={settings.comment_delay_min ?? COMMENT_GAP_MIN_DEFAULT}
+            max={DELAY_MAX_SECONDS}
+            onChange={(value) => patch({ comment_delay_max: value })}
+          />
+          <span className="nc-muted">сек</span>
+        </div>
+        <p className="nc-muted" style={{ marginTop: 8 }}>После отправленного комментария аккаунт молчит 20–40 минут, затем берёт следующий пост.</p>
         <UbtJoinDelay settings={settings} onPatch={patch} />
       </div>
 
       <div className="nc-card">
         <div className="nc-card-head"><h2>Запуск и логи</h2></div>
-        <div className="nc-kpis">
+        <div className="nc-kpis nc-kpis--5">
           <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
           <div className="nc-kpi"><strong>{selectedFolders.size || selectedChats.size}</strong><span>Папки / каналы</span></div>
           <div className="nc-kpi"><strong>{settings.delay_before_max}s</strong><span>Макс. интервал</span></div>
+          <div className="nc-kpi"><strong>{settings.max_per_account ?? 15}</strong><span>Лимит на аккаунт</span></div>
           <div className="nc-kpi"><strong>{settings.max_per_chat}</strong><span>Лимит на канал</span></div>
         </div>
         {issues.length ? (

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import FeatureToggle from '../../../components/FeatureToggle';
@@ -36,15 +36,15 @@ const JOB_TASK_KEY = {
   warmup: 'warmup',
 };
 const EXTRA_EDIT_FIELDS = {
-  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 180, join_delay_max: 240, probability: 100, max_per_chat: 10 },
-  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 180, join_delay_max: 240, probability: 30, max_per_chat: 1 },
-  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 180, join_delay_max: 240 },
-  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 180, join_delay_max: 240 },
+  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, max_per_account: 15 },
+  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, probability: 30, max_per_chat: 1 },
+  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400 },
+  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400 },
   dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8 },
-  masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 180, join_delay_max: 240, max_per_account: 50 },
+  masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 1200, join_delay_max: 2400, max_per_account: 50 },
   masspriming: { delay_min: 8, delay_max: 25, max_per_account: 20 },
-  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 180, join_delay_max: 240, member_limit: 1000 },
-  warmup: { join_delay_min: 180, join_delay_max: 240 },
+  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 1200, join_delay_max: 2400, member_limit: 1000 },
+  warmup: { join_delay_min: 1200, join_delay_max: 2400 },
 };
 
 const formatParamValue = (value) => {
@@ -175,9 +175,11 @@ const CustomAutomationTasksPage = () => {
   const [editForm, setEditForm] = useState({});
   const [form, setForm] = useState({ query: '', max_chats: 30, require_approval: true, relevance_threshold: 0.6 });
 
-  const loadJobs = useCallback(async () => {
+  const loadJobs = useCallback(async ({ silent } = {}) => {
     try {
-      setIsLoading(true);
+      if (!silent) {
+        setIsLoading(true);
+      }
       const data = await customService.getAutomationJobs(id, {
         bucket,
         category: category || undefined,
@@ -189,7 +191,9 @@ const CustomAutomationTasksPage = () => {
     } catch (err) {
       setError(err.message || 'Не удалось загрузить задачи');
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [id, bucket, category, search]);
 
@@ -208,14 +212,17 @@ const CustomAutomationTasksPage = () => {
     }
   }, [items, selectedId]);
 
+  const hasActiveRef = useRef(false);
+  hasActiveRef.current = items.some((item) => ['pending', 'running', 'awaiting_approval'].includes(item.status));
+
   useEffect(() => {
-    const hasActive = items.some((item) => ['pending', 'running', 'awaiting_approval'].includes(item.status));
-    if (!hasActive) {
-      return undefined;
-    }
-    const timer = window.setInterval(loadJobs, 5000);
+    const timer = window.setInterval(() => {
+      if (hasActiveRef.current) {
+        loadJobs({ silent: true });
+      }
+    }, 8000);
     return () => window.clearInterval(timer);
-  }, [items, loadJobs]);
+  }, [loadJobs]);
 
   const runAction = async (fn, okText) => {
     setBusy(true);

@@ -49,8 +49,8 @@ TASK_WAVES_KEY = "_join_waves"
 HOST_BOOTSTRAP_JOINS_PER_TICK = 1
 _SHARED_PLAN_KEYS = {"_shared", "_waves"}
 TASK_CHATS_PER_ACCOUNT = 50
-JOIN_WAVE_MIN = 15
-JOIN_WAVE_MAX = 20
+JOIN_WAVE_MIN = 10
+JOIN_WAVE_MAX = 15
 
 
 def pool_actor_status(account: SocialAccount | None) -> str:
@@ -82,10 +82,10 @@ def pool_actor_selectable(account: SocialAccount | None) -> bool:
 
 
 def join_account_is_parked(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
-    """True while Telegram FloodWait / retry still holds this account."""
-    from .account_pacing import account_is_flood_quarantined, account_is_resting
+    """True while Telegram FloodWait still holds this account. Comment rest does not block joins."""
+    from .account_pacing import account_is_flood_quarantined
 
-    return account_is_flood_quarantined(account, now=now) or account_is_resting(account, now=now)
+    return account_is_flood_quarantined(account, now=now)
 
 
 async def _skip_join_for_flood(session: AsyncSession, account: SocialAccount | None) -> bool:
@@ -726,7 +726,7 @@ def account_wave_state(
 
 
 def pick_join_wave(pending_ids: list[int], *, rng: Any = None, size: int | None = None) -> list[int]:
-    """Random 15–20 chats (or all remaining) for one join wave."""
+    """Random 10–15 chats (or all remaining) for one join wave."""
     pool = [int(item) for item in dict.fromkeys(pending_ids or []) if int(item) > 0]
     if not pool:
         return []

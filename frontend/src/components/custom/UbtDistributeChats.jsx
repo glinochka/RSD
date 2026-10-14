@@ -134,9 +134,16 @@ const UbtDistributeChats = ({
     return data;
   }, [automationId, taskKey]);
 
+  const poolKey = JSON.stringify({
+    accounts: settings?.account_ids || [],
+    folders: settings?.folder_ids || [],
+    assignments: settings?.chat_assignments || {},
+    reserve: settings?.reserve_chat_ids || [],
+  });
+
   useEffect(() => {
     loadPool().catch(() => {});
-  }, [loadPool, settings?.account_ids, settings?.folder_ids, settings?.chat_assignments, settings?.reserve_chat_ids]);
+  }, [loadPool, poolKey]);
 
   useEffect(() => {
     if (!messageHint) {
@@ -381,8 +388,8 @@ const UbtDistributeChats = ({
                   </span>
                   <span className="nc-pool-count">{item.joined_count || 0} вступил · {count}/{cap}</span>
                 </button>
-                <div className="nc-pool-meter">
-                  <span style={{ width: `${Math.min(100, Math.round((count / cap) * 100))}%` }} />
+                <div className="nc-pool-meter" title={`${item.joined_count || 0} из ${count || cap} вступили`}>
+                  <span style={{ width: `${count ? Math.min(100, Math.round(((item.joined_count || 0) / count) * 100)) : 0}%` }} />
                 </div>
                 {openRow ? (
                   <div className="nc-pool-chips">

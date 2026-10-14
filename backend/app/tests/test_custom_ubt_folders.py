@@ -528,9 +528,11 @@ class TestJobLifecycle:
         from app.services.custom.chat_addlist_service import join_account_is_parked
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        idle = SimpleNamespace(next_action_at=now + timedelta(minutes=40), flood_quarantined_until=None)
+        idle = SimpleNamespace(next_action_at=None, flood_quarantined_until=now + timedelta(hours=12))
+        resting = SimpleNamespace(next_action_at=now + timedelta(minutes=40), flood_quarantined_until=None)
         ready = SimpleNamespace(next_action_at=None, flood_quarantined_until=None)
         assert join_account_is_parked(idle, now=now) is True
+        assert join_account_is_parked(resting, now=now) is False
         assert join_account_is_parked(ready, now=now) is False
 
     def test_flood_quarantine_is_global_12_to_24h(self):
@@ -608,8 +610,8 @@ class TestJobLifecycle:
                 "neurocommenting": {
                     "delay_before_min": 90,
                     "delay_before_max": 90,
-                    "join_delay_min": 120,
-                    "join_delay_max": 120,
+                    "join_delay_min": 1500,
+                    "join_delay_max": 1500,
                 },
                 "neurochatting": {
                     "delay_before_min": 45,
@@ -619,13 +621,18 @@ class TestJobLifecycle:
                 },
             }
         )
-        assert task_join_delay_seconds(automation, "neurocommenting") == 120
+        assert task_join_delay_seconds(automation, "neurocommenting") == 1500
         assert task_join_delay_seconds(automation, "neurochatting") == 75
         defaulted = task_join_delay_seconds(SimpleNamespace(module_settings={}), "parser")
         assert defaulted >= JOIN_DELAY_MIN_DEFAULT
         normalized = normalize_nc_settings({"delay_before_min": 90, "delay_before_max": 90})
         assert normalized["delay_before_min"] == 90
         assert normalized["join_delay_min"] == JOIN_DELAY_MIN_DEFAULT
+        assert normalized["max_per_account"] == 15
+        assert normalized["comment_delay_min"] == 20 * 60
+        migrated = normalize_nc_settings({"join_delay_min": 180, "join_delay_max": 240})
+        assert migrated["join_delay_min"] == JOIN_DELAY_MIN_DEFAULT
+        assert migrated["join_delay_max"] == 40 * 60
 
     def test_folder_grows_chat_ids_instead_of_resetting(self):
         from app.services.custom.chat_addlist_service import merge_folder_chat_ids
@@ -836,7 +843,7 @@ class TestJobLifecycle:
         assert wave_quota_hit({"joined": 2, "size": 18}, already_joined=2) is False
         assert wave_quota_hit({"joined": 18, "size": 18}, already_joined=18) is True
         assert wave_quota_hit({}, already_joined=2) is False
-        assert wave_quota_hit({}, already_joined=16) is True
+        assert wave_quota_hit({}, already_joined=JOIN_WAVE_MIN) is True
 
         from datetime import timedelta
 

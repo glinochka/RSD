@@ -1302,7 +1302,7 @@ async def join_loaded_chats_for_accounts(
 
 
 async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dict[str, Any]]:
-    """Join 15–20 random chats per account across all tasks, then rest today and tomorrow."""
+    """Join 10–15 successful chats per account per day, 20–40 min apart, one account per tick."""
     from .chat_addlist_service import (
         JOIN_WAVE_MIN,
         _grow_host_folder_after_join,
@@ -1319,6 +1319,7 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
         best_addlist_for_chats,
         collect_plan_addlists,
         collect_task_join_specs_resolved,
+        _skip_join_for_flood,
         join_account_is_parked,
         load_join_waves,
         parse_wave_rest_until,
@@ -1358,9 +1359,13 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
                     bucket.append(cid)
     waves = {}
     dirty = False
-    for account_id, chat_ids in pending_by_account.items():
+    account_items = list(pending_by_account.items())
+    random.shuffle(account_items)
+    for account_id, chat_ids in account_items:
         account = await session.get(SocialAccount, account_id)
         if not account or join_account_is_parked(account) or account_membership_should_idle(account):
+            continue
+        if await _skip_join_for_flood(session, account):
             continue
         wave = account_wave_state(automation, account_id, plans)
         pending: list[int] = []
@@ -1380,6 +1385,7 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
             if not pending or wave_quota_hit(wave, already_joined):
                 continue
             wave["rest_until"] = None
+            waves[str(account_id)] = wave
             dirty = True
         if not pending:
             continue
@@ -1439,7 +1445,7 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
                             "count": marked,
                         }
                     )
-                    continue
+                    break
                 except Exception as exc:
                     logger.warning("Addlist join failed account=%s: %s", account_id, exc)
                     if "flood" in type(exc).__name__.lower() or "floodwait" in str(exc).lower():
@@ -1463,19 +1469,32 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
             continue
         pick_id = random.choice(wave_ids)
         chat_target = await session.get(ChatTarget, pick_id)
+        if chat_target is None:
+            wave["chat_ids"] = [cid for cid in wave_ids if cid != pick_id]
+            waves[str(account_id)] = wave
+            dirty = True
+            continue
         membership = await get_membership(session, pick_id, account_id)
-        if chat_target is None or membership is None:
+        if membership is None:
+            await ensure_memberships_for_chat(
+                session, automation_id, chat_target, account_ids=[account_id]
+            )
+            membership = await get_membership(session, pick_id, account_id)
+        if membership is None:
+            wave["chat_ids"] = [cid for cid in wave_ids if cid != pick_id]
+            waves[str(account_id)] = wave
+            dirty = True
             continue
         owner_tasks = owners_by_chat.get((account_id, pick_id)) or []
         job_types = list(dict.fromkeys(_log_job_type(key) for key in owner_tasks)) or ["join"]
-        if started_wave:
-            for job_type in job_types:
-                await log_active(
-                    automation_id,
-                    job_type,
-                    f"{actor_label(account)} волна вступлений: {len(wave_ids)} из {len(pending)} "
-                    f"по всем задачам",
-                )
+        if started_wave and not wave.get("announced"):
+            await log_active(
+                automation_id,
+                job_types[0],
+                f"{actor_label(account)} волна вступлений: {len(wave_ids)} из {len(pending)} "
+                f"по всем задачам",
+            )
+            wave["announced"] = True
         membership.join_status = ChatJoinStatus.JOINING.value
         membership.updated_at = now
         await session.commit()
@@ -1495,9 +1514,12 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
         status = str(join_result.get("status") or "")
         if status == "joined":
             wave["joined"] = int(wave.get("joined") or 0) + 1
+        if status == "failed" and int(getattr(membership, "join_attempts", 0) or 0) >= 2:
+            await blackbox_unusable_chat(session, chat_target, reason="join_failed")
+            status = "blackbox"
         still = []
         for cid in wave_ids:
-            if cid == pick_id and status in {"joined", "blackbox"}:
+            if cid == pick_id:
                 continue
             chat_left = await session.get(ChatTarget, cid)
             if chat_left is None or chat_left.black_boxed_at or chat_left.comments_open is False:
@@ -1595,8 +1617,7 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
             line = f"{who} заблокирован в {title}"
         else:
             line = f"{who} не удалось вступить в {title}"
-        for job_type in job_types:
-            await log_active(automation_id, job_type, line)
+        await log_active(automation_id, job_types[0], line)
         results.append(
             {
                 "account_id": account_id,
@@ -1606,6 +1627,7 @@ async def join_task_waves(session: AsyncSession, automation_id: int) -> list[dic
                 "reason": "join_wave",
             }
         )
+        break
     if dirty:
         existing = load_join_waves(automation)
         existing.update(waves)

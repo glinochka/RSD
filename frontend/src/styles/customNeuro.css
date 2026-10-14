@@ -703,14 +703,14 @@
 }
 
 .nc-modal--wide {
-  width: min(1180px, 100%);
+  width: min(980px, 100%);
   max-height: calc(100vh - 32px);
   overflow: auto;
 }
 
 .nc-distribute {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
@@ -832,7 +832,7 @@
 .nc-pool-meter span {
   display: block;
   height: 100%;
-  background: #2563eb;
+  background: #2f2f2f;
   border-radius: 99px;
 }
 

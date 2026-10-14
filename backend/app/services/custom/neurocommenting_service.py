@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import account_matches_action
-from .account_pacing import farm_overlap_active_hours
+from .account_pacing import account_is_resting, farm_overlap_active_hours, schedule_account_target_rest
 from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .module_delays import format_delay_ru
 from .chat_inspect_service import probe_comments_readonly
@@ -214,11 +214,20 @@ def account_comment_daily_limit(
     automation: CustomAutomation | None,
     *,
     lab_mode: bool = False,
+    run_config: dict[str, Any] | None = None,
 ) -> int:
     if lab_mode:
         return 10**9
+    try:
+        cap = int((run_config or {}).get("max_per_account") or 15)
+    except (TypeError, ValueError):
+        cap = 15
+    cap = max(1, min(200, cap))
     from .account_pacing import effective_daily_target_max
-    return effective_daily_target_max(account, automation)
+    auto_cap = effective_daily_target_max(account, automation)
+    if auto_cap > 0:
+        return min(cap, auto_cap)
+    return cap
 
 
 def _word_count(text: str) -> int:
@@ -596,7 +605,12 @@ async def process_chat_target(
             continue
         if claimed != NEUROCOMMENTING or not neuro_enabled:
             continue
-        if account_reached_daily_cap(actor, account_comment_daily_limit(actor, automation, lab_mode=lab_mode)):
+        if account_reached_daily_cap(
+            actor,
+            account_comment_daily_limit(actor, automation, lab_mode=lab_mode, run_config=cfg),
+        ):
+            continue
+        if not lab_mode and account_is_resting(actor):
             continue
         pool = await session.scalar(
             select(PoolAccount).where(
@@ -661,6 +675,11 @@ async def process_chat_target(
         )
         if success:
             sent += 1
+            if not lab_mode:
+                from .module_delays import clamp_comment_gap_pair
+
+                gap_lo, gap_hi = clamp_comment_gap_pair(cfg)
+                schedule_account_target_rest(actor, seconds=random.uniform(gap_lo, gap_hi))
 
     chat_target.last_scanned_at = _utc_now()
     chat_target.updated_at = _utc_now()
