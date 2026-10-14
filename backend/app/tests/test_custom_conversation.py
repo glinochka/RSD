@@ -80,8 +80,21 @@ def test_expired_invite_is_permanent_and_hidden():
 
     assert _join_error_is_permanent("Ссылка-приглашение истекла") is True
     assert _join_error_is_permanent("invite hash expired") is True
+    assert _join_error_is_permanent('No user has "seo_neuro" as username') is True
+    assert _join_error_is_permanent("The username is not in use by anyone else yet") is True
     assert is_operational_skip_error("Ссылка-приглашение истекла", {"blackbox": True}) is True
     class ChannelPrivateError(Exception):
         pass
     assert is_comments_unusable(ChannelPrivateError("The channel specified is private")) is True
     assert is_comments_unusable(Exception("You can't write in this chat (caused by SetTypingRequest)")) is True
+
+
+def test_dead_username_probe_is_not_a_retry():
+    from app.services.custom.telegram_rpc_log_service import _human_rpc_error, _is_plumbing_log
+
+    assert _is_plumbing_log("запросил профили") is True
+    assert _is_plumbing_log("Maksim Toples🔞 (15674004008) запросил профили") is True
+    assert _is_plumbing_log("вступил в канал") is False
+    assert _human_rpc_error(
+        "The username is not in use by anyone else yet (caused by ResolveUsernameRequest)"
+    ) == "такого @username нет"

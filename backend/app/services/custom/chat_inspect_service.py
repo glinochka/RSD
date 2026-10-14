@@ -238,7 +238,23 @@ async def probe_public_posts_for_comments(
         entity = await client.get_entity(chat_entity_key(chat_target))
     except Exception as exc:
         name = type(exc).__name__
-        if name in {"UsernameNotOccupiedError", "UsernameInvalidError", "InviteHashExpiredError", "InviteHashInvalidError"}:
+        lower = str(exc).lower()
+        dead_ref = name in {
+            "UsernameNotOccupiedError",
+            "UsernameInvalidError",
+            "InviteHashExpiredError",
+            "InviteHashInvalidError",
+        } or any(
+            token in lower
+            for token in (
+                "no user has",
+                "username is not in use",
+                "username not occupied",
+                "invite hash expired",
+                "invite hash invalid",
+            )
+        )
+        if dead_ref:
             return CommentProbe(comments_open=False, error=str(exc)[:255])
         probe = _restricted_probe(exc)
         if probe:

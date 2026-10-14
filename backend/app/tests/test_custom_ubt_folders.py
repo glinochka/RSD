@@ -712,6 +712,8 @@ class TestJobLifecycle:
         assert format_delay_ru(2951) == "49 мин 11 с"
         assert humanize_telegram_request(type("UpdateStatusRequest", (), {"offline": False})()) == "вошёл в онлайн"
         assert humanize_telegram_request(type("PingRequest", (), {})()) is None
+        assert humanize_telegram_request(type("GetUsersRequest", (), {})()) is None
+        assert humanize_telegram_request(type("GetChannelDifferenceRequest", (), {})()) is None
         assert humanize_telegram_request(type("FooBarRequest", (), {})()) is None
         assert "прочитал" in (humanize_telegram_request(type("GetHistoryRequest", (), {})()) or "")
 

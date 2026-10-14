@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,9 +23,20 @@ _SKIP_RPC = frozenset({
     "HttpWaitRequest",
     "GetStateRequest",
     "GetDifferenceRequest",
+    "GetChannelDifferenceRequest",
     "GetConfigRequest",
     "InitConnectionRequest",
     "InvokeWithLayerRequest",
+    # Telethon cache / update plumbing — not a person opening profiles.
+    "GetUsersRequest",
+    "GetPeerSettingsRequest",
+    "GetNotifySettingsRequest",
+    "GetContactSignupNotificationRequest",
+    "GetEmojiKeywordsRequest",
+    "GetTopReactionsRequest",
+    "GetFileRequest",
+    "SaveFilePartRequest",
+    "UploadSaveFilePartRequest",
 })
 
 _RPC_RU = {
@@ -42,7 +54,6 @@ _RPC_RU = {
     "GetFullChannelRequest": "открыл карточку канала",
     "GetFullChatRequest": "открыл карточку чата",
     "GetFullUserRequest": "открыл профиль",
-    "GetUsersRequest": "запросил профили",
     "JoinChannelRequest": "вступил в канал",
     "LeaveChannelRequest": "вышел из канала",
     "ImportChatInviteRequest": "вступил по приглашению",
@@ -66,12 +77,9 @@ _RPC_RU = {
     "EditExportedInviteRequest": "обновил addlist-ссылку",
     "GetDialogFiltersRequest": "открыл папки Telegram",
     "UpdateDialogFilterRequest": "сохранил папку Telegram",
-    "GetPeerSettingsRequest": "открыл настройки диалога",
-    "GetNotifySettingsRequest": "проверил уведомления",
     "SetHistoryTTLRequest": "настроил автоудаление",
     "AddContactRequest": "добавил контакт",
     "ImportContactsRequest": "импортировал контакты",
-    "GetContactSignupNotificationRequest": "проверил уведомления о контактах",
     "GetPinnedDialogsRequest": "открыл закреплённые чаты",
     "GetWebPagePreviewRequest": "открыл превью ссылки",
     "GetStoriesArchiveRequest": "открыл архив историй",
@@ -80,16 +88,56 @@ _RPC_RU = {
     "SendVoteRequest": "проголосовал в опросе",
     "ResolveUsernameRequest": "нашёл канал по имени",
     "GetContactsRequest": "открыл контакты",
-    "GetFileRequest": "скачал файл",
-    "SaveFilePartRequest": "загрузил файл",
-    "UploadSaveFilePartRequest": "загрузил файл",
-    "GetEmojiKeywordsRequest": "открыл эмодзи",
-    "GetTopReactionsRequest": "открыл реакции",
 }
+
+
+_NOISE_LOG = (
+    "запросил профили",
+    "get channel difference",
+    "открыл настройки диалога",
+    "проверил уведомления",
+    "проверил уведомления о контактах",
+    "открыл эмодзи",
+    "открыл реакции",
+    "скачал файл",
+    "загрузил файл",
+)
+
+_ERROR_HINTS = (
+    ("username is not in use", "такого @username нет"),
+    ("no user has", "такого @username нет"),
+    ("username not occupied", "такого @username нет"),
+    ("invite hash expired", "ссылка-приглашение истекла"),
+    ("invite hash invalid", "некорректная ссылка-приглашение"),
+    ("flood", "Telegram ограничил частоту действий"),
+    ("too many", "Telegram ограничил частоту действий"),
+)
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _is_plumbing_log(message: str | None) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return True
+    return any(fragment in text for fragment in _NOISE_LOG)
+
+
+def _human_rpc_error(error: str | None) -> str | None:
+    if not error:
+        return None
+    text = re.sub(r"\s*\(caused by [^)]+\)", "", str(error)).strip()
+    if not text:
+        return None
+    lower = text.lower()
+    for needle, ru in _ERROR_HINTS:
+        if needle in lower:
+            return ru
+    if text.endswith("Error") or "Error" in text[:40]:
+        return "ошибка Telegram"
+    return text[:180]
 
 
 def _clip(text: Any, limit: int = 80) -> str:
@@ -196,7 +244,7 @@ def schedule_telegram_log(
     result: str = "ok",
     error: str | None = None,
 ) -> None:
-    if not account_id or not message:
+    if not account_id or not message or _is_plumbing_log(message):
         return
     try:
         loop = asyncio.get_running_loop()
@@ -304,6 +352,7 @@ async def list_account_telegram_logs(
 ) -> list[dict[str, Any]]:
     cutoff = _utc_now() - LOG_TTL
     cap = max(1, min(int(limit or 200), 500))
+    fetch = max(cap, min(cap * 8, 2000))
     account = await session.get(SocialAccount, account_id)
     from .job_service import actor_label
 
@@ -316,23 +365,21 @@ async def list_account_telegram_logs(
                 TelegramAccountLog.created_at >= cutoff,
             )
             .order_by(TelegramAccountLog.id.desc())
-            .limit(cap)
+            .limit(fetch)
         )
     ).scalars().all()
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for row in rows:
+        if _is_plumbing_log(row.message):
+            continue
         message = row.message
         if label and message and not message.startswith(label):
             message = f"{label} {message}"
         if row.error_message:
-            err = str(row.error_message)
-            lower = err.lower()
-            if "flood" in lower or "too many" in lower:
-                err = "Telegram ограничил частоту действий"
-            elif err.endswith("Error") or "Error" in err[:40]:
-                err = "ошибка Telegram"
-            message = f"{message} ({err})"
+            err = _human_rpc_error(row.error_message)
+            if err:
+                message = f"{message} ({err})"
         key = (str(row.created_at or ""), message)
         if key in seen:
             continue

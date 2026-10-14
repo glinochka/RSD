@@ -383,6 +383,12 @@ async def _try_join_chat(
 
                 probe = await probe_public_posts_for_comments(client, chat_target)
                 if getattr(probe, "retry_account", False):
+                    if _join_error_is_permanent(probe.error):
+                        return {
+                            "status": "blackbox",
+                            "error": probe.error or "invalid_ref",
+                            "reason": "invalid_ref",
+                        }
                     return {
                         "status": "failed",
                         "error": probe.error or "probe_failed",
@@ -510,7 +516,10 @@ async def _try_join_chat(
         logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)
         return {"status": "failed", "error": "session_invalid", "retry_account": True}
     except ValueError as exc:
-        return {"status": "failed", "error": str(exc)[:255]}
+        friendly = _friendly_telegram_error(exc, "Не удалось вступить")[:255]
+        if _join_error_is_permanent(str(exc)) or _join_error_is_permanent(friendly):
+            return {"status": "blackbox", "error": friendly, "reason": "invalid_ref"}
+        return {"status": "failed", "error": friendly}
     except Exception as exc:
         if is_chat_read_lost(exc):
             logger.warning("Join chat %s banned for account %s: %s", chat_target.id, account.id, exc)

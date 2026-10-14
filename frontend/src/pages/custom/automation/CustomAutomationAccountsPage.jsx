@@ -1523,7 +1523,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   </button>
                 </div>
                 <p className="form-hint">
-                  Все обращения аккаунта к Telegram: задачи, прогрев, вход в онлайн, чтение каналов и остальное. Хранятся 3 суток.
+                  Действия аккаунта в Telegram: задачи, прогрев, вступления, чтение каналов. Служебные запросы клиента не показываем. Хранятся 3 суток.
                 </p>
                 {telegramLogsLoading && telegramLogs.length === 0 ? <p className="form-hint">Загружаем логи...</p> : null}
                 {telegramLogsError ? <p className="acc-flash acc-flash--error">{telegramLogsError}</p> : null}
