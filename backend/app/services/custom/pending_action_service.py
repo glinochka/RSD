@@ -271,27 +271,56 @@ async def process_pending_for_membership(
     return done
 
 
-async def process_due_pending_actions(session: AsyncSession, automation_id: int, *, limit: int = 10) -> int:
+async def _pending_action_runnable(
+    session: AsyncSession,
+    action: PendingChatAction,
+    membership: AccountChatMembership | None,
+) -> tuple[bool, bool, datetime | None]:
+    """Return (ready, lost, rest_until). Public channel comments do not need a JOINED row."""
+    if membership is not None and membership.join_status == ChatJoinStatus.JOINED.value:
+        return await _accounts_blocking_pending(session, action, membership)
+    from .chat_scope import is_public_readable
+
+    chat = await session.get(ChatTarget, action.chat_target_id)
+    if action.action_type == "neurocommenting" and chat is not None and is_public_readable(chat):
+        account = await session.get(SocialAccount, action.social_account_id)
+        if account_should_idle(account):
+            wake = next_target_wake_at(account=account)
+            nxt = getattr(account, "next_action_at", None)
+            if nxt is not None and nxt > wake:
+                wake = nxt
+            return False, False, wake
+        return True, False, None
+    return False, False, None
+
+
+async def process_due_pending_actions(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    limit: int = 40,
+    action_types: Iterable[str] | None = None,
+) -> int:
     now = _utc_now()
+    filters = [
+        PendingChatAction.custom_automation_id == automation_id,
+        PendingChatAction.status == PENDING,
+        or_(
+            PendingChatAction.next_attempt_at.is_(None),
+            PendingChatAction.next_attempt_at <= now,
+        ),
+    ]
+    wanted = [str(item) for item in (action_types or []) if item]
+    if wanted:
+        filters.append(PendingChatAction.action_type.in_(wanted))
     result = await session.execute(
-        select(PendingChatAction)
-        .where(
-            PendingChatAction.custom_automation_id == automation_id,
-            PendingChatAction.status == PENDING,
-            or_(
-                PendingChatAction.next_attempt_at.is_(None),
-                PendingChatAction.next_attempt_at <= now,
-            ),
-        )
-        .order_by(PendingChatAction.id.asc())
-        .limit(limit)
+        select(PendingChatAction).where(*filters).order_by(PendingChatAction.id.asc()).limit(limit)
     )
     done = 0
     for action in result.scalars().all():
         membership = await get_membership(session, action.chat_target_id, action.social_account_id)
-        if membership is None or membership.join_status != ChatJoinStatus.JOINED.value:
-            continue
-        ready, lost, rest_until = await _accounts_blocking_pending(session, action, membership)
+        joined = membership if membership is not None and membership.join_status == ChatJoinStatus.JOINED.value else None
+        ready, lost, rest_until = await _pending_action_runnable(session, action, joined)
         if lost:
             await session.commit()
             continue
@@ -389,11 +418,16 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             return False
         post_id = int(payload.get("post_id") or str(action.target_id).rsplit(":", 1)[-1])
         post_text = str(payload.get("post_text") or "")
+        try:
+            prompt_id = int(payload["prompt_id"]) if payload.get("prompt_id") else None
+        except (TypeError, ValueError):
+            prompt_id = None
         comment = await _generate_comment(
             session,
             action.custom_automation_id,
             post_text=post_text,
             chat_title=chat.title or "",
+            prompt_id=prompt_id,
         )
         if not comment:
             return False

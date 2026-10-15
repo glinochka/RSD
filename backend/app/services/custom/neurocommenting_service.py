@@ -644,7 +644,7 @@ async def process_chat_target(
                         account=actor,
                         action_type="neurocommenting",
                         target_id=post_target_id(chat_target.id, post.id),
-                        payload={"post_id": post.id, "post_text": (post.text or "")[:500]},
+                        payload={"post_id": post.id, "post_text": (post.text or "")[:500], "prompt_id": prompt_id},
                     )
                     if pending:
                         pending.next_attempt_at = delay_until
@@ -709,6 +709,20 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
         if no_accounts_picked(cfg):
             return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "comments_sent": 0}
+        from .pending_action_service import process_due_pending_actions
+
+        flushed = await process_due_pending_actions(
+            session, automation_id, action_types=("neurocommenting",)
+        )
+        if flushed:
+            from .job_service import log_active
+
+            await log_active(
+                automation_id,
+                "neurocommenting",
+                f"Отправил {flushed} отложенных комментариев по уже вступившим каналам",
+            )
+            total_sent += flushed
         from .task_targets import resolve_task_chat_ids
 
         chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurocommenting"))

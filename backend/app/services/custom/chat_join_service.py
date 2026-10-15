@@ -38,7 +38,6 @@ from .account_pacing import (
     ACCOUNT_RETRY_MIN_SECONDS,
     account_membership_should_idle,
     farm_overlap_active_hours,
-    schedule_account_retry,
 )
 from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_user_peer, unwrap_telegram_chat
 from .chat_target_dedup import find_existing_chat_target
@@ -554,7 +553,6 @@ async def _apply_membership_result(
         membership.last_join_error = join_result.get("error")
         membership.join_attempts = max(0, membership.join_attempts - 1)
         membership.next_join_attempt_at = now + _join_retry_delay()
-        schedule_account_retry(account)
         await sync_chat_join_status(session, chat_target)
         return
 
@@ -581,7 +579,6 @@ async def _apply_membership_result(
                 )
         membership.last_join_error = join_result.get("error")
         membership.next_join_attempt_at = None
-        schedule_account_retry(account)
         await sync_chat_join_status(session, chat_target)
         return
 
@@ -635,7 +632,6 @@ async def _apply_membership_result(
             membership.last_join_error = error
             membership.next_join_attempt_at = None
             membership.join_status = ChatJoinStatus.ERROR.value
-            schedule_account_retry(account)
             await sync_chat_join_status(session, chat_target)
             return
         membership.join_status = ChatJoinStatus.ERROR.value
@@ -643,7 +639,6 @@ async def _apply_membership_result(
         membership.next_join_attempt_at = now + _join_retry_delay()
         if membership.join_attempts >= MAX_JOIN_ATTEMPTS:
             membership.next_join_attempt_at = None
-        schedule_account_retry(account)
         await log_action_error(
             session,
             account,
@@ -1666,15 +1661,15 @@ async def join_pending_chats(
         await recover_stale_joining_memberships(session, automation_id)
         await ensure_task_joins_for_automation(session, automation_id)
         wave_results = await join_task_waves(session, automation_id)
+        await process_due_pending_actions(session, automation_id)
         if rate_limit and not farm_overlap_active_hours(mode=mode):
             return wave_results
         seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
         return [*wave_results, seed] if seed else wave_results
-    else:
-        await recover_stale_joining_memberships(session, automation_id)
-        await process_due_pending_actions(session, automation_id)
-        seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
-        return [seed] if seed else []
+    await recover_stale_joining_memberships(session, automation_id)
+    await process_due_pending_actions(session, automation_id)
+    seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
+    return [seed] if seed else []
 
 
 async def run_join_pending_for_automation(automation_id: int) -> list[dict[str, Any]]:

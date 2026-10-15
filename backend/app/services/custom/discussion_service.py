@@ -594,6 +594,11 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "replies_sent": 0}
         if no_accounts_picked(cfg):
             return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "replies_sent": 0}
+        from .pending_action_service import process_due_pending_actions
+
+        flushed = await process_due_pending_actions(session, automation_id, action_types=("discussion",))
+        if flushed:
+            total_sent += flushed
         cap = daily_account_cap(cfg, cap_default=15)
         farm = int(automation.max_daily_messages_per_account or 0)
         max_daily = min(farm, cap) if farm > 0 else cap

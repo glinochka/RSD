@@ -372,6 +372,74 @@ class TestLazyJoinCoverage:
         ).scalar_one()
         assert count == 1
 
+    async def test_due_pending_comment_flushes_when_already_joined(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import timedelta
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.pending_action_service import process_due_pending_actions
+
+        actor = await _add_account(test_session, custom_automation, username="flushj", phone="+79991001031")
+        chat = await _add_chat(test_session, custom_automation, invite_link="https://t.me/+flushjoined1")
+        await ensure_memberships_for_chat(test_session, custom_automation.id, chat, account_ids=[actor.id])
+        await _mark_joined(test_session, chat, actor, purpose=MembershipPurpose.ACTOR.value)
+        pending = await enqueue_pending_action(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target=chat,
+            account=actor,
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:77",
+            payload={"post_id": 77, "post_text": "fresh"},
+        )
+        pending.next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
+        await test_session.commit()
+        with patch(
+            "app.services.custom.pending_action_service._run_action",
+            AsyncMock(return_value=True),
+        ):
+            done = await process_due_pending_actions(test_session, custom_automation.id)
+        assert done == 1
+        await test_session.refresh(pending)
+        assert pending.status == PendingChatActionStatus.DONE.value
+
+    async def test_due_pending_public_comment_does_not_wait_for_join(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import timedelta
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.pending_action_service import process_due_pending_actions
+
+        actor = await _add_account(test_session, custom_automation, username="flushp", phone="+79991001032")
+        chat = await _add_chat(
+            test_session,
+            custom_automation,
+            title="News",
+            chat_type="channel",
+            invite_link="https://t.me/flushpublicchan",
+        )
+        pending = await enqueue_pending_action(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target=chat,
+            account=actor,
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:88",
+            payload={"post_id": 88, "post_text": "hello"},
+        )
+        pending.next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
+        await test_session.commit()
+        with patch(
+            "app.services.custom.pending_action_service._run_action",
+            AsyncMock(return_value=True),
+        ):
+            done = await process_due_pending_actions(test_session, custom_automation.id)
+        assert done == 1
+        await test_session.refresh(pending)
+        assert pending.status == PendingChatActionStatus.DONE.value
+
 
 async def _mark_joined(
     session: AsyncSession,

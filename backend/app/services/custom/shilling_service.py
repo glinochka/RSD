@@ -19,6 +19,7 @@ from .chat_membership_service import (
     ensure_watcher_membership,
     get_reader_account,
     is_chat_watchable,
+    list_joined_task_chats,
     list_watchable_chats,
 )
 from .account_pacing import account_active_window, in_account_active_hours, schedule_account_target_rest
@@ -1102,6 +1103,13 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "dialogues_sent": 0}
         if no_accounts_picked(cfg):
             return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "dialogues_sent": 0}
+        from .pending_action_service import process_due_pending_actions
+
+        flushed = await process_due_pending_actions(
+            session, automation_id, action_types=("shilling_post", "shilling_chat")
+        )
+        if flushed:
+            dialogues_sent += flushed
         if cfg.get("chat_shilling") is False:
             return {"status": "skipped", "reason": "chat_shilling_off", "chats_processed": 0, "dialogues_sent": 0}
         from .task_targets import resolve_task_chat_ids
@@ -1110,13 +1118,25 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
 
         chats = [
             chat
-            for chat in await list_watchable_chats(
+            for chat in await list_joined_task_chats(
                 session,
                 automation_id,
+                _as_int_list(cfg.get("account_ids")),
+                allowed_chats,
                 limit=settings.CUSTOM_ACTION_SCAN_BATCH,
             )
-            if is_group_chat(chat) and (not allowed_chats or chat.id in allowed_chats)
+            if is_group_chat(chat)
         ]
+        if not chats:
+            chats = [
+                chat
+                for chat in await list_watchable_chats(
+                    session,
+                    automation_id,
+                    limit=settings.CUSTOM_ACTION_SCAN_BATCH,
+                )
+                if is_group_chat(chat) and (not allowed_chats or chat.id in allowed_chats)
+            ]
         from .task_dedup import persist_unique_chats
 
         persist_unique_chats(
