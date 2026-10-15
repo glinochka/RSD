@@ -328,7 +328,39 @@ async def join_linked_discussion(client: TelegramAccountClient, channel_entity: 
         pass
     except InviteRequestSentError:
         raise
+    except Exception as exc:
+        # Linked discussion groups are often not independently public.
+        # JoinChannel then returns CHANNEL_PRIVATE; GetDiscussionMessage still joins.
+        logger.info("JoinChannel for linked discussion skipped: %s", exc)
     return discussion
+
+
+async def resolve_discussion_for_post(
+    client: TelegramAccountClient, channel_entity: Any, post_id: int
+) -> tuple[Any, int]:
+    """Map a channel post to its discussion message. Also joins the linked group."""
+    from telethon import functions
+
+    result = await client(
+        functions.messages.GetDiscussionMessageRequest(peer=channel_entity, msg_id=int(post_id))
+    )
+    messages = [msg for msg in (getattr(result, "messages", None) or []) if getattr(msg, "id", None)]
+    if not messages:
+        raise ValueError("no discussion messages")
+    root = min(messages, key=lambda msg: int(msg.id))
+    root_channel_id = getattr(getattr(root, "peer_id", None), "channel_id", None)
+    discussion = None
+    for chat in getattr(result, "chats", None) or []:
+        if getattr(chat, "id", None) == root_channel_id:
+            discussion = chat
+            break
+    if discussion is None and getattr(result, "chats", None):
+        discussion = result.chats[-1]
+    if discussion is None:
+        raise ValueError("no discussion peer")
+    telethon = getattr(client, "client", client)
+    peer = await telethon.get_input_entity(discussion)
+    return peer, int(root.id)
 
 
 async def _join_private(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:

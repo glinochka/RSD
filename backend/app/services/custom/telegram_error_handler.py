@@ -412,17 +412,50 @@ _WRITE_ONLY_TOKENS = (
 )
 
 
+_PRE_SEND_RPC = {
+    "SetTypingRequest",
+    "JoinChannelRequest",
+    "GetParticipantRequest",
+    "GetFullChannelRequest",
+}
+
+
+def rpc_caused_by(exc: Exception) -> str:
+    blob = str(exc)
+    marker = "(caused by "
+    if marker not in blob:
+        return ""
+    return blob.rsplit(marker, 1)[-1].rstrip(")").strip()
+
+
+def comment_send_error_label(exc: Exception) -> str:
+    """Short code for a failed comment send — never a generic not_ready."""
+    blob = f"{type(exc).__name__} {exc}".lower()
+    compact = blob.replace("_", "").replace(" ", "")
+    if "msgidinvalid" in compact or "message id used in the peer was invalid" in blob:
+        return "no_discussion"
+    if "channelprivate" in compact or "channel specified is private" in blob:
+        return "discussion_private"
+    if is_chat_write_forbidden(exc):
+        return "comments_closed"
+    text = str(exc).split("(caused by")[0].strip()
+    return (text or "send_failed")[:180]
+
+
 def is_comments_unusable(exc: Exception) -> bool:
-    """True when this channel/chat cannot take comments from anyone, so it should be black-boxed."""
+    """True when this channel cannot take comments from anyone, so it should be black-boxed.
+
+    ChannelPrivate / JoinChannel / SetTyping mean THIS account cannot enter the
+    linked discussion. The public channel itself may still have open comments.
+    """
+    if rpc_caused_by(exc) in _PRE_SEND_RPC:
+        return False
     if is_chat_write_forbidden(exc):
         return True
     name = type(exc).__name__
     blob = f"{name} {exc}".lower()
     compact = blob.replace("_", "").replace(" ", "")
     needles = (
-        "channelprivate",
-        "chatforbidden",
-        "the channel specified is private",
         "invitehashexpired",
         "invite hash expired",
     )

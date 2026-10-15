@@ -985,7 +985,7 @@ async def _react_to_post(
     )
     if not comment:
         return lab_result(ok=False, detail="Не удалось сгенерировать комментарий.", post_id=post_id)
-    sent = await _send_comment(
+    send_error = await _send_comment(
         session,
         automation.id,
         channel,
@@ -994,9 +994,9 @@ async def _react_to_post(
         comment,
         post_text=post_text,
     )
-    if sent:
+    if send_error is None:
         return lab_result(ok=True, detail="Комментарий оставлен.", post_id=post_id, comment=comment)
-    return lab_result(ok=False, detail="Не удалось отправить комментарий.", post_id=post_id)
+    return lab_result(ok=False, detail=f"Не удалось отправить комментарий ({send_error}).", post_id=post_id)
 
 
 def reset_channel_watches() -> None:

@@ -514,11 +514,9 @@ async def human_send_public(
             await asyncio.sleep(random.uniform(0.6, 2.4))
         try:
             await show_typing(client, typing_peer, typing_duration_seconds(text, lab_mode=False))
-        except Exception as exc:
-            from .telegram_error_handler import is_comments_unusable
-
-            if is_comments_unusable(exc):
-                raise
+        except Exception:
+            # Typing in a linked discussion often fails (CHANNEL_PRIVATE) before
+            # GetDiscussionMessage has actually joined the account. Still send.
     kwargs: dict[str, Any] = {}
     if comment_to is not None:
         kwargs["comment_to"] = comment_to

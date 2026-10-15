@@ -35,7 +35,7 @@ from .rotation_service import (
 )
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import execute_with_telegram_retry, is_comments_unusable
+from .telegram_error_handler import comment_send_error_label, execute_with_telegram_retry, is_comments_unusable
 from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
@@ -343,14 +343,15 @@ async def _send_comment(
     *,
     post_text: str = "",
     lab_mode: bool = False,
-) -> bool:
+) -> str | None:
+    """Return None if the comment was sent, otherwise a short error code."""
     if getattr(account, "is_channel_banned", False) or getattr(account, "is_frozen", False):
-        return False
+        return "account_cannot_write"
     if not account.session_file_path:
-        return False
+        return "no_session"
     session_path = _media_root() / account.session_file_path
     if not session_path.exists():
-        return False
+        return "no_session"
 
     payload = {
         "chat_target_id": chat_target.id,
@@ -365,16 +366,17 @@ async def _send_comment(
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
-            from .chat_join_service import join_linked_discussion
+            from .chat_join_service import join_linked_discussion, resolve_discussion_for_post
             from .human_dm import human_send_public
 
             async def _send():
-                discussion = await join_linked_discussion(client, entity)
+                await join_linked_discussion(client, entity)
+                discussion, reply_id = await resolve_discussion_for_post(client, entity, post_id)
                 return await human_send_public(
                     client,
-                    entity,
+                    discussion,
                     text,
-                    comment_to=post_id,
+                    reply_to=reply_id,
                     discussion_entity=discussion,
                     lab_mode=lab_mode,
                 )
@@ -397,7 +399,7 @@ async def _send_comment(
 
             await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
             await session.commit()
-        return False
+        return comment_send_error_label(exc)
 
     record_successful_send(account)
     log = AutomationActionLog(
@@ -419,7 +421,7 @@ async def _send_comment(
         "neurocommenting",
         f"{actor_label(account)} прокомментировал {chat_label(chat_target)}: «{clip_text(text)}»",
     )
-    return True
+    return None
 
 
 async def process_chat_target(
@@ -704,10 +706,10 @@ async def process_chat_target(
         if not comment:
             continue
 
-        success = await _send_comment(
+        send_error = await _send_comment(
             session, automation_id, chat_target, actor, post.id, comment, post_text=post.text or "", lab_mode=lab_mode
         )
-        if success:
+        if send_error is None:
             sent += 1
             if not lab_mode:
                 from .module_delays import clamp_comment_gap_pair

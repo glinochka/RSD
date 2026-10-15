@@ -28,6 +28,8 @@ from ...alembic.models import (
     ChatSource,
     ChatTarget,
     MembershipPurpose,
+    PendingChatAction,
+    PendingChatActionStatus,
     SocialAccount,
 )
 
@@ -418,6 +420,78 @@ async def blackbox_unusable_chat(
     except Exception:
         logger.exception("Reserve replacement failed for chat %s", chat_target.id)
     return released
+
+
+async def reopen_false_comment_blackbox(session: AsyncSession, automation_id: int) -> int:
+    """Undo comments_closed blackbox on public channels that still have queued comments.
+
+    JoinChannel/SetTyping CHANNEL_PRIVATE was treated as 'comments closed' and
+    boxed live city channels. Public usernames with pending neurocomments get
+    one more chance via GetDiscussionMessage.
+    """
+    from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
+
+    now = _utc_now()
+    cutoff = now - timedelta(hours=36)
+    pending_ids = set(
+        (
+            await session.execute(
+                select(PendingChatAction.chat_target_id).where(
+                    PendingChatAction.custom_automation_id == automation_id,
+                    PendingChatAction.action_type == "neurocommenting",
+                    PendingChatAction.status == PendingChatActionStatus.PENDING.value,
+                )
+            )
+        ).scalars().all()
+    )
+    if not pending_ids:
+        return 0
+    chats = (
+        await session.execute(
+            select(ChatTarget).where(
+                ChatTarget.custom_automation_id == automation_id,
+                ChatTarget.id.in_(pending_ids),
+                ChatTarget.black_boxed_at.is_not(None),
+                ChatTarget.black_boxed_at >= cutoff,
+                ChatTarget.comments_open.is_(False),
+                ChatTarget.comments_check_error == "comments_closed",
+            )
+        )
+    ).scalars().all()
+    opened = 0
+    for chat in chats:
+        link = (chat.invite_link or "").strip()
+        if not link:
+            continue
+        try:
+            parsed = parse_telegram_chat_ref(link)
+        except TelegramChatRefError:
+            continue
+        if parsed.kind != "username" or parsed.is_private:
+            continue
+        chat.black_boxed_at = None
+        chat.comments_open = None
+        chat.comments_check_error = None
+        chat.mod_status = "untested"
+        chat.mode = "neurocommenting"
+        chat.is_active = True
+        chat.updated_at = now
+        left_rows = (
+            await session.execute(
+                select(AccountChatMembership).where(
+                    AccountChatMembership.chat_target_id == chat.id,
+                    AccountChatMembership.join_status == ChatJoinStatus.LEFT.value,
+                    AccountChatMembership.last_join_error == "comments_closed",
+                )
+            )
+        ).scalars().all()
+        for membership in left_rows:
+            membership.join_status = ChatJoinStatus.JOINED.value
+            membership.last_join_error = None
+            membership.updated_at = now
+        opened += 1
+        logger.info("Reopened public comment blackbox for chat %s", chat.id)
+    return opened
 
 
 async def _assign_chats_to_account(

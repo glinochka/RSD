@@ -1375,6 +1375,54 @@ class TestChatCreateAndJoin:
         assert "full_req" in client.calls
         assert "join_req" in client.calls
 
+    async def test_join_linked_discussion_private_group_still_returns(self):
+        from unittest.mock import patch
+
+        from app.services.custom.chat_join_service import join_linked_discussion
+
+        class Discussion:
+            id = 99
+            title = "Comments"
+
+        class Channel:
+            id = 10
+            title = "News"
+            broadcast = True
+            megagroup = False
+
+        class FullChat:
+            linked_chat_id = 99
+
+        class Full:
+            full_chat = FullChat()
+            chats = [Channel(), Discussion()]
+
+        class ChannelPrivateError(Exception):
+            pass
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            async def __call__(self, request):
+                self.calls.append(request)
+                if request == "full_req":
+                    return Full()
+                raise ChannelPrivateError(
+                    "The channel specified is private (caused by JoinChannelRequest)"
+                )
+
+            async def get_entity(self, identifier):
+                return Discussion()
+
+        client = FakeClient()
+        with patch("app.services.custom.chat_join_service.GetFullChannelRequest", return_value="full_req"), patch(
+            "app.services.custom.chat_join_service.JoinChannelRequest", return_value="join_req"
+        ):
+            result = await join_linked_discussion(client, Channel())
+        assert result is not None
+        assert result.id == 99
+
 
 class TestLeadKeywords:
     async def test_normalize_and_match(self):

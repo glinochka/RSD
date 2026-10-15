@@ -85,8 +85,25 @@ def test_expired_invite_is_permanent_and_hidden():
     assert is_operational_skip_error("Ссылка-приглашение истекла", {"blackbox": True}) is True
     class ChannelPrivateError(Exception):
         pass
-    assert is_comments_unusable(ChannelPrivateError("The channel specified is private")) is True
-    assert is_comments_unusable(Exception("You can't write in this chat (caused by SetTypingRequest)")) is True
+    assert is_comments_unusable(ChannelPrivateError("The channel specified is private")) is False
+    assert is_comments_unusable(Exception("You can't write in this chat (caused by SetTypingRequest)")) is False
+    assert is_comments_unusable(Exception("You can't write in this chat (caused by SendMessageRequest)")) is True
+    from app.services.custom.telegram_error_handler import comment_send_error_label
+
+    assert (
+        comment_send_error_label(
+            ChannelPrivateError(
+                "The channel specified is private (caused by JoinChannelRequest)"
+            )
+        )
+        == "discussion_private"
+    )
+    assert (
+        comment_send_error_label(
+            Exception("The message ID used in the peer was invalid (caused by GetDiscussionMessageRequest)")
+        )
+        == "no_discussion"
+    )
 
 
 def test_dead_username_probe_is_not_a_retry():

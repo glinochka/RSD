@@ -68,8 +68,24 @@ def _pending_account_block(account: SocialAccount | None, action_type: str) -> t
     return False, None
 
 
+_PENDING_FAIL_RU = {
+    "not_ready": "ещё не готов",
+    "send_failed": "Telegram отклонил отправку",
+    "no_discussion": "у поста нет ветки комментариев",
+    "discussion_private": "не смог зайти в чат комментариев",
+    "comments_closed": "комментарии закрыты",
+    "empty_comment": "пустой текст комментария",
+    "account_blocked": "аккаунт не может писать в канал",
+    "account_cannot_write": "аккаунт не может писать",
+    "no_session": "нет файла сессии",
+}
+
+
 async def _unstick_comment_queue(session: AsyncSession, automation_id: int) -> None:
     """Retry comments that failed as not_ready or were parked until the next morning."""
+    from .chat_membership_service import reopen_false_comment_blackbox
+
+    await reopen_false_comment_blackbox(session, automation_id)
     now = _utc_now()
     cutoff = now - timedelta(hours=36)
     parked_after = now + timedelta(hours=2)
@@ -87,7 +103,7 @@ async def _unstick_comment_queue(session: AsyncSession, automation_id: int) -> N
     for action in rows:
         err = str(action.last_error or "")
         parked = action.next_attempt_at is not None and action.next_attempt_at > parked_after
-        generation_miss = err in {"", "not_ready", "empty_comment"}
+        generation_miss = err in {"", "not_ready", "empty_comment", "send_failed", "discussion_private"}
         if action.status == FAILED and generation_miss:
             action.status = PENDING
             action.attempts = 0
@@ -432,10 +448,11 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
     if action.action_type == "neurocommenting":
         from .job_service import log_active
 
+        detail = _PENDING_FAIL_RU.get(action.last_error or "", action.last_error or "not_ready")
         await log_active(
             action.custom_automation_id,
             "neurocommenting",
-            f"Отложенный комментарий не ушёл: {action.last_error}",
+            f"Отложенный комментарий не ушёл: {detail}",
             level="error",
         )
     return False
@@ -444,6 +461,7 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
 async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
     chat = await session.get(ChatTarget, action.chat_target_id)
     if not chat:
+        action.last_error = "chat_missing"
         return False
     payload = action.payload or {}
     account = await session.get(SocialAccount, action.social_account_id)
@@ -468,6 +486,7 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
 
         account = await session.get(SocialAccount, action.social_account_id)
         if not account:
+            action.last_error = "account_missing"
             return False
         if getattr(account, "is_channel_banned", False) or getattr(account, "is_frozen", False):
             from .chat_membership_service import get_reader_account
@@ -509,7 +528,7 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
         if not comment:
             action.last_error = "empty_comment"
             return False
-        sent = await _send_comment(
+        send_error = await _send_comment(
             session,
             action.custom_automation_id,
             chat,
@@ -518,9 +537,12 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             comment,
             post_text=post_text,
         )
-        if not sent:
-            action.last_error = action.last_error or "send_failed"
-        return sent
+        if send_error:
+            action.last_error = send_error
+            if send_error in {"no_discussion", "comments_closed"}:
+                action.status = FAILED
+            return False
+        return True
     if action.action_type == "shilling_post":
         from .chat_scope import count_target_actions_today
         from .shilling_service import perform_post_shilling
