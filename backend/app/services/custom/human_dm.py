@@ -517,6 +517,7 @@ async def human_send_public(
         except Exception:
             # Typing in a linked discussion often fails (CHANNEL_PRIVATE) before
             # GetDiscussionMessage has actually joined the account. Still send.
+            pass
     kwargs: dict[str, Any] = {}
     if comment_to is not None:
         kwargs["comment_to"] = comment_to
