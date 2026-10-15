@@ -264,7 +264,7 @@ def _work_streams(automation: CustomAutomation) -> list[tuple[str, StreamFn]]:
 
 
 async def run_account_sessions(automation_id: int) -> dict[str, Any]:
-    """One tick: keep sessions, always join/addlist, then the next work stream."""
+    """One tick: keep sessions, always join, run every active job stream, then one idle stream."""
     token = None
     try:
         async with async_session_maker() as session:
@@ -315,10 +315,25 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
         join_result = await join_fn(automation_id) if join_fn else None
         if not work:
             return {"status": "ok", "stream": "join", "join": join_result, "result": join_result, **sync}
-        name, fn = work[hub.cursor % len(work)]
-        hub.cursor += 1
-        result = await fn(automation_id)
-        return {"status": "ok", "stream": name, "join": join_result, "result": result, **sync}
+        job_work = [(name, fn) for name, fn in work if STREAM_JOB_TYPES.get(name)]
+        lifestyle = [(name, fn) for name, fn in work if not STREAM_JOB_TYPES.get(name)]
+        results: dict[str, Any] = {}
+        for name, fn in job_work:
+            results[name] = await fn(automation_id)
+        lifestyle_name = None
+        if lifestyle:
+            lifestyle_name, lifestyle_fn = lifestyle[hub.cursor % len(lifestyle)]
+            hub.cursor += 1
+            results[lifestyle_name] = await lifestyle_fn(automation_id)
+        primary = job_work[0][0] if job_work else lifestyle_name
+        return {
+            "status": "ok",
+            "stream": primary or "join",
+            "join": join_result,
+            "result": results.get(primary) if primary else join_result,
+            "results": results,
+            **sync,
+        }
     except Exception as exc:
         logger.exception("Account session tick failed for %s: %s", automation_id, exc)
         return {"status": "error", "error": str(exc)[:240]}

@@ -2421,19 +2421,15 @@ class TestShilling:
                     post_id=post_id,
                     account_id=account.id,
                     neuro_enabled=True,
-                    shilling_enabled=False,
+                    shilling_enabled=True,
                     activate_roll=lambda: 0.0,
                     pick=lambda options: "neurocommenting",
+                    pick_gap=lambda: 1,
+                    switch_roll=lambda: 1.0,
                 )
             )
-        assert results == [
-            "neurocommenting",
-            SKIP,
-            "neurocommenting",
-            SKIP,
-            "neurocommenting",
-            SKIP,
-        ]
+        assert results[0] == "neurocommenting"
+        assert results[1] == SKIP
 
     async def test_lab_mode_post_engagement_always_acts(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -7190,7 +7186,7 @@ class TestProductionFieldLogic:
         account = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="gap_acc", phone="+79991110006"
         )
-        missed = await claim_post_engagement(
+        first = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
@@ -7198,10 +7194,10 @@ class TestProductionFieldLogic:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=False,
-            activate_roll=lambda: 0.30,
+            activate_roll=lambda: 0.99,
         )
-        assert missed == SKIP
-        acted = await claim_post_engagement(
+        assert first == "neurocommenting"
+        second = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
@@ -7209,22 +7205,10 @@ class TestProductionFieldLogic:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=False,
-            activate_roll=lambda: 0.0,
+            activate_roll=lambda: 0.99,
             pick=lambda options: options[0],
         )
-        assert acted == "neurocommenting"
-        blocked_repeat = await claim_post_engagement(
-            test_session,
-            automation_id=custom_automation.id,
-            chat_target_id=1,
-            post_id=12,
-            account_id=account.id,
-            neuro_enabled=True,
-            shilling_enabled=False,
-            activate_roll=lambda: 0.0,
-            pick=lambda options: options[0],
-        )
-        assert blocked_repeat == SKIP
+        assert second == "neurocommenting"
         other_channel = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
@@ -7233,7 +7217,7 @@ class TestProductionFieldLogic:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=False,
-            activate_roll=lambda: 0.0,
+            activate_roll=lambda: 0.99,
             pick=lambda options: options[0],
         )
         assert other_channel == "neurocommenting"

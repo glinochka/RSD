@@ -156,6 +156,11 @@ def _avoid_same_type(
     return SKIP
 
 
+def _mixed_modules(neuro_enabled: bool, shilling_enabled: bool) -> bool:
+    """Skip-chance and post gaps only when comment + shill compete on the same post."""
+    return bool(neuro_enabled and shilling_enabled)
+
+
 def _decide_result(
     *,
     neuro_enabled: bool,
@@ -168,12 +173,13 @@ def _decide_result(
     type_roll: Callable[[], float],
     switch_roll: Callable[[], float],
 ) -> str:
-    if not lab_mode and _gap_blocks(older, post_id):
+    mixed = _mixed_modules(neuro_enabled, shilling_enabled)
+    if not lab_mode and mixed and _gap_blocks(older, post_id):
         return SKIP
-    if not lab_mode and activate_roll() >= POST_ACTION_CHANCE:
+    if not lab_mode and mixed and activate_roll() >= POST_ACTION_CHANCE:
         return SKIP
     chosen = _pick_action(neuro_enabled, shilling_enabled, pick, type_roll)
-    if lab_mode:
+    if lab_mode or not mixed:
         return chosen
     return _avoid_same_type(
         chosen,
@@ -202,9 +208,9 @@ async def claim_post_engagement(
 ) -> ClaimResult:
     """Decide once per post: skip / neurocommenting / shilling.
 
-    Production: ~22% chance to act, then skip the next 1–3 posts. Never two
-    actions in a row, and avoid repeating the same module back-to-back.
-    If both modules are on, shilling wins 35% of the time. Lab always acts.
+    A dedicated commenting (or shilling) job uses the task probability as the
+    only skip. Mixed comment+shill still rolls ~22% and skips the next 1–3
+    posts so the two modules do not stack on every message. Lab always acts.
     """
     existing = await get_post_engagement_claim(session, automation_id, chat_target_id, post_id)
     if existing:
@@ -230,7 +236,12 @@ async def claim_post_engagement(
         type_roll=type_roller,
         switch_roll=type_switch,
     )
-    skip_next = max(POST_SKIP_GAP_MIN, int(gap_picker())) if result in {NEUROCOMMENTING, SHILLING} else 0
+    mixed = _mixed_modules(neuro_enabled, shilling_enabled)
+    skip_next = (
+        max(POST_SKIP_GAP_MIN, int(gap_picker()))
+        if mixed and result in {NEUROCOMMENTING, SHILLING}
+        else 0
+    )
 
     payload: dict[str, Any] = {
         "chat_target_id": chat_target_id,

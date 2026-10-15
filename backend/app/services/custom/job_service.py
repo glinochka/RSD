@@ -628,6 +628,25 @@ async def list_active_job_types(automation_id: int) -> set[str]:
         return {str(item) for item in rows if item}
 
 
+async def load_active_job_params(
+    session: AsyncSession, automation_id: int, job_type: str
+) -> dict[str, Any] | None:
+    """Params of the running Tasks job, so the session loop matches the card."""
+    job = await session.scalar(
+        select(CustomJob)
+        .where(
+            CustomJob.custom_automation_id == automation_id,
+            CustomJob.job_type == job_type,
+            CustomJob.status.in_(tuple(ACTIVE_STATUSES)),
+        )
+        .order_by(CustomJob.id.desc())
+        .limit(1)
+    )
+    if job is None or not isinstance(job.params, dict):
+        return None
+    return dict(job.params)
+
+
 async def log_active(automation_id: int, job_type: str, message: str, *, level: str = "info") -> None:
     job_id = await find_active_job_id(automation_id, job_type)
     if job_id:

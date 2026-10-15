@@ -62,18 +62,35 @@ DEFAULT_NEUROCOMMENTING_PROMPT = """Ты — участник Telegram-чата/
 }"""
 
 
-# Cursor is the real filter (only unseen posts).  Age is a safety backstop.
-# Window must be wide enough to cover:
-#   detection latency  (up to 3 min)
-#   + mandatory anti-spam delay (3-4 min, see POST_COMMENT_DELAY_* below)
-#   + processing / queue time   (~3 min)
-# → 20 min total gives comfortable headroom.
-POST_MAX_AGE = timedelta(minutes=20)
+# Cursor is the real filter (only unseen posts). Age is a safety backstop.
+# 20 min was meant for "first replies", but join waves take hours and most
+# channels post a few times a day — so the scanner armed the cursor on stale
+# history and never commented. Six hours still skips yesterday, but a channel
+# joined at noon can get a comment on this morning's post.
+POST_MAX_AGE = timedelta(hours=6)
 
 # Anti-spam-bot delay: some channels have bots that auto-delete comments posted
 # within the first few minutes of a post.  We always wait at least this long.
 POST_COMMENT_DELAY_MIN_SECONDS = 3 * 60   # 3 min
 POST_COMMENT_DELAY_MAX_SECONDS = 4 * 60   # 4 min
+_COMMENT_SCAN_BATCH = 40
+_SKIP_DIGEST_SECONDS = 600
+_last_skip_digest_at: dict[int, datetime] = {}
+_SKIP_DIGEST_LABELS = {
+    "armed_cursor": "старые посты, курсор",
+    "no_fresh_posts": "нет свежих постов",
+    "comments_closed": "комменты закрыты",
+    "not_watchable": "ещё не вступили",
+    "not_channel": "не канал",
+    "no_account": "нет аккаунта",
+    "night": "ночной простой",
+    "chat_daily_limit": "лимит чата",
+    "chat_daily_target_limit": "лимит действий",
+    "rolled_skip": "вероятность",
+    "deferred": "отложено",
+    "paused": "на паузе",
+    "account_blocked": "аккаунт заблокирован",
+}
 
 
 def _utc_now() -> datetime:
@@ -520,7 +537,7 @@ async def process_chat_target(
                 apply_entity_metadata(chat_target, entity)
                 if not is_broadcast_channel(chat_target):
                     return await _skip_chat(session, chat_target, "not_channel")
-                history = await client.client.get_messages(entity, limit=8)
+                history = await client.client.get_messages(entity, limit=12)
                 posts, latest_id, cursor_reason = collect_new_channel_posts(
                     history, chat_target, lab_mode=lab_mode
                 )
@@ -536,6 +553,8 @@ async def process_chat_target(
                     set_post_cursor(chat_target, latest_id)
                 if cursor_reason == "armed_cursor":
                     return await _skip_chat(session, chat_target, "armed_cursor")
+                if not posts:
+                    return await _skip_chat(session, chat_target, "no_fresh_posts")
                 if not lab_mode and respect_night and not farm_overlap_active_hours():
                     return await _skip_chat(session, chat_target, "night")
             break
@@ -552,6 +571,7 @@ async def process_chat_target(
     posts.sort(key=lambda msg: int(msg.id), reverse=True)
     sent = 0
     shilled = 0
+    deferred = 0
     if not lab_mode and chat_sent_today >= chat_limit:
         chat_target.last_scanned_at = _utc_now()
         chat_target.updated_at = _utc_now()
@@ -657,6 +677,7 @@ async def process_chat_target(
                             f"{actor_label(actor)} отложил комментарий в {chat_label(chat_target)} "
                             f"на {format_delay_ru(remaining)} — пост ещё свежий, ждём антибот-паузу",
                         )
+                        deferred += 1
                     continue
         # ────────────────────────────────────────────────────────────────────
 
@@ -684,20 +705,62 @@ async def process_chat_target(
     chat_target.last_scanned_at = _utc_now()
     chat_target.updated_at = _utc_now()
     await session.commit()
-    return {"status": "ok", "sent": sent, "shilled": shilled}
+    reason = None
+    if sent == 0 and shilled == 0:
+        if deferred:
+            reason = "deferred"
+        elif posts:
+            reason = "rolled_skip"
+        else:
+            reason = "no_fresh_posts"
+    return {"status": "ok", "sent": sent, "shilled": shilled, "deferred": deferred, "reason": reason}
+
+
+def _comment_scan_limit() -> int:
+    return max(int(settings.CUSTOM_ACTION_SCAN_BATCH or 20), _COMMENT_SCAN_BATCH)
+
+
+def _skip_digest_line(skip_counts: dict[str, int], *, chats: int, sent: int, deferred: int) -> str:
+    parts = [f"Проверил {chats} каналов, куда уже вступили: отправил {sent}, отложил {deferred}"]
+    bits = []
+    for key, count in skip_counts.items():
+        if count <= 0:
+            continue
+        bits.append(f"{_SKIP_DIGEST_LABELS.get(key, key)} {count}")
+    if bits:
+        parts.append("пропуски: " + ", ".join(bits))
+    return ". ".join(parts)
+
+
+def _should_log_skip_digest(automation_id: int, *, sent: int, deferred: int) -> bool:
+    now = _utc_now()
+    if sent or deferred:
+        _last_skip_digest_at[automation_id] = now
+        return True
+    last = _last_skip_digest_at.get(automation_id)
+    if last is not None and (now - last).total_seconds() < _SKIP_DIGEST_SECONDS:
+        return False
+    _last_skip_digest_at[automation_id] = now
+    return True
 
 
 async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any] | None = None) -> dict[str, Any]:
     from ...alembic.database import async_session_maker
 
     total_sent = 0
+    total_deferred = 0
     chat_count = 0
+    skip_counts: dict[str, int] = {}
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
 
         cfg = run_config if isinstance(run_config, dict) else None
+        if cfg is None:
+            from .job_service import load_active_job_params
+
+            cfg = await load_active_job_params(session, automation_id, "neurocommenting")
         if cfg is None:
             cfg = ((automation.module_settings or {}).get("neurocommenting") or {})
         if not (
@@ -725,6 +788,7 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
             total_sent += flushed
         from .task_targets import resolve_task_chat_ids
 
+        scan_limit = _comment_scan_limit()
         chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurocommenting"))
         chats = [
             chat
@@ -733,7 +797,7 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                 automation_id,
                 _as_int_list(cfg.get("account_ids")),
                 chat_ids,
-                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
+                limit=scan_limit,
             )
             if is_broadcast_channel(chat) or not chat.chat_type
         ]
@@ -743,7 +807,7 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                 for chat in await list_watchable_chats(
                     session,
                     automation_id,
-                    limit=settings.CUSTOM_ACTION_SCAN_BATCH,
+                    limit=scan_limit,
                 )
                 if is_broadcast_channel(chat) or not chat.chat_type
             ]
@@ -761,8 +825,13 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                     run_config=cfg,
                 )
                 chat_count += 1
-                if res.get("sent"):
-                    total_sent += int(res["sent"])
+                sent_now = int(res.get("sent") or 0)
+                deferred_now = int(res.get("deferred") or 0)
+                total_sent += sent_now
+                total_deferred += deferred_now
+                if sent_now == 0 and deferred_now == 0:
+                    reason = str(res.get("reason") or "skipped")
+                    skip_counts[reason] = skip_counts.get(reason, 0) + 1
             except Exception as exc:
                 logger.exception("Neurocommenting failed for chat %s: %s", chat_target.id, exc)
                 from .job_service import chat_label, log_active
@@ -774,7 +843,25 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                     level="error",
                 )
 
-    return {"chats_processed": chat_count, "comments_sent": total_sent}
+        if chat_count and _should_log_skip_digest(
+            automation_id, sent=total_sent, deferred=total_deferred
+        ):
+            from .job_service import log_active
+
+            await log_active(
+                automation_id,
+                "neurocommenting",
+                _skip_digest_line(
+                    skip_counts, chats=chat_count, sent=total_sent, deferred=total_deferred
+                ),
+            )
+
+    return {
+        "chats_processed": chat_count,
+        "comments_sent": total_sent,
+        "comments_deferred": total_deferred,
+        "skips": skip_counts,
+    }
 
 
 async def run_lab_neurocommenting_pass(automation_id: int) -> dict[str, Any]:

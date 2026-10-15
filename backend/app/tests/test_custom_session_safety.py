@@ -430,10 +430,12 @@ def test_channel_posts_ignore_old_history():
 
     now = datetime(2026, 9, 21, 18, 0, 0)
     fresh = SimpleNamespace(id=20, text="new", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=5))
-    stale = SimpleNamespace(id=19, text="stale", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=25))
+    today = SimpleNamespace(id=19, text="today", date=now.replace(tzinfo=timezone.utc) - timedelta(hours=2))
+    stale = SimpleNamespace(id=18, text="stale", date=now.replace(tzinfo=timezone.utc) - timedelta(hours=7))
     old = SimpleNamespace(id=10, text="old", date=now.replace(tzinfo=timezone.utc) - timedelta(days=5))
     missing = SimpleNamespace(date=None)
     assert is_fresh_channel_post(fresh, now=now) is True
+    assert is_fresh_channel_post(today, now=now) is True
     assert is_fresh_channel_post(stale, now=now) is False
     assert is_fresh_channel_post(old, now=now) is False
     assert is_fresh_channel_post(missing, now=now) is False
@@ -445,10 +447,16 @@ def test_channel_posts_ignore_old_history():
     assert latest == 20
     assert reason is None
 
+    joined_today = SimpleNamespace(last_message_id=None)
+    posts, latest, reason = collect_new_channel_posts([old, today], joined_today, now=now)
+    assert [item.id for item in posts] == [19]
+    assert latest == 19
+    assert reason is None
+
     empty_cursor = SimpleNamespace(last_message_id=None)
     posts, latest, reason = collect_new_channel_posts([old, stale], empty_cursor, now=now)
     assert posts == []
-    assert latest == 19
+    assert latest == 18
     assert reason == "armed_cursor"
 
     chat.last_message_id = "18"
@@ -463,6 +471,51 @@ def test_channel_posts_ignore_old_history():
     assert [item.id for item in posts] == [21]
     assert latest == 21
     assert reason is None
+
+
+def test_comment_skip_digest_lists_reasons():
+    from app.services.custom.neurocommenting_service import _skip_digest_line
+
+    line = _skip_digest_line(
+        {"armed_cursor": 12, "no_fresh_posts": 5, "comments_closed": 1},
+        chats=20,
+        sent=0,
+        deferred=2,
+    )
+    assert "Проверил 20 каналов" in line
+    assert "отправил 0" in line
+    assert "отложил 2" in line
+    assert "старые посты, курсор 12" in line
+    assert "нет свежих постов 5" in line
+
+
+def test_comment_only_skips_mixed_chance():
+    from app.services.custom.post_engagement import _decide_result, SKIP
+
+    skipped = _decide_result(
+        neuro_enabled=True,
+        shilling_enabled=True,
+        older=[],
+        post_id=1,
+        lab_mode=False,
+        activate_roll=lambda: 0.99,
+        pick=lambda options: "neurocommenting",
+        type_roll=lambda: 0.0,
+        switch_roll=lambda: 1.0,
+    )
+    assert skipped == SKIP
+    acted = _decide_result(
+        neuro_enabled=True,
+        shilling_enabled=False,
+        older=[],
+        post_id=1,
+        lab_mode=False,
+        activate_roll=lambda: 0.99,
+        pick=lambda options: "neurocommenting",
+        type_roll=lambda: 0.0,
+        switch_roll=lambda: 1.0,
+    )
+    assert acted == "neurocommenting"
 
 
 def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
