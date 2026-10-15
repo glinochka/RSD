@@ -58,6 +58,13 @@ class AccountSessionHub:
                 closed += 1
         for account in wanted.values():
             if account.id in self.clients:
+                from .channel_post_listener import attach_comment_listener
+
+                attach_comment_listener(
+                    self.clients[account.id],
+                    account_id=account.id,
+                    automation_id=self.automation_id,
+                )
                 await self._open_parent(account)
                 continue
             if _session_should_sleep(account):
@@ -74,6 +81,11 @@ class AccountSessionHub:
             wrapper = TelegramAccountClient.for_account(account, automation_id=self.automation_id)
             await wrapper.keep_alive()
             self.clients[account.id] = wrapper
+            from .channel_post_listener import attach_comment_listener
+
+            attach_comment_listener(
+                wrapper, account_id=account.id, automation_id=self.automation_id
+            )
             await self._open_parent(account)
             async with async_session_maker() as session:
                 fresh = await session.get(SocialAccount, account.id)
@@ -106,6 +118,11 @@ class AccountSessionHub:
                 wrapper = TelegramAccountClient.for_account(fresh, automation_id=self.automation_id)
                 await wrapper.keep_alive()
                 self.clients[account.id] = wrapper
+                from .channel_post_listener import attach_comment_listener
+
+                attach_comment_listener(
+                    wrapper, account_id=account.id, automation_id=self.automation_id
+                )
                 await self._open_parent(fresh)
                 async with async_session_maker() as session:
                     live = await session.get(SocialAccount, account.id)

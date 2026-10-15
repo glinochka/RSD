@@ -473,6 +473,52 @@ def test_channel_posts_ignore_old_history():
     assert reason is None
 
 
+def test_channel_post_listener_peer_keys_and_post_filter():
+    from types import SimpleNamespace
+
+    from app.services.custom.channel_post_listener import (
+        attach_comment_listener,
+        is_channel_post,
+        peer_id_keys,
+    )
+
+    assert peer_id_keys(-10042) == ["-10042", "10042", "42"]
+    assert "-1007" in peer_id_keys(7)
+    channel = SimpleNamespace(
+        out=False,
+        is_channel=True,
+        is_group=False,
+        message=SimpleNamespace(text="hello", post=True, out=False),
+    )
+    assert is_channel_post(channel) is True
+    group = SimpleNamespace(
+        out=False,
+        is_channel=True,
+        is_group=True,
+        message=SimpleNamespace(text="hello", post=False, out=False),
+    )
+    assert is_channel_post(group) is False
+    empty = SimpleNamespace(
+        out=False,
+        is_channel=True,
+        is_group=False,
+        message=SimpleNamespace(text="  ", post=True, out=False),
+    )
+    assert is_channel_post(empty) is False
+
+    class FakeClient:
+        def __init__(self):
+            self.handlers = []
+
+        def add_event_handler(self, fn, event):
+            self.handlers.append((fn, event))
+
+    wrapper = SimpleNamespace(client=FakeClient())
+    assert attach_comment_listener(wrapper, account_id=1, automation_id=2) is True
+    assert attach_comment_listener(wrapper, account_id=1, automation_id=2) is False
+    assert len(wrapper.client.handlers) == 1
+
+
 def test_comment_skip_digest_lists_reasons():
     from app.services.custom.neurocommenting_service import _skip_digest_line
 

@@ -26,7 +26,7 @@ from .chat_membership_service import (
     retire_reader_and_replace,
 )
 from .chat_scope import apply_entity_metadata, commit_chat_scan, count_target_actions_today, is_broadcast_channel, is_lab_chat, is_paused, is_public_readable
-from .pending_action_service import enqueue_pending_action
+from .pending_action_service import enqueue_pending_action, has_pending_action
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
 from .rotation_service import (
     current_daily_messages_sent,
@@ -586,6 +586,10 @@ async def process_chat_target(
         if probability < 100 and random.random() * 100 > probability:
             continue
         if await _already_commented(session, automation_id, chat_target.id, post.id):
+            continue
+        if await has_pending_action(
+            session, automation_id, "neurocommenting", post_target_id(chat_target.id, post.id)
+        ):
             continue
         if sent + shilled >= max_comments_per_run:
             break
