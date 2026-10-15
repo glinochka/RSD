@@ -2248,6 +2248,23 @@ class CustomAutomation(Base):
         back_populates="automation",
         cascade="all, delete-orphan",
     )
+    content_factory_settings: Mapped["CustomContentFactorySettings | None"] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    content_factory_accounts: Mapped[list["CustomContentFactoryAccount"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    content_factory_videos: Mapped[list["CustomContentFactoryVideo"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    content_factory_token_usages: Mapped[list["CustomContentFactoryTokenUsage"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
 
 
 class CustomProxy(Base):
@@ -3148,3 +3165,238 @@ class AmocrmConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="amocrm_connection")
+
+
+class CustomContentFactorySettings(Base):
+    __tablename__ = "custom_content_factory_settings"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", name="uq_content_factory_settings_automation"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    sandbox_mode: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+
+    product_name: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    product_description: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    product_url: Mapped[str] = mapped_column(String(512), default="", server_default="", nullable=False)
+    cta_text: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    audience: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    niche: Mapped[str] = mapped_column(String(128), default="", server_default="", nullable=False)
+    content_formats: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    visual_styles: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    language: Mapped[str] = mapped_column(String(16), default="ru", server_default="ru", nullable=False)
+    tone: Mapped[str] = mapped_column(String(64), default="expert_friendly", server_default="expert_friendly", nullable=False)
+    brand_voice: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    forbidden_topics: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+
+    videos_per_day: Mapped[float] = mapped_column(Float, default=1.0, server_default="1", nullable=False)
+    duration_min: Mapped[int] = mapped_column(Integer, default=30, server_default="30", nullable=False)
+    duration_max: Mapped[int] = mapped_column(Integer, default=45, server_default="45", nullable=False)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), default="9:16", server_default="9:16", nullable=False)
+    posting_window_start: Mapped[str] = mapped_column(String(8), default="09:00", server_default="09:00", nullable=False)
+    posting_window_end: Mapped[str] = mapped_column(String(8), default="21:00", server_default="21:00", nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", server_default="Europe/Moscow", nullable=False)
+
+    idea_model: Mapped[str] = mapped_column(String(128), default="deepseek-chat", server_default="deepseek-chat", nullable=False)
+    script_model: Mapped[str] = mapped_column(String(128), default="deepseek-chat", server_default="deepseek-chat", nullable=False)
+    video_model: Mapped[str] = mapped_column(String(128), default="kling", server_default="kling", nullable=False)
+    tts_model: Mapped[str] = mapped_column(String(128), default="", server_default="", nullable=False)
+
+    openai_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    anthropic_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kling_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    runway_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    luma_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    elevenlabs_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    warmup_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7", nullable=False)
+    warmup_actions_per_day: Mapped[int] = mapped_column(Integer, default=8, server_default="8", nullable=False)
+    max_posts_per_account_per_day: Mapped[int] = mapped_column(Integer, default=2, server_default="2", nullable=False)
+    stagger_min_minutes: Mapped[int] = mapped_column(Integer, default=25, server_default="25", nullable=False)
+    uniqualize_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    unique_per_platform: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    hook_required: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    avoid_exact_hour: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    shadowban_pause_zero_views: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    shadowban_zero_views_threshold: Mapped[int] = mapped_column(Integer, default=3, server_default="3", nullable=False)
+
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="content_factory_settings")
+
+
+class CustomContentFactoryAccount(Base):
+    __tablename__ = "custom_content_factory_accounts"
+    __table_args__ = (
+        Index("ix_cf_accounts_automation_platform", "custom_automation_id", "platform"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(200), default="", server_default="", nullable=False)
+    handle: Mapped[str] = mapped_column(String(128), default="", server_default="", nullable=False)
+    external_id: Mapped[str] = mapped_column(String(191), default="", server_default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="connected", server_default="connected", nullable=False, index=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    credentials_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    warmup_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    warmup_actions_done: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    posts_today: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    posts_today_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    health_score: Mapped[int] = mapped_column(Integer, default=70, server_default="70", nullable=False)
+    risk_flags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    extra: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="content_factory_accounts")
+    posts: Mapped[list["CustomContentFactoryPost"]] = relationship(
+        back_populates="account",
+        cascade="all, delete-orphan",
+    )
+    warmup_events: Mapped[list["CustomContentFactoryWarmupEvent"]] = relationship(
+        back_populates="account",
+        cascade="all, delete-orphan",
+    )
+
+
+class CustomContentFactoryVideo(Base):
+    __tablename__ = "custom_content_factory_videos"
+    __table_args__ = (
+        Index("ix_cf_videos_automation_status", "custom_automation_id", "status"),
+        Index("ix_cf_videos_scheduled_for", "scheduled_for"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="queued", server_default="queued", nullable=False, index=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    idea: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    hook: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    script: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    caption: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    hashtags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    content_format: Mapped[str] = mapped_column(String(64), default="educational", server_default="educational", nullable=False)
+    visual_style: Mapped[str] = mapped_column(String(64), default="realism", server_default="realism", nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=35, server_default="35", nullable=False)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), default="9:16", server_default="9:16", nullable=False)
+    video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storyboard: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    uniqualization: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    uniqueness_hash: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False, index=True)
+    token_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default="0", nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    render_task_id: Mapped[str | None] = mapped_column(String(191), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extra: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="content_factory_videos")
+    posts: Mapped[list["CustomContentFactoryPost"]] = relationship(
+        back_populates="video",
+        cascade="all, delete-orphan",
+    )
+    token_usages: Mapped[list["CustomContentFactoryTokenUsage"]] = relationship(
+        back_populates="video",
+    )
+
+
+class CustomContentFactoryPost(Base):
+    __tablename__ = "custom_content_factory_posts"
+    __table_args__ = (
+        Index("ix_cf_posts_video_platform", "video_id", "platform"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    video_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_content_factory_videos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_content_factory_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending", nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(191), default="", server_default="", nullable=False)
+    posted_url: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    caption_variant: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    uniqualization_applied: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    views: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    likes: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    comments: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    shares: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    saves: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    analytics_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    video: Mapped["CustomContentFactoryVideo"] = relationship(back_populates="posts")
+    account: Mapped["CustomContentFactoryAccount"] = relationship(back_populates="posts")
+
+
+class CustomContentFactoryTokenUsage(Base):
+    __tablename__ = "custom_content_factory_token_usages"
+    __table_args__ = (
+        Index("ix_cf_tokens_automation_created", "custom_automation_id", "created_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    video_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_content_factory_videos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), default="", server_default="", nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="content_factory_token_usages")
+    video: Mapped["CustomContentFactoryVideo | None"] = relationship(back_populates="token_usages")
+
+
+class CustomContentFactoryWarmupEvent(Base):
+    __tablename__ = "custom_content_factory_warmup_events"
+    __table_args__ = (
+        Index("ix_cf_warmup_account_created", "account_id", "created_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_content_factory_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[str] = mapped_column(String(32), default="ok", server_default="ok", nullable=False)
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    account: Mapped["CustomContentFactoryAccount"] = relationship(back_populates="warmup_events")

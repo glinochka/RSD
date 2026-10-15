@@ -137,22 +137,25 @@ class YouTubeClient:
         title: str,
         description: str = "",
         privacy_status: str = "public",
+        media_bytes: bytes | None = None,
     ) -> dict[str, Any]:
         bundle = await self.ensure_fresh_access_token(token_bundle=token_bundle)
         access_token = str(bundle.get("access_token") or "").strip()
         if not access_token:
             raise RuntimeError("YouTube upload failed: empty access_token")
-        src = str(video_url or "").strip()
-        if not src:
-            raise RuntimeError("YouTube upload failed: empty video_url")
-
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            media_resp = await client.get(src)
-            if not media_resp.is_success:
-                raise RuntimeError(f"Failed to download rendered video: HTTP {media_resp.status_code}")
-            media_bytes = media_resp.content
-        if not media_bytes:
+        payload = media_bytes
+        if not payload:
+            src = str(video_url or "").strip()
+            if not src:
+                raise RuntimeError("YouTube upload failed: empty video_url")
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                media_resp = await client.get(src)
+                if not media_resp.is_success:
+                    raise RuntimeError(f"Failed to download rendered video: HTTP {media_resp.status_code}")
+                payload = media_resp.content
+        if not payload:
             raise RuntimeError("Rendered video content is empty")
+        media_bytes = payload
 
         metadata = {
             "snippet": {

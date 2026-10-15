@@ -166,6 +166,20 @@ const DmpIcon = () => (
     <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
   </Ico>
 );
+const FactoryIcon = () => (
+  <Ico>
+    <rect x="2" y="7" width="20" height="14" rx="2" />
+    <path d="M7 7V4h4v3" />
+    <circle cx="12" cy="14" r="3" />
+    <path d="M16 11l4-2v12" />
+  </Ico>
+);
+const FilmIcon = () => (
+  <Ico>
+    <rect x="2" y="4" width="20" height="16" rx="2" />
+    <path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5" />
+  </Ico>
+);
 const ChevronIcon = () => (
   <svg className="ubt-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <polyline points="6 9 12 15 18 9" />
@@ -253,6 +267,7 @@ const CustomSolutionLayout = () => {
 
   const activeGroup = useMemo(() => {
     if (path.includes('/ubt/')) return 'telegram';
+    if (path.includes('/content-factory')) return 'factory';
     if (path.includes('/dmp')) return 'dmp';
     if (path.includes('/integrations') || path.includes('/amocrm')) return 'integrations';
     if (path.includes('/settings') || path.includes('/prompts') || path.includes('/test')) return 'settings';
@@ -366,6 +381,50 @@ const CustomSolutionLayout = () => {
                         />
                       );
                     })}
+                  </div>
+                ) : null}
+              </>
+            )}
+
+            {isDmpBot ? null : (
+              <>
+                <button
+                  type="button"
+                  className={`ubt-group-toggle ${openGroups.factory ? 'ubt-group-toggle--open' : ''}`}
+                  onClick={() => toggleGroup('factory')}
+                >
+                  <span className="ubt-group-toggle-left">
+                    <FactoryIcon />
+                    ИИ Контент-завод
+                  </span>
+                  <ChevronIcon />
+                </button>
+                {openGroups.factory ? (
+                  <div className="ubt-subnav">
+                    <NavLink
+                      to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY(id)}
+                      label="Результаты"
+                      icon={FilmIcon}
+                      nested
+                      active={path === NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY(id)}
+                      onClick={closeMobile}
+                    />
+                    <NavLink
+                      to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS(id)}
+                      label="Аккаунты"
+                      icon={UsersIcon}
+                      nested
+                      active={isActive(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS(id))}
+                      onClick={closeMobile}
+                    />
+                    <NavLink
+                      to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS(id)}
+                      label="Настройки"
+                      icon={SlidersIcon}
+                      nested
+                      active={isActive(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS(id))}
+                      onClick={closeMobile}
+                    />
                   </div>
                 ) : null}
               </>

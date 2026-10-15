@@ -1761,3 +1761,76 @@ class TestLabActionResponse(BaseModel):
 
 class TestLabDmpRequest(BaseModel):
     phone: str = Field(..., min_length=5, max_length=32)
+
+
+class ContentFactorySettingsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    sandbox_mode: Optional[bool] = None
+    product_name: Optional[str] = Field(None, max_length=200)
+    product_description: Optional[str] = None
+    product_url: Optional[str] = Field(None, max_length=512)
+    cta_text: Optional[str] = Field(None, max_length=200)
+    audience: Optional[str] = None
+    niche: Optional[str] = Field(None, max_length=128)
+    content_formats: Optional[list[str]] = None
+    visual_styles: Optional[list[str]] = None
+    language: Optional[str] = Field(None, max_length=16)
+    tone: Optional[str] = Field(None, max_length=64)
+    brand_voice: Optional[str] = None
+    forbidden_topics: Optional[str] = None
+    videos_per_day: Optional[float] = Field(None, ge=0.2, le=8)
+    duration_min: Optional[int] = Field(None, ge=8, le=90)
+    duration_max: Optional[int] = Field(None, ge=8, le=120)
+    aspect_ratio: Optional[str] = Field(None, max_length=16)
+    posting_window_start: Optional[str] = Field(None, max_length=8)
+    posting_window_end: Optional[str] = Field(None, max_length=8)
+    timezone: Optional[str] = Field(None, max_length=64)
+    idea_model: Optional[str] = Field(None, max_length=128)
+    script_model: Optional[str] = Field(None, max_length=128)
+    video_model: Optional[str] = Field(None, max_length=128)
+    tts_model: Optional[str] = Field(None, max_length=128)
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    kling_api_key: Optional[str] = None
+    runway_api_key: Optional[str] = None
+    luma_api_key: Optional[str] = None
+    elevenlabs_api_key: Optional[str] = None
+    clear_openai_api_key: Optional[bool] = None
+    clear_anthropic_api_key: Optional[bool] = None
+    clear_kling_api_key: Optional[bool] = None
+    clear_runway_api_key: Optional[bool] = None
+    clear_luma_api_key: Optional[bool] = None
+    clear_elevenlabs_api_key: Optional[bool] = None
+    warmup_days: Optional[int] = Field(None, ge=1, le=30)
+    warmup_actions_per_day: Optional[int] = Field(None, ge=2, le=20)
+    max_posts_per_account_per_day: Optional[int] = Field(None, ge=1, le=8)
+    stagger_min_minutes: Optional[int] = Field(None, ge=5, le=240)
+    uniqualize_enabled: Optional[bool] = None
+    unique_per_platform: Optional[bool] = None
+    hook_required: Optional[bool] = None
+    avoid_exact_hour: Optional[bool] = None
+    shadowban_pause_zero_views: Optional[bool] = None
+    shadowban_zero_views_threshold: Optional[int] = Field(None, ge=2, le=10)
+
+
+class ContentFactoryAccountConnectRequest(BaseModel):
+    platform: str = Field(..., min_length=3, max_length=32)
+    display_name: str = Field("", max_length=200)
+    handle: str = Field("", max_length=128)
+    external_id: str = Field("", max_length=191)
+    credentials: dict[str, str] = Field(default_factory=dict)
+
+
+class ContentFactoryAccountUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(None, max_length=200)
+    handle: Optional[str] = Field(None, max_length=128)
+    external_id: Optional[str] = Field(None, max_length=191)
+    is_enabled: Optional[bool] = None
+    credentials: Optional[dict[str, str]] = None
+    pause: Optional[bool] = None
+    resume: Optional[bool] = None
+
+
+class ContentFactoryYoutubeOauthStartRequest(BaseModel):
+    return_url: Optional[str] = Field(None, max_length=512)
+

@@ -33,6 +33,7 @@ from .session_hygiene_service import run_session_hygiene_for_automation
 from .intercept_reauth_service import run_intercept_reauth_for_automation
 from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
 from .warmup_module_service import warmup_scheduler_active
+from .content_factory_pipeline import factory_scheduler_active, run_content_factory_pass
 
 logger = getLogger(__name__)
 
@@ -92,6 +93,7 @@ class CustomAutomationScheduler:
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
             "dmp_notify": 60,
             "amocrm_sync": settings.CUSTOM_AMOCRM_SYNC_INTERVAL_SECONDS,
+            "content_factory": 45,
         }
 
     @staticmethod
@@ -111,6 +113,7 @@ class CustomAutomationScheduler:
             "dmp_poll": poll_pending_imports,
             "dmp_notify": retry_pending_dmp_notifications,
             "amocrm_sync": run_amocrm_sync_for_automation,
+            "content_factory": run_content_factory_pass,
         }
 
     @staticmethod
@@ -137,6 +140,7 @@ class CustomAutomationScheduler:
                 CustomAutomationScheduler._module_enabled(automation, "dm_broadcasts"),
                 CustomAutomationScheduler._module_enabled(automation, "parser"),
                 warmup_scheduler_active(automation),
+                factory_scheduler_active(automation),
             ]
         )
 
@@ -150,6 +154,8 @@ class CustomAutomationScheduler:
                 jobs.add("dmp_poll")
             if qualification_enabled(automation):
                 jobs.add("lead_warmup")
+            if factory_scheduler_active(automation):
+                jobs.add("content_factory")
             return jobs
 
         jobs = {
@@ -174,6 +180,8 @@ class CustomAutomationScheduler:
             jobs.add("amocrm_sync")
         if (getattr(automation, "telegram_bot_token_enc", None) or "").strip():
             jobs.add("dmp_notify")
+        if factory_scheduler_active(automation):
+            jobs.add("content_factory")
         return jobs
 
     async def _fetch_active_automations(self, session: AsyncSession) -> list[CustomAutomation]:

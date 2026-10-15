@@ -2125,6 +2125,115 @@ const customService = {
     );
     return handleResponse(response);
   },
+
+  async getContentFactory(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY(automationId)}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async getContentFactorySettings(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS(automationId)}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async updateContentFactorySettings(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS(automationId)}`,
+      { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(data) },
+    );
+    return handleResponse(response);
+  },
+
+  async getContentFactoryAccounts(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS(automationId)}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async connectContentFactoryAccount(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(data) },
+    );
+    return handleResponse(response);
+  },
+
+  async updateContentFactoryAccount(automationId, accountId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNT(automationId, accountId)}`,
+      { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify(data) },
+    );
+    return handleResponse(response);
+  },
+
+  async deleteContentFactoryAccount(automationId, accountId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNT(automationId, accountId)}`,
+      { method: 'DELETE', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async startContentFactoryYoutubeOauth(automationId, returnUrl) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_YOUTUBE_OAUTH(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ return_url: returnUrl }) },
+    );
+    return handleResponse(response);
+  },
+
+  async getContentFactoryVideos(automationId, { status, limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (limit) params.set('limit', String(limit));
+    if (offset) params.set('offset', String(offset));
+    const query = params.toString();
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEOS(automationId)}${query ? `?${query}` : ''}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async getContentFactoryTokens(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_TOKENS(automationId)}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async generateContentFactoryVideo(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_GENERATE(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async retryContentFactoryVideo(automationId, videoId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEO_RETRY(automationId, videoId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async skipContentFactoryVideo(automationId, videoId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEO_SKIP(automationId, videoId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
 };
 
 export default customService;

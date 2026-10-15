@@ -425,6 +425,23 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_TEST_NEUROCOMMENTING: (id) => `/api/custom/automations/${id}/test/neurocommenting`,
   CUSTOM_AUTOMATION_TEST_CHANNEL_ACTIVITY: (id) => `/api/custom/automations/${id}/test/channel-activity`,
   CUSTOM_AUTOMATION_TEST_DMP: (id) => `/api/custom/automations/${id}/test/dmp`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY: (id) => `/api/custom/automations/${id}/content-factory`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS: (id) => `/api/custom/automations/${id}/content-factory/settings`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS: (id) => `/api/custom/automations/${id}/content-factory/accounts`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNT: (id, accountId) =>
+    `/api/custom/automations/${id}/content-factory/accounts/${accountId}`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_YOUTUBE_OAUTH: (id) =>
+    `/api/custom/automations/${id}/content-factory/accounts/youtube/oauth-start`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEOS: (id) => `/api/custom/automations/${id}/content-factory/videos`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEO: (id, videoId) =>
+    `/api/custom/automations/${id}/content-factory/videos/${videoId}`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEO_RETRY: (id, videoId) =>
+    `/api/custom/automations/${id}/content-factory/videos/${videoId}/retry`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_VIDEO_SKIP: (id, videoId) =>
+    `/api/custom/automations/${id}/content-factory/videos/${videoId}/skip`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_TOKENS: (id) => `/api/custom/automations/${id}/content-factory/tokens`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_GENERATE: (id) => `/api/custom/automations/${id}/content-factory/generate`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_RUN: (id) => `/api/custom/automations/${id}/content-factory/run`,
 };
 
 export const AGENT_ROLES = {
@@ -502,6 +519,9 @@ export const NAVIGATION_ROUTES = {
   CUSTOM_AUTOMATION_PROMPTS: (id) => `/custom/automations/${id}/prompts`,
   CUSTOM_AUTOMATION_PROMPT_EDIT: (id, promptId) => `/custom/automations/${id}/prompts/${promptId}/edit`,
   CUSTOM_AUTOMATION_TEST: (id) => `/custom/automations/${id}/test`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY: (id) => `/custom/automations/${id}/content-factory`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS: (id) => `/custom/automations/${id}/content-factory/accounts`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS: (id) => `/custom/automations/${id}/content-factory/settings`,
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

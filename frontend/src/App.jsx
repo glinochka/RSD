@@ -78,6 +78,9 @@ import CustomAutomationAmocrmPage from './pages/custom/automation/CustomAutomati
 import CustomAutomationPromptsPage from './pages/custom/automation/CustomAutomationPromptsPage';
 import CustomAutomationPromptEditPage from './pages/custom/automation/CustomAutomationPromptEditPage';
 import CustomAutomationTestPage from './pages/custom/automation/CustomAutomationTestPage';
+import CustomAutomationContentFactoryResultsPage from './pages/custom/automation/CustomAutomationContentFactoryResultsPage';
+import CustomAutomationContentFactoryAccountsPage from './pages/custom/automation/CustomAutomationContentFactoryAccountsPage';
+import CustomAutomationContentFactorySettingsPage from './pages/custom/automation/CustomAutomationContentFactorySettingsPage';
 
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage, WebsiteCreatePage } from './website-builder/pages';
@@ -267,6 +270,9 @@ const App = () => {
                   <Route path="dmp" element={<CustomAutomationDmpPage />} />
                   <Route path="dmp/connection" element={<CustomAutomationDmpConnectionPage />} />
                   <Route path="dmp/settings" element={<CustomAutomationDmpSettingsPage />} />
+                  <Route path="content-factory" element={<CustomAutomationContentFactoryResultsPage />} />
+                  <Route path="content-factory/accounts" element={<CustomAutomationContentFactoryAccountsPage />} />
+                  <Route path="content-factory/settings" element={<CustomAutomationContentFactorySettingsPage />} />
                   <Route path="integrations" element={<CustomAutomationIntegrationsPage />} />
                   <Route path="ubt/:moduleId" element={<CustomAutomationModulePlaceholder />} />
                   <Route path="amocrm" element={<CustomAutomationAmocrmPage />} />
