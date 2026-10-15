@@ -33,6 +33,76 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _pending_account_block(account: SocialAccount | None, action_type: str) -> tuple[bool, datetime | None]:
+    """Queued comments already waited the post delay — do not park them until tomorrow.
+
+    Idle gaps / short target rest still block new work, but a due neurocomment
+    should send. Night, flood, settle, and day-1 accounts still wait.
+    """
+    from .account_pacing import (
+        account_in_settle_rest,
+        account_is_flood_quarantined,
+        account_may_do_work,
+        farm_overlap_active_hours,
+        next_wake_at,
+    )
+
+    if account is None:
+        return True, None
+    if getattr(account, "is_banned", False) or getattr(account, "is_frozen", False):
+        return True, None
+    if action_type != "neurocommenting":
+        if account_should_idle(account):
+            wake = next_target_wake_at(account=account)
+            nxt = getattr(account, "next_action_at", None)
+            if nxt is not None and nxt > wake:
+                wake = nxt
+            return True, wake
+        return False, None
+    if account_in_settle_rest(account) or not account_may_do_work(account):
+        return True, next_wake_at(account=account)
+    if account_is_flood_quarantined(account):
+        return True, getattr(account, "flood_quarantined_until", None)
+    if not farm_overlap_active_hours():
+        return True, next_wake_at(account=account)
+    return False, None
+
+
+async def _unstick_comment_queue(session: AsyncSession, automation_id: int) -> None:
+    """Retry comments that failed as not_ready or were parked until the next morning."""
+    now = _utc_now()
+    cutoff = now - timedelta(hours=36)
+    parked_after = now + timedelta(hours=2)
+    rows = (
+        await session.execute(
+            select(PendingChatAction).where(
+                PendingChatAction.custom_automation_id == automation_id,
+                PendingChatAction.action_type == "neurocommenting",
+                PendingChatAction.updated_at >= cutoff,
+                PendingChatAction.status.in_((PENDING, FAILED)),
+            )
+        )
+    ).scalars().all()
+    changed = False
+    for action in rows:
+        err = str(action.last_error or "")
+        parked = action.next_attempt_at is not None and action.next_attempt_at > parked_after
+        generation_miss = err in {"", "not_ready", "empty_comment"}
+        if action.status == FAILED and generation_miss:
+            action.status = PENDING
+            action.attempts = 0
+            action.next_attempt_at = None
+            action.last_error = None
+            action.updated_at = now
+            changed = True
+        elif action.status == PENDING and parked:
+            action.next_attempt_at = None
+            action.updated_at = now
+            changed = True
+    if changed:
+        await session.commit()
+
+
 def _account_ids_from_payload(action: PendingChatAction) -> list[int]:
     raw = (action.payload or {}).get("account_ids") or [action.social_account_id]
     ids: list[int] = []
@@ -97,6 +167,8 @@ async def enqueue_pending_action(
         existing.status = PENDING
         existing.social_account_id = account.id
         existing.payload = body
+        existing.attempts = 0
+        existing.last_error = None
         existing.updated_at = now
         return existing
     action = PendingChatAction(
@@ -227,13 +299,10 @@ async def _accounts_blocking_pending(
         if not await account_is_joined(session, membership.chat_target_id, account_id):
             return False, False, None
         account = await session.get(SocialAccount, account_id)
-        if account_should_idle(account):
-            wake = next_target_wake_at(account=account)
-            nxt = getattr(account, "next_action_at", None)
-            if nxt is not None and nxt > wake:
-                wake = nxt
-            if rest_until is None or wake > rest_until:
-                rest_until = wake
+        blocked, until = _pending_account_block(account, action.action_type)
+        if blocked:
+            if rest_until is None or (until is not None and until > rest_until):
+                rest_until = until
             return False, False, rest_until
     return True, False, rest_until
 
@@ -284,12 +353,9 @@ async def _pending_action_runnable(
     chat = await session.get(ChatTarget, action.chat_target_id)
     if action.action_type == "neurocommenting" and chat is not None and is_public_readable(chat):
         account = await session.get(SocialAccount, action.social_account_id)
-        if account_should_idle(account):
-            wake = next_target_wake_at(account=account)
-            nxt = getattr(account, "next_action_at", None)
-            if nxt is not None and nxt > wake:
-                wake = nxt
-            return False, False, wake
+        blocked, until = _pending_account_block(account, action.action_type)
+        if blocked:
+            return False, False, until
         return True, False, None
     return False, False, None
 
@@ -301,6 +367,9 @@ async def process_due_pending_actions(
     limit: int = 40,
     action_types: Iterable[str] | None = None,
 ) -> int:
+    wanted = [str(item) for item in (action_types or []) if item]
+    if not wanted or "neurocommenting" in wanted:
+        await _unstick_comment_queue(session, automation_id)
     now = _utc_now()
     filters = [
         PendingChatAction.custom_automation_id == automation_id,
@@ -310,7 +379,6 @@ async def process_due_pending_actions(
             PendingChatAction.next_attempt_at <= now,
         ),
     ]
-    wanted = [str(item) for item in (action_types or []) if item]
     if wanted:
         filters.append(PendingChatAction.action_type.in_(wanted))
     result = await session.execute(
@@ -361,6 +429,15 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
     else:
         _defer_pending(action)
     await session.commit()
+    if action.action_type == "neurocommenting":
+        from .job_service import log_active
+
+        await log_active(
+            action.custom_automation_id,
+            "neurocommenting",
+            f"Отложенный комментарий не ушёл: {action.last_error}",
+            level="error",
+        )
     return False
 
 
@@ -430,8 +507,9 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             prompt_id=prompt_id,
         )
         if not comment:
+            action.last_error = "empty_comment"
             return False
-        return await _send_comment(
+        sent = await _send_comment(
             session,
             action.custom_automation_id,
             chat,
@@ -440,6 +518,9 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             comment,
             post_text=post_text,
         )
+        if not sent:
+            action.last_error = action.last_error or "send_failed"
+        return sent
     if action.action_type == "shilling_post":
         from .chat_scope import count_target_actions_today
         from .shilling_service import perform_post_shilling

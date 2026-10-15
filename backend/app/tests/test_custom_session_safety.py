@@ -473,6 +473,13 @@ def test_channel_posts_ignore_old_history():
     assert reason is None
 
 
+def test_neurocommenting_can_sanitize_generated_text():
+    from app.services.custom.neurocommenting_service import _generate_comment, sanitize_public_text
+
+    assert callable(_generate_comment)
+    assert sanitize_public_text("ок, согласен") == "ок, согласен"
+
+
 def test_channel_post_listener_peer_keys_and_post_filter():
     from types import SimpleNamespace
 

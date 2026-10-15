@@ -40,6 +40,7 @@ from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
+from .conversation_guard import sanitize_public_text
 from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
 from .prompt_service import render_prompt
 
@@ -223,6 +224,14 @@ async def _generate_comment(
         return comment[:500]
     except Exception as exc:
         logger.warning("Comment generation failed: %s", exc)
+        from .job_service import log_active
+
+        await log_active(
+            automation_id,
+            "neurocommenting",
+            f"Не смог написать текст комментария: {exc}",
+            level="error",
+        )
         return ""
 
 
