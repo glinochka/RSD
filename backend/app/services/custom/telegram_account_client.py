@@ -77,7 +77,12 @@ class _RpcGate:
         if self._task is task:
             self._depth += 1
             return
-        await self._lock.acquire()
+        # Another task (join loop vs comment send) must not wait forever while
+        # the holder sits inside Telegram with a database row still locked.
+        try:
+            await asyncio.wait_for(self._lock.acquire(), timeout=25)
+        except TimeoutError as exc:
+            raise TimeoutError("Telegram session is busy") from exc
         self._task = task
         self._depth = 1
 

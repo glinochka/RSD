@@ -1824,7 +1824,8 @@ class TestSchedulerContracts:
         assert CustomAutomationScheduler._has_modules_on(draft_on) is True
         assert CustomAutomationScheduler._has_modules_on(draft_off) is False
         jobs = CustomAutomationScheduler._enabled_jobs(draft_on)
-        assert "join" in jobs
+        assert "account_sessions" in jobs
+        assert "join" not in jobs
         assert "session_hygiene" in jobs
         assert "monitor" in jobs
         assert "lead_warmup" in jobs

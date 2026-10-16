@@ -651,6 +651,10 @@ def create_telegram_client(
         "app_version": str(profile.get("app_version") or defaults["app_version"]),
         "lang_code": str(profile.get("lang_code") or _DEFAULT_LANG),
         "system_lang_code": str(profile.get("system_lang_code") or _DEFAULT_SYSTEM_LANG),
+        "timeout": 25,
+        "connection_retries": 2,
+        "retry_delay": 1,
+        "request_retries": 1,
     }
     if proxy:
         client_kwargs["proxy"] = proxy
@@ -658,7 +662,11 @@ def create_telegram_client(
         from opentele.tl import TelegramClient
 
         api = _build_api_data(resolved_id, resolved_hash, profile=profile, device_model=model)
-        extra = {key: value for key, value in client_kwargs.items() if key == "proxy"}
+        extra = {
+            key: client_kwargs[key]
+            for key in ("proxy", "timeout", "connection_retries", "retry_delay", "request_retries")
+            if key in client_kwargs
+        }
         client = TelegramClient(session, api=api, **extra)
     else:
         from telethon import TelegramClient

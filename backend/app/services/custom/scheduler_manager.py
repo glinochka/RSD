@@ -51,10 +51,13 @@ async def _run_job_loop(automation_id: int, job_name: str, job: JobFactory, inte
             async with async_session_maker() as session:
                 automation = await session.get(CustomAutomation, automation_id)
                 token = apply_work_mode(automation)
-            result = await job(automation_id)
+            limit = 600 if job_name == "account_sessions" else 180
+            result = await asyncio.wait_for(job(automation_id), timeout=limit)
             logger.debug("%s job for automation %s finished: %s", job_name, automation_id, result)
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.error("%s job for automation %s timed out after hanging", job_name, automation_id)
         except Exception as exc:
             logger.exception("%s job for automation %s failed: %s", job_name, automation_id, exc)
         finally:
@@ -158,8 +161,9 @@ class CustomAutomationScheduler:
                 jobs.add("content_factory")
             return jobs
 
+        # Joins run inside account_sessions. A second join loop took the same
+        # Telegram session and the same pending-comment rows and deadlocked.
         jobs = {
-            "join",
             "discovery",
             "mod_probe",
             "chat_rotation",

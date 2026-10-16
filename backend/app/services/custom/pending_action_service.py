@@ -504,6 +504,9 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             from .account_pacing import next_target_wake_at
             _defer_pending(action, until=next_target_wake_at(account=account))
             return False
+        # Drop the pending-row lock before Telegram / DeepSeek. Two loops
+        # (join + sessions) otherwise wait on each other for hours.
+        await session.commit()
         probe = await ensure_comment_access(session, chat, account)
         if probe.comments_open is False:
             action.last_error = "comments_closed"

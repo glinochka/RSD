@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 ai_client = AsyncOpenAI(
     api_key=settings.DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com",
+    timeout=40.0,
+    max_retries=1,
 )
 
 _TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")

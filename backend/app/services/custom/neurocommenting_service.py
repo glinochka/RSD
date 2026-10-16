@@ -366,17 +366,16 @@ async def _send_comment(
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
-            from .chat_join_service import join_linked_discussion, resolve_discussion_for_post
+            from .chat_join_service import join_linked_discussion
             from .human_dm import human_send_public
 
             async def _send():
-                await join_linked_discussion(client, entity)
-                discussion, reply_id = await resolve_discussion_for_post(client, entity, post_id)
+                discussion = await join_linked_discussion(client, entity)
                 return await human_send_public(
                     client,
-                    discussion,
+                    entity,
                     text,
-                    reply_to=reply_id,
+                    comment_to=post_id,
                     discussion_entity=discussion,
                     lab_mode=lab_mode,
                 )
@@ -522,6 +521,7 @@ async def process_chat_target(
             continue
         tried.add(account.id)
         posts = []
+        await session.commit()
         try:
             async with TelegramAccountClient.for_account(account) as client:
                 probe = await probe_comments_readonly(client, chat_target)
