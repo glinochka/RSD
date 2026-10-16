@@ -1693,13 +1693,17 @@ async def join_pending_chats(
         await recover_stale_joining_memberships(session, automation_id)
         await ensure_task_joins_for_automation(session, automation_id)
         wave_results = await join_task_waves(session, automation_id)
-        await process_due_pending_actions(session, automation_id)
+        await process_due_pending_actions(
+            session, automation_id, action_types=("shilling_post", "shilling_chat", "dm")
+        )
         if rate_limit and not farm_overlap_active_hours(mode=mode):
             return wave_results
         seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
         return [*wave_results, seed] if seed else wave_results
     await recover_stale_joining_memberships(session, automation_id)
-    await process_due_pending_actions(session, automation_id)
+    await process_due_pending_actions(
+        session, automation_id, action_types=("shilling_post", "shilling_chat", "dm")
+    )
     seed = await join_next_seed_channel(session, automation_id, apply_cooldown=rate_limit)
     return [seed] if seed else []
 

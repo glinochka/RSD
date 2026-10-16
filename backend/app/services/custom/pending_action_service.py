@@ -65,6 +65,10 @@ def _pending_account_block(account: SocialAccount | None, action_type: str) -> t
         return True, getattr(account, "flood_quarantined_until", None)
     if not farm_overlap_active_hours():
         return True, next_wake_at(account=account)
+    from .account_pacing import account_is_resting
+
+    if account_is_resting(account):
+        return True, getattr(account, "next_action_at", None)
     return False, None
 
 
@@ -103,7 +107,7 @@ async def _unstick_comment_queue(session: AsyncSession, automation_id: int) -> N
     for action in rows:
         err = str(action.last_error or "")
         parked = action.next_attempt_at is not None and action.next_attempt_at > parked_after
-        generation_miss = err in {"", "not_ready", "empty_comment", "send_failed", "discussion_private"}
+        generation_miss = err in {"", "not_ready", "empty_comment"}
         if action.status == FAILED and generation_miss:
             action.status = PENDING
             action.attempts = 0
@@ -445,7 +449,9 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
     else:
         _defer_pending(action)
     await session.commit()
-    if action.action_type == "neurocommenting":
+    if action.action_type == "neurocommenting" and (
+        action.attempts <= 1 or action.status == FAILED
+    ):
         from .job_service import log_active
 
         detail = _PENDING_FAIL_RU.get(action.last_error or "", action.last_error or "not_ready")
@@ -545,6 +551,12 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             if send_error in {"no_discussion", "comments_closed"}:
                 action.status = FAILED
             return False
+        from .job_service import load_active_job_params
+        from .module_delays import action_gap_seconds
+        from .account_pacing import schedule_account_target_rest
+
+        cfg = await load_active_job_params(session, action.custom_automation_id, "neurocommenting") or {}
+        schedule_account_target_rest(account, seconds=action_gap_seconds(cfg))
         return True
     if action.action_type == "shilling_post":
         from .chat_scope import count_target_actions_today
