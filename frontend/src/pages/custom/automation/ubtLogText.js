@@ -15,6 +15,12 @@ const RPC_RU = {
   UpdateStatusRequest: 'сменил статус онлайн',
   GetRepliesRequest: 'открыл комментарии',
   ResolveUsernameRequest: 'нашёл канал по имени',
+  ForwardMessagesRequest: 'переслал сообщения',
+  UpdateNotifySettingsRequest: 'отключил уведомления',
+  SaveDraftRequest: 'сохранил черновик',
+  GetAllStoriesRequest: 'открыл ленту историй',
+  ReadStoriesRequest: 'просмотрел истории',
+  GetPeerStoriesRequest: 'открыл истории',
 };
 
 const STATUS_RU = {

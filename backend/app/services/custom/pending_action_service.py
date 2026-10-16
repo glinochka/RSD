@@ -548,7 +548,7 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
         )
         if send_error:
             action.last_error = send_error
-            if send_error in {"no_discussion", "comments_closed"}:
+            if send_error in {"no_discussion", "comments_closed", "discussion_private"}:
                 action.status = FAILED
             return False
         from .job_service import load_active_job_params

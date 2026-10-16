@@ -11,7 +11,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import account_matches_action
-from .account_pacing import account_is_resting, farm_overlap_active_hours, schedule_account_target_rest
+from .account_pacing import (
+    account_is_resting,
+    farm_overlap_active_hours,
+    schedule_account_retry,
+    schedule_account_target_rest,
+)
 from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .module_delays import format_delay_ru
 from .chat_inspect_service import probe_comments_readonly
@@ -75,6 +80,7 @@ POST_MAX_AGE = timedelta(hours=6)
 POST_COMMENT_DELAY_MIN_SECONDS = 3 * 60   # 3 min
 POST_COMMENT_DELAY_MAX_SECONDS = 4 * 60   # 4 min
 _COMMENT_SCAN_BATCH = 40
+_TERMINAL_COMMENT_ERRORS = frozenset({"no_discussion", "comments_closed", "discussion_private"})
 _SKIP_DIGEST_SECONDS = 600
 _last_skip_digest_at: dict[int, datetime] = {}
 _SKIP_DIGEST_LABELS = {
@@ -322,15 +328,47 @@ async def _already_commented(
     message_id: int,
 ) -> bool:
     target_id = f"{chat_target_id}:{message_id}"
-    count = await session.scalar(
+    row = await session.scalar(
         select(AutomationActionLog).where(
             AutomationActionLog.custom_automation_id == automation_id,
             AutomationActionLog.action_type == "neurocommenting",
             AutomationActionLog.target_id == target_id,
-            AutomationActionLog.result == "success",
+            AutomationActionLog.result.in_(("success", *_TERMINAL_COMMENT_ERRORS)),
+        ).limit(1)
+    )
+    return row is not None
+
+
+def _record_terminal_comment_fail(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target: ChatTarget,
+    account: SocialAccount,
+    post_id: int,
+    error: str,
+    *,
+    post_text: str = "",
+    text: str = "",
+) -> None:
+    session.add(
+        AutomationActionLog(
+            custom_automation_id=automation_id,
+            social_account_id=account.id,
+            action_type="neurocommenting",
+            target_id=f"{chat_target.id}:{post_id}",
+            target_type="chat_post",
+            result=error[:32],
+            payload={
+                "chat_target_id": chat_target.id,
+                "chat_title": chat_target.title,
+                "post_id": post_id,
+                "post_text": (post_text or "")[:500],
+                "text": (text or "")[:500],
+                "error": error,
+            },
+            created_at=_utc_now(),
         )
     )
-    return count is not None
 
 
 async def _send_comment(
@@ -393,12 +431,24 @@ async def _send_comment(
             )
     except Exception as exc:
         logger.warning("Send comment failed for chat %s post %s: %s", chat_target.id, post_id, exc)
+        label = comment_send_error_label(exc)
         if is_comments_unusable(exc):
             from .chat_membership_service import blackbox_unusable_chat
 
             await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
-            await session.commit()
-        return comment_send_error_label(exc)
+        if label in _TERMINAL_COMMENT_ERRORS:
+            _record_terminal_comment_fail(
+                session,
+                automation_id,
+                chat_target,
+                account,
+                post_id,
+                label,
+                post_text=post_text,
+                text=text,
+            )
+        await session.commit()
+        return label
 
     record_successful_send(account)
     log = AutomationActionLog(
@@ -716,6 +766,14 @@ async def process_chat_target(
 
                 gap_lo, gap_hi = clamp_comment_gap_pair(cfg)
                 schedule_account_target_rest(actor, seconds=random.uniform(gap_lo, gap_hi))
+        elif not lab_mode:
+            if send_error in _TERMINAL_COMMENT_ERRORS:
+                from .module_delays import clamp_comment_gap_pair
+
+                gap_lo, gap_hi = clamp_comment_gap_pair(cfg)
+                schedule_account_target_rest(actor, seconds=random.uniform(gap_lo, gap_hi))
+            else:
+                schedule_account_retry(actor)
 
     chat_target.last_scanned_at = _utc_now()
     chat_target.updated_at = _utc_now()

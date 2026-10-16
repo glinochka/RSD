@@ -978,6 +978,26 @@ async def reply_farm_chat_question(
         return False
 
 
+async def mute_random_chat(client: Any, *, lab_mode: bool = False) -> bool:
+    telethon = _telethon(client)
+    try:
+        dialogs = await telethon.get_dialogs(limit=16)
+        pool = [
+            item
+            for item in (dialogs or [])
+            if getattr(item, "is_channel", False) or getattr(item, "is_group", False)
+        ]
+        if not pool:
+            return False
+        entity = getattr(random.choice(pool), "entity", None)
+        if entity is None:
+            return False
+        await _pause(lab_mode, 0.5, 1.8)
+        return await mute_peer(client, entity)
+    except Exception:
+        return False
+
+
 async def mute_peer(client: Any, entity: Any) -> bool:
     try:
         from telethon.tl.functions.account import UpdateNotifySettingsRequest
@@ -1084,6 +1104,7 @@ def _action_catalog(
                 ("comment_contact", add_commenter_contact),
                 ("react_dm", react_in_dm),
                 ("forward_saved", forward_to_saved),
+                ("mute_chat", mute_random_chat),
                 ("archive_chat", archive_random_chat),
                 ("reply_farm", reply_farm_chat_question),
             ]

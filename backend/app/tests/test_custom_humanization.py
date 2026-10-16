@@ -176,6 +176,7 @@ def test_action_catalog_withholds_writes_from_new_accounts():
     assert "comment_contact" in ramp_new
     assert "typing_idle" in ramp_new
     assert "forward_saved" in normal
+    assert "mute_chat" in normal
     assert "saved" not in normal
     assert "saved" in trusted
     assert "comment_contact" in trusted

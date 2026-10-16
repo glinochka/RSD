@@ -725,6 +725,8 @@ class TestJobLifecycle:
         assert user_passes_filters(userbot, skip_bots=False) is True
 
     def test_action_delay_is_capped_and_humanized(self):
+        from types import SimpleNamespace as NS
+
         from app.services.custom.module_delays import ACTION_DELAY_MAX_SECONDS, clamp_action_delay_pair, format_delay_ru
         from app.services.custom.telegram_rpc_log_service import humanize_telegram_request
 
@@ -744,8 +746,17 @@ class TestJobLifecycle:
         assert humanize_telegram_request(type("GetChannelDifferenceRequest", (), {})()) is None
         assert humanize_telegram_request(type("FooBarRequest", (), {})()) is None
         assert "прочитал" in (humanize_telegram_request(type("GetHistoryRequest", (), {})()) or "")
-
-        from types import SimpleNamespace as NS
+        assert humanize_telegram_request(type("GetAuthorizationsRequest", (), {})()) is None
+        assert humanize_telegram_request(type("GetPasswordRequest", (), {})()) is None
+        assert humanize_telegram_request(type("GetAllStoriesRequest", (), {})()) == "открыл ленту историй"
+        assert humanize_telegram_request(
+            type("ForwardMessagesRequest", (), {"to_peer": type("InputPeerSelf", (), {})()})()
+        ) == "переслал в избранное"
+        assert "отключил уведомления" in (
+            humanize_telegram_request(
+                type("UpdateNotifySettingsRequest", (), {"settings": NS(mute_until=2_147_483_647, silent=True)})()
+            ) or ""
+        )
 
         from app.services.custom.telegram_rpc_log_service import install_telegram_rpc_logger
 

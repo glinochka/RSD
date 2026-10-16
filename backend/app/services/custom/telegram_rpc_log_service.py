@@ -37,6 +37,9 @@ _SKIP_RPC = frozenset({
     "GetFileRequest",
     "SaveFilePartRequest",
     "UploadSaveFilePartRequest",
+    # Session-guard internals — not a person checking devices every connect.
+    "GetAuthorizationsRequest",
+    "GetPasswordRequest",
 })
 
 _RPC_RU = {
@@ -59,6 +62,12 @@ _RPC_RU = {
     "ImportChatInviteRequest": "вступил по приглашению",
     "CheckChatInviteRequest": "проверил приглашение",
     "ForwardMessagesRequest": "переслал сообщения",
+    "UpdateNotifySettingsRequest": "отключил уведомления",
+    "SaveDraftRequest": "сохранил черновик",
+    "EditPeerFoldersRequest": "архивировал чат",
+    "ToggleDialogPinRequest": "закрепил чат",
+    "GetAllStoriesRequest": "открыл ленту историй",
+    "UpdatePinnedMessageRequest": "закрепил сообщение",
     "EditMessageRequest": "изменил сообщение",
     "DeleteMessagesRequest": "удалил сообщения",
     "GetRepliesRequest": "открыл комментарии к посту",
@@ -66,9 +75,7 @@ _RPC_RU = {
     "UpdateStatusRequest": "сменил статус онлайн",
     "UpdateProfileRequest": "обновил профиль",
     "UploadProfilePhotoRequest": "обновил аватар",
-    "GetAuthorizationsRequest": "посмотрел активные сессии",
     "ResetAuthorizationRequest": "завершил чужую сессию",
-    "GetPasswordRequest": "проверил облачный пароль",
     "UpdatePasswordSettingsRequest": "изменил облачный пароль",
     "AcceptLoginTokenRequest": "подтвердил вход по QR",
     "CheckChatlistInviteRequest": "проверил addlist-папку",
@@ -176,6 +183,14 @@ def humanize_telegram_request(request: Any) -> str | None:
     if name == "UpdateStatusRequest":
         offline = bool(getattr(request, "offline", False))
         return "вышел в офлайн" if offline else "вошёл в онлайн"
+    if name == "ForwardMessagesRequest" and _is_self_peer(getattr(request, "to_peer", None)):
+        return f"переслал в избранное{_peer_hint(request)}"
+    if name == "UpdateNotifySettingsRequest":
+        muted = _notify_is_muted(getattr(request, "settings", None))
+        return f"{'отключил уведомления' if muted else 'включил уведомления'}{_peer_hint(request)}"
+    if name == "EditPeerFoldersRequest":
+        archived = _folder_is_archive(request)
+        return f"{'архивировал чат' if archived else 'вернул чат из архива'}{_peer_hint(request)}"
     base = _RPC_RU.get(name)
     if not base:
         return None
@@ -183,6 +198,36 @@ def humanize_telegram_request(request: Any) -> str | None:
     message = getattr(request, "message", None)
     extra = f": «{_clip(message)}»" if message else ""
     return f"{base}{hint}{extra}"
+
+
+def _is_self_peer(peer: Any) -> bool:
+    if peer is None:
+        return False
+    name = type(peer).__name__
+    if name in {"InputPeerSelf", "PeerSelf"}:
+        return True
+    return bool(getattr(peer, "is_self", False))
+
+
+def _folder_is_archive(request: Any) -> bool:
+    if int(getattr(request, "folder_id", 0) or 0) == 1:
+        return True
+    for item in getattr(request, "folder_peers", None) or []:
+        if int(getattr(item, "folder_id", 0) or 0) == 1:
+            return True
+    return False
+
+
+def _notify_is_muted(settings: Any) -> bool:
+    if settings is None:
+        return True
+    until = getattr(settings, "mute_until", None)
+    if until is None:
+        return bool(getattr(settings, "silent", False))
+    try:
+        return int(until) > 0
+    except (TypeError, ValueError):
+        return True
 
 
 def install_telegram_rpc_logger(client: Any, *, account_id: int | None, automation_id: int | None = None) -> None:
