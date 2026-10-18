@@ -134,6 +134,7 @@ def _park_join_flood(account: SocialAccount, raw: Any = None) -> None:
 def _log_job_type(task_key: str) -> str:
     return {
         "neurocommenting": "neurocommenting",
+        "chat_monitoring": "chat_monitoring",
         "neurochatting": "discussion",
         "neuroshilling": "shilling",
         "chat_broadcasts": "chat_broadcast",
@@ -145,6 +146,7 @@ def _log_job_type(task_key: str) -> str:
 
 _TASK_SETTINGS_KEY = {
     "neurocommenting": "neurocommenting",
+    "chat_monitoring": "chat_monitoring",
     "neurochatting": "neurochatting",
     "neuroshilling": "neuroshilling",
     "chat_broadcasts": "chat_broadcasts",
@@ -813,6 +815,7 @@ def _int_list(raw: Any) -> list[int]:
 
 _JOB_TYPE_TO_TASK = {
     "neurocommenting": "neurocommenting",
+    "chat_monitoring": "chat_monitoring",
     "discussion": "neurochatting",
     "shilling": "neuroshilling",
     "chat_broadcast": "chat_broadcasts",
@@ -878,6 +881,12 @@ def collect_task_join_specs(automation: CustomAutomation) -> list[dict[str, Any]
         settings = dict(nc)
         settings["enabled"] = True
         _push("neurocommenting", settings, settings.get("chat_ids") or [])
+
+    monitor = blob.get("chat_monitoring") if isinstance(blob.get("chat_monitoring"), dict) else {}
+    if monitor.get("enabled") or getattr(automation, "is_chat_monitoring_enabled", False):
+        settings = dict(monitor)
+        settings["enabled"] = True
+        _push("chat_monitoring", settings, settings.get("chat_ids") or [])
 
     chatting = blob.get("neurochatting") if isinstance(blob.get("neurochatting"), dict) else {}
     if chatting.get("enabled") or getattr(automation, "is_digital_footprint_enabled", False):

@@ -23,7 +23,7 @@ VISIBLE_ACTIVE_STATUSES = ACTIVE_STATUSES | {PAUSED_STATUS}
 HISTORY_STATUSES = {"completed", "error", "cancelled", "skipped"}
 _SKIP_PARAM_KEYS = {"presets", "_job_id"}
 _READONLY_PARAM_KEYS = {"joins_complete"}
-PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling"}
+PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling", "chat_monitoring"}
 STREAM_JOB_TYPES = {
     "neurocommenting": "neurocommenting",
     "neurochatting": "discussion",
@@ -38,6 +38,7 @@ JOIN_JOB_TYPES = {
     "discussion",
     "shilling",
     "chat_broadcast",
+    "chat_monitoring",
     "parser",
     "masslooking",
     "warmup",
@@ -45,6 +46,7 @@ JOIN_JOB_TYPES = {
 }
 MODULE_BINDINGS = {
     "neurocommenting": ("neurocommenting", "is_neurocommenting_enabled"),
+    "chat_monitoring": ("chat_monitoring", "is_chat_monitoring_enabled"),
     "discussion": ("neurochatting", "is_digital_footprint_enabled"),
     "chat_broadcast": ("chat_broadcasts", None),
     "dm_broadcast": ("dm_broadcasts", None),
@@ -62,6 +64,7 @@ JOB_META = {
     "bulk_profile": {"category": "account", "title": "Обновление профилей", "badge": "АК"},
     "warmup": {"category": "account", "title": "Прогрев аккаунтов", "badge": "АК"},
     "neurocommenting": {"category": "module", "title": "Нейрокомментинг", "badge": "НК"},
+    "chat_monitoring": {"category": "module", "title": "Перехват заявок", "badge": "ПЗ"},
     "discussion": {"category": "module", "title": "Нейрочаттинг", "badge": "ЧТ"},
     "masslooking": {"category": "module", "title": "Масслукинг", "badge": "МЛ"},
     "masspriming": {"category": "module", "title": "Масспрайминг", "badge": "МП"},
@@ -875,6 +878,10 @@ def _normalize_module_params(job_type: str, incoming: dict[str, Any]) -> dict[st
         from .neurocommenting_module_service import normalize_nc_settings
 
         return normalize_nc_settings(incoming)
+    if job_type == "chat_monitoring":
+        from .chat_monitoring_module_service import normalize_cm_settings
+
+        return normalize_cm_settings(incoming)
     if job_type == "discussion":
         from .neurochatting_module_service import normalize_chat_settings
 

@@ -59,6 +59,7 @@ import CustomAutomationChatsPage from './pages/custom/automation/CustomAutomatio
 import CustomAutomationLeadsPage from './pages/custom/automation/CustomAutomationLeadsPage';
 import CustomAutomationLeadChatPage from './pages/custom/automation/CustomAutomationLeadChatPage';
 import CustomAutomationDmpPage from './pages/custom/automation/CustomAutomationDmpPage';
+import CustomAutomationSashaPage from './pages/custom/automation/CustomAutomationSashaPage';
 import CustomAutomationDmpConnectionPage from './pages/custom/automation/CustomAutomationDmpConnectionPage';
 import CustomAutomationDmpSettingsPage from './pages/custom/automation/CustomAutomationDmpSettingsPage';
 import CustomAutomationIntegrationsPage from './pages/custom/automation/CustomAutomationIntegrationsPage';
@@ -66,6 +67,7 @@ import CustomAutomationModulePlaceholder from './pages/custom/automation/CustomA
 import CustomAutomationTasksPage from './pages/custom/automation/CustomAutomationTasksPage';
 import CustomAutomationStatsPage from './pages/custom/automation/CustomAutomationStatsPage';
 import CustomAutomationNeurocommentingPage from './pages/custom/automation/CustomAutomationNeurocommentingPage';
+import CustomAutomationLeadInterceptPage from './pages/custom/automation/CustomAutomationLeadInterceptPage';
 import CustomAutomationNeurochattingPage from './pages/custom/automation/CustomAutomationNeurochattingPage';
 import CustomAutomationMasslookingPage from './pages/custom/automation/CustomAutomationMasslookingPage';
 import CustomAutomationChatBroadcastsPage from './pages/custom/automation/CustomAutomationChatBroadcastsPage';
@@ -252,6 +254,7 @@ const App = () => {
                   <Route path="ubt/tasks" element={<CustomAutomationTasksPage />} />
                   <Route path="ubt/stats" element={<CustomAutomationStatsPage />} />
                   <Route path="ubt/neurocommenting" element={<CustomAutomationNeurocommentingPage />} />
+                  <Route path="ubt/lead-intercept" element={<CustomAutomationLeadInterceptPage />} />
                   <Route path="ubt/neurochatting" element={<CustomAutomationNeurochattingPage />} />
                   <Route path="ubt/masslooking" element={<CustomAutomationMasslookingPage />} />
                   <Route path="ubt/chat-broadcasts" element={<CustomAutomationChatBroadcastsPage />} />
@@ -268,6 +271,7 @@ const App = () => {
                   <Route path="leads" element={<CustomAutomationLeadsPage />} />
                   <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
                   <Route path="dmp" element={<CustomAutomationDmpPage />} />
+                  <Route path="dmp/sasha" element={<CustomAutomationSashaPage />} />
                   <Route path="dmp/connection" element={<CustomAutomationDmpConnectionPage />} />
                   <Route path="dmp/settings" element={<CustomAutomationDmpSettingsPage />} />
                   <Route path="content-factory" element={<CustomAutomationContentFactoryResultsPage />} />

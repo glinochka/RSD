@@ -166,6 +166,9 @@ const DmpIcon = () => (
     <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
   </Ico>
 );
+const PhoneIcon = () => (
+  <Ico d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.81.32 1.6.59 2.36a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.72-1.16a2 2 0 0 1 2.11-.45c.76.27 1.55.46 2.36.59A2 2 0 0 1 22 16.92z" />
+);
 const FactoryIcon = () => (
   <Ico>
     <rect x="2" y="7" width="20" height="14" rx="2" />
@@ -205,6 +208,7 @@ const UBT_ICONS = {
   tasks: ListIcon,
   stats: ChartIcon,
   neurocommenting: CommentIcon,
+  'lead-intercept': EnvelopeIcon,
   neurochatting: ChatIcon,
   masslooking: EyeIcon,
   'chat-broadcasts': MegaphoneIcon,
@@ -451,6 +455,14 @@ const CustomSolutionLayout = () => {
                       icon={ChartIcon}
                       nested
                       active={path === NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP(id)}
+                      onClick={closeMobile}
+                    />
+                    <NavLink
+                      to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SASHA(id)}
+                      label="Прозвон Sasha AI"
+                      icon={PhoneIcon}
+                      nested
+                      active={isActive(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SASHA(id))}
                       onClick={closeMobile}
                     />
                     <NavLink

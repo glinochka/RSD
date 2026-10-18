@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
+import { ubtModulePath } from './customNav';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
@@ -144,7 +145,11 @@ const CustomAutomationLeadsPage = () => {
       ) : leads.length === 0 ? (
         <div className="crm-empty-list">
           <p>Лиды пока не появились</p>
-          <span>Они появятся после перехвата в чатах или импорта DMP.</span>
+          <span>
+            Они появятся после{' '}
+            <Link to={ubtModulePath(id, 'lead-intercept')}>перехвата заявок в чатах</Link>
+            {' '}или импорта DMP.
+          </span>
         </div>
       ) : (
         <div className="crm-list">
@@ -158,8 +163,10 @@ const CustomAutomationLeadsPage = () => {
               </div>
               <p className="crm-item-subtitle">
                 {lead.contact_value}
+                {lead.dmp_raw_data?.chat_title ? ` · ${lead.dmp_raw_data.chat_title}` : ''}
                 {lead.company ? ` · ${lead.company}` : ''}
                 {lead.assigned_account_id ? ` · аккаунт #${lead.assigned_account_id}` : ''}
+                {lead.sasha_is_commit ? ` · Sasha: лид${lead.sasha_lead_quality != null ? ` ${lead.sasha_lead_quality}/10` : ''}` : (lead.sasha_status ? ` · Sasha: ${lead.sasha_status}` : '')}
               </p>
               <span className="crm-date">{lead.created_at ? new Date(lead.created_at).toLocaleString() : ''}</span>
               <div className="form-group">

@@ -231,6 +231,7 @@ async def select_account_for_action(
     thread_id: int | None = None,
     exclude_banned: bool = True,
     exclude_account_ids: set[int] | None = None,
+    restrict_account_ids: set[int] | None = None,
     consume_quota: bool = False,
     ignore_rest: bool = False,
 ) -> SocialAccount | None:
@@ -244,6 +245,7 @@ async def select_account_for_action(
             account is returned if it is still eligible.
         exclude_banned: skip banned accounts.
         exclude_account_ids: never return these account ids.
+        restrict_account_ids: if set, only pick from this subset (module writers).
         consume_quota: legacy flag; daily_messages_sent grows only via record_successful_send.
         ignore_rest: lab/manual paths may pick an account that is cooling down.
     """
@@ -296,6 +298,8 @@ async def select_account_for_action(
 
     if exclude_account_ids:
         eligible = [row for row in eligible if row[1].id not in exclude_account_ids]
+    if restrict_account_ids:
+        eligible = [row for row in eligible if row[1].id in restrict_account_ids]
     if not eligible:
         logger.info("No eligible accounts for automation %s action %s", automation_id, action_type)
         return None

@@ -45,6 +45,17 @@ class CustomAutomationDashboardDmpStats(BaseModel):
     cpl_rub: float | None
 
 
+class CustomAutomationDashboardSashaStats(BaseModel):
+    queued: int = 0
+    uploaded: int = 0
+    calls: int = 0
+    completed: int = 0
+    failed: int = 0
+    committed_calls: int = 0
+    committed_leads: int = 0
+    avg_quality: float | None = None
+
+
 class CustomAutomationDashboardActionStats(BaseModel):
     total: int
     last_24h: dict[str, int]
@@ -65,6 +76,7 @@ class CustomAutomationDashboardResponse(BaseModel):
     accounts: CustomAutomationDashboardAccountStats
     leads: CustomAutomationDashboardLeadStats
     dmp: CustomAutomationDashboardDmpStats
+    sasha: CustomAutomationDashboardSashaStats = Field(default_factory=CustomAutomationDashboardSashaStats)
     actions: CustomAutomationDashboardActionStats
     chats: CustomAutomationDashboardChatStats
     updated_at: str
@@ -231,6 +243,17 @@ class CustomAutomationSettingsResponse(BaseModel):
     warnings: list[str] = []
     dmp_webhook_url: str | None = None
     dmp_webhook_secret: str | None = None
+    is_sasha_ai_enabled: bool = False
+    sasha_upload_url: str | None = None
+    sasha_upload_format: str = "api"
+    sasha_auto_push: bool = True
+    sasha_qualify_on_commit: bool = True
+    sasha_notify_on_commit: bool = True
+    sasha_webhook_url: str | None = None
+    sasha_webhook_secret: str | None = None
+    sasha_hmac_secret: str | None = None
+    sasha_hmac_secret_set: bool = False
+    sasha_connected: bool = False
     amocrm_redirect_uri: str | None = None
     telegram_bot_token_set: bool = False
     telegram_bot_username: str | None = None
@@ -273,6 +296,10 @@ class CustomAutomationSettingsUpdate(BaseModel):
     is_amocrm_enabled: bool | None = None
     is_shilling_enabled: bool | None = None
     is_lead_qualification_enabled: bool | None = None
+    is_sasha_ai_enabled: bool | None = None
+    sasha_auto_push: bool | None = None
+    sasha_qualify_on_commit: bool | None = None
+    sasha_notify_on_commit: bool | None = None
     lead_manager_contact: str | None = None
     partner_utm_url: str | None = None
     partner_promo_code: str | None = None
@@ -656,6 +683,91 @@ class DmpOneWebhookResponse(BaseModel):
     created_leads: int
     received_count: int
     purchased_count: int
+
+
+class SashaAiConnectionUpdate(BaseModel):
+    is_sasha_ai_enabled: bool | None = None
+    sasha_upload_url: str | None = None
+    sasha_upload_format: str | None = Field(None, max_length=16)
+    sasha_hmac_secret: str | None = None
+    sasha_auto_push: bool | None = None
+    sasha_qualify_on_commit: bool | None = None
+    sasha_notify_on_commit: bool | None = None
+
+
+class SashaAiConnectionResponse(BaseModel):
+    is_sasha_ai_enabled: bool = False
+    sasha_upload_url: str | None = None
+    sasha_upload_format: str = "api"
+    sasha_auto_push: bool = True
+    sasha_qualify_on_commit: bool = True
+    sasha_notify_on_commit: bool = True
+    sasha_webhook_url: str | None = None
+    sasha_webhook_secret: str | None = None
+    sasha_hmac_secret: str | None = None
+    sasha_hmac_secret_set: bool = False
+    sasha_connected: bool = False
+
+
+class SashaAiCallResponse(BaseModel):
+    id: int
+    custom_automation_id: int
+    custom_lead_id: int | None = None
+    event_id: str
+    event_type: str
+    call_id: str | None = None
+    session_id: str | None = None
+    call_list_id: str | None = None
+    call_list_name: str | None = None
+    phone: str | None = None
+    status: str | None = None
+    hangup_reason: str | None = None
+    duration_ms: int | None = None
+    started_at: datetime | None = None
+    connected_at: datetime | None = None
+    ended_at: datetime | None = None
+    is_commit: bool = False
+    client_name: str | None = None
+    client_facts: str | None = None
+    agreements: str | None = None
+    lead_quality: int | None = None
+    warmth: str | None = None
+    lead_destination: str | None = None
+    agreements_status: str | None = None
+    session_result_status: str | None = None
+    session_result_reason: str | None = None
+    record_url: str | None = None
+    transcript: list = Field(default_factory=list)
+    transcript_text: str = ""
+    lead_transfer: dict = Field(default_factory=dict)
+    outcome: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class SashaAiCallListResponse(BaseModel):
+    items: list[SashaAiCallResponse]
+    total: int
+    stats: dict = Field(default_factory=dict)
+
+
+class SashaAiPushResponse(BaseModel):
+    status: str
+    lead_id: int | None = None
+    pushed: int | None = None
+    failed: int | None = None
+    skipped: int | None = None
+    error: str | None = None
+    message: str | None = None
+
+
+class SashaAiWebhookResponse(BaseModel):
+    status: str
+    call_id: int | None = None
+    lead_id: int | None = None
+    event_type: str | None = None
+    is_commit: bool = False
+    notified: bool = False
 
 
 class TelegramBotSettingsUpdate(BaseModel):
@@ -1239,6 +1351,58 @@ class NeurochattingPromptCreate(BaseModel):
     content: str = ""
 
 
+class ChatMonitoringSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
+    chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
+    reserve_chat_ids: list[int] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    max_per_account: int = 15
+    join_delay_min: int = 1200
+    join_delay_max: int = 2400
+    respect_night_hours: bool = True
+    prompt_id: Optional[int] = None
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+
+
+class ChatMonitoringModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    prompts: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    blacklist: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    added_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
+class ChatMonitoringGroupsRequest(BaseModel):
+    links: str = ""
+
+
+class ChatMonitoringPresetRequest(BaseModel):
+    name: str = ""
+
+
+class ChatMonitoringPromptCreate(BaseModel):
+    name: str = "Мой промпт"
+    content: str = ""
+    prompt_type: str = "chat_monitoring_trigger"
+
+
 class MasslookingSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -1691,9 +1855,16 @@ class CustomLeadResponse(BaseModel):
     status: str
     assigned_account_id: Optional[int] = None
     chat_message_id: Optional[int] = None
+    dmp_raw_data: Optional[dict[str, Any]] = None
     last_message_at: Optional[datetime] = None
     transferred_at: Optional[datetime] = None
     status_history: Optional[list] = None
+    sasha_status: Optional[str] = None
+    sasha_uploaded_at: Optional[datetime] = None
+    sasha_last_event_at: Optional[datetime] = None
+    sasha_lead_quality: Optional[int] = None
+    sasha_is_commit: bool = False
+    sasha_summary: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

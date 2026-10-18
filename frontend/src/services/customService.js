@@ -503,6 +503,68 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getChatMonitoringModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveChatMonitoringModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runChatMonitoringModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addChatMonitoringGroups(automationId, links) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING_GROUPS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveChatMonitoringPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async createChatMonitoringPrompt(automationId, { name, content, promptType } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING_PROMPTS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name, content, prompt_type: promptType }),
+    });
+    return handleResponse(response);
+  },
+
+  async blackboxChatMonitoringChat(automationId, { chatId, query } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_MONITORING_BLACKLIST(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, query }),
+    });
+    return handleResponse(response);
+  },
+
   async getMasslookingModule(automationId) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSLOOKING(automationId)}`, {
       method: 'GET',
@@ -1966,6 +2028,72 @@ const customService = {
         method: 'POST',
         headers: getAuthHeaders(),
       },
+    );
+    return handleResponse(response);
+  },
+
+  async getSashaCalls(automationId, { outcome, leadId, limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (outcome) {
+      params.set('outcome', outcome);
+    }
+    if (leadId) {
+      params.set('lead_id', String(leadId));
+    }
+    if (limit !== undefined) {
+      params.set('limit', String(limit));
+    }
+    if (offset !== undefined) {
+      params.set('offset', String(offset));
+    }
+    const query = params.toString();
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SASHA(automationId)}${query ? `?${query}` : ''}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async saveSashaConnection(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SASHA_CONNECTION(automationId)}`,
+      {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async rotateSashaWebhookSecret(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SASHA_WEBHOOK_ROTATE(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async pushSashaPending(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SASHA_PUSH(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async getLeadSashaCalls(automationId, leadId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_LEAD_SASHA(automationId, leadId)}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async pushLeadToSasha(automationId, leadId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_LEAD_SASHA_PUSH(automationId, leadId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
     );
     return handleResponse(response);
   },

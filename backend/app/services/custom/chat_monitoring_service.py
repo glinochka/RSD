@@ -19,7 +19,7 @@ from .chat_scope import (
     load_shilling_message_ids,
     message_is_own_activity,
 )
-from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
+from .lead_keywords import normalize_lead_keywords, should_classify_lead_text
 from .prompt_service import render_prompt
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
@@ -43,7 +43,14 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_TRIGGER_PROMPT = """Ты анализируешь сообщение в Telegram-чате.
-Определи, является ли это сообщение заявкой или запросом на услуги (SEO, маркетинг, сайт, автоматизация, CRM, чат-боты и т.п.).
+Нужно понять, ищет ли человек услугу или решение — прямо («мне нужна N») или косвенно
+(«кто знает где сделать», «у меня такая проблема, кто сталкивался?»).
+
+Оффер, относительно которого оцениваем заявку (слов оффера в сообщении может не быть):
+{offer}
+
+Считай заявкой (is_lead=true), если человек ищет подрядчика, сервис, совет «где сделать» или описывает боль, которую закрывает оффер.
+НЕ заявка: флуд, мемы, вакансии в штат, чужая реклама, оффтоп без отношения к офферу.
 
 Верни ТОЛЬКО валидный JSON без markdown:
 {
@@ -109,15 +116,33 @@ async def _load_prompt(session: AsyncSession, automation_id: int, prompt_type: s
     return ""
 
 
+def _offer_context(automation: CustomAutomation | None, keywords: list[str] | None = None) -> str:
+    parts = [
+        getattr(automation, "name", None) or "",
+        getattr(automation, "industry", None) or "",
+        getattr(automation, "description", None) or "",
+    ]
+    words = [item for item in (keywords or []) if item]
+    if words:
+        parts.append("Ключевые темы: " + ", ".join(words[:20]))
+    text = "\n".join(part.strip() for part in parts if part and str(part).strip())
+    return text or "услуги компании"
+
+
 async def _classify_message(
     session: AsyncSession,
     automation_id: int,
     text: str,
+    *,
+    offer: str = "",
 ) -> dict[str, Any]:
     try:
+        template = await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_TRIGGER.value)
+        if "{offer}" not in template:
+            template = template.rstrip() + "\n\nОффер (слов оффера в сообщении может не быть):\n{offer}"
         prompt = render_prompt(
-            await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_TRIGGER.value),
-            {"text": text or ""},
+            template,
+            {"text": text or "", "offer": offer or "услуги компании"},
         )
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
@@ -192,16 +217,25 @@ async def _get_account_for_chat(session: AsyncSession, chat_target: ChatTarget) 
 
 
 async def list_monitor_chats(session: AsyncSession, automation_id: int) -> list[ChatTarget]:
-    """Groups with a live JOINED member. Lab chats are included only if someone is actually in."""
+    """Target groups that already have a live JOINED member."""
+    from .chat_monitoring_module_service import runtime_monitor_cfg
+    from .task_targets import resolve_task_chat_ids
+
+    automation = await session.get(CustomAutomation, automation_id)
+    cfg = runtime_monitor_cfg(automation)
     joined_ids = live_joined_chat_ids(automation_id)
-    result = await session.execute(
-        select(ChatTarget).where(
-            ChatTarget.custom_automation_id == automation_id,
-            ChatTarget.is_active.is_(True),
-            ChatTarget.mode != "inactive",
-            ChatTarget.id.in_(joined_ids),
-        )
+    pool_ids = await resolve_task_chat_ids(
+        session, automation_id, cfg, task_key="chat_monitoring"
     )
+    filters = [
+        ChatTarget.custom_automation_id == automation_id,
+        ChatTarget.is_active.is_(True),
+        ChatTarget.mode != "inactive",
+        ChatTarget.id.in_(joined_ids),
+    ]
+    if pool_ids:
+        filters.append(ChatTarget.id.in_(pool_ids))
+    result = await session.execute(select(ChatTarget).where(*filters))
     chats = []
     for chat in result.scalars().all():
         if is_paused(chat) or not is_group_chat(chat):
@@ -308,13 +342,38 @@ async def save_chat_message(
     return message
 
 
+async def _pick_writer_account(session: AsyncSession, automation_id: int) -> SocialAccount | None:
+    from .chat_monitoring_module_service import leadgen_restrict_ids
+
+    automation = await session.get(CustomAutomation, automation_id)
+    return await select_account_for_action(
+        session,
+        automation_id,
+        "dm",
+        restrict_account_ids=leadgen_restrict_ids(automation),
+    )
+
+
+def _dm_recipient(chat_message: ChatMessage) -> str | int | None:
+    username = (chat_message.sender_username or "").strip().lstrip("@")
+    if username:
+        return username
+    raw = chat_message.sender_id
+    if raw is None or str(raw).strip() == "":
+        return None
+    text = str(raw).strip()
+    if text.lstrip("-").isdigit():
+        return int(text)
+    return text
+
+
 async def _send_dm_and_create_lead(
     session: AsyncSession,
     automation_id: int,
     chat_message: ChatMessage,
     classification: dict[str, Any],
 ) -> bool:
-    account = await select_account_for_action(session, automation_id, "dm")
+    account = await _pick_writer_account(session, automation_id)
     if not account:
         logger.warning("No trusted account to send DM for message %s", chat_message.id)
         return False
@@ -325,15 +384,21 @@ async def _send_dm_and_create_lead(
         logger.warning("DM account session missing for account %s", account.id)
         return False
 
+    profile_phone = None
     try:
         async with TelegramAccountClient.for_account(account) as client:
-            recipient = chat_message.sender_username or chat_message.sender_id
+            recipient = _dm_recipient(chat_message)
             if not recipient:
                 logger.warning("No recipient for message %s", chat_message.id)
                 return False
 
             async def _send():
-                await client.human_reply(recipient, response_text)
+                nonlocal profile_phone
+                entity = await client.resolve_peer(recipient)
+                phone_raw = getattr(entity, "phone", None)
+                if isinstance(phone_raw, str) and phone_raw.strip():
+                    profile_phone = phone_raw.strip()
+                await client.human_reply(entity, response_text)
 
             await execute_with_telegram_retry(
                 session,
@@ -349,15 +414,30 @@ async def _send_dm_and_create_lead(
         logger.warning("Send DM failed for message %s: %s", chat_message.id, exc)
         return False
 
+    chat = await session.get(ChatTarget, chat_message.chat_target_id)
+    username = (chat_message.sender_username or "").strip().lstrip("@")
+    contact = classification.get("contact_value") or (f"@{username}" if username else None) or str(chat_message.sender_id) or "unknown"
     lead = CustomLead(
         custom_automation_id=automation_id,
         source="chat_monitoring",
         contact_type=classification.get("contact_type") or "telegram",
-        contact_value=classification.get("contact_value") or chat_message.sender_username or str(chat_message.sender_id) or "unknown",
+        contact_value=contact,
         full_name=chat_message.sender_name,
         chat_message_id=chat_message.id,
         assigned_account_id=account.id,
         status=LeadStatus.WARMING.value,
+        dmp_raw_data={
+            "chat_id": chat_message.chat_target_id,
+            "chat_title": getattr(chat, "title", None),
+            "chat_link": getattr(chat, "invite_link", None),
+            "sender_id": chat_message.sender_id,
+            "sender_username": chat_message.sender_username,
+            "sender_name": chat_message.sender_name,
+            "source_text": (chat_message.text or "")[:1000],
+            "reason": classification.get("reason") or "",
+            "writer_account_id": account.id,
+            "phone": profile_phone,
+        },
         created_at=_utc_now(),
         updated_at=_utc_now(),
     )
@@ -390,6 +470,18 @@ async def _send_dm_and_create_lead(
     chat_message.matched_intent = "lead"
     chat_message.trigger_confidence = classification.get("confidence")
     await session.commit()
+    from .job_service import actor_label, chat_label, clip_text, log_active
+
+    who = f"@{username}" if username else (chat_message.sender_name or chat_message.sender_id or "лид")
+    where = chat_label(chat) if chat is not None else "чат"
+    try:
+        await log_active(
+            automation_id,
+            "chat_monitoring",
+            f"{actor_label(account)} пишет в ЛС {who} из {where}: «{clip_text(chat_message.text)}»",
+        )
+    except Exception:
+        logger.debug("chat monitoring DM log skipped", exc_info=True)
 
     automation = await session.get(CustomAutomation, automation_id)
     if automation:
@@ -418,8 +510,17 @@ async def process_unprocessed_messages(
     messages = result.scalars().all()
     own_keys = await load_own_sender_keys(session, automation_id)
     shill_ids_by_chat: dict[int, set[str]] = {}
+    from .chat_monitoring_module_service import runtime_monitor_cfg
+    from .task_targets import resolve_task_chat_ids
+
     automation = await session.get(CustomAutomation, automation_id)
-    keywords = normalize_lead_keywords(getattr(automation, "lead_keywords", None) if automation else None)
+    cfg = runtime_monitor_cfg(automation)
+    keywords = cfg.get("keywords") or normalize_lead_keywords(
+        getattr(automation, "lead_keywords", None) if automation else None
+    )
+    offer = _offer_context(automation, keywords)
+    resolved = await resolve_task_chat_ids(session, automation_id, cfg, task_key="chat_monitoring")
+    pool_ids = set(resolved)
 
     leads_created = 0
     errors = 0
@@ -429,6 +530,11 @@ async def process_unprocessed_messages(
             chat_id = chat_message.chat_target_id
             if chat_id not in shill_ids_by_chat:
                 shill_ids_by_chat[chat_id] = await load_shilling_message_ids(session, automation_id, chat_id)
+            if pool_ids and chat_id not in pool_ids:
+                chat_message.is_processed = True
+                chat_message.matched_intent = "out_of_scope"
+                await session.commit()
+                continue
             if message_is_own_activity(
                 {
                     "external_message_id": chat_message.external_message_id,
@@ -443,45 +549,79 @@ async def process_unprocessed_messages(
                 chat_message.matched_intent = "own_activity"
                 await session.commit()
                 continue
-            if not matched_lead_keyword(chat_message.text, keywords):
-                chat_message.is_processed = True
-                chat_message.matched_intent = "no_keyword"
-                await session.commit()
-                continue
-            classification = await _classify_message(session, automation_id, chat_message.text)
-            if classification["is_lead"] and classification["confidence"] >= confidence_threshold:
-                # Human-behaviour guard: wait 1-4 min after the message was sent before DMing.
-                # An immediate DM looks robotic and is easily detected by anti-spam systems.
-                from .human_dm import stable_reply_delay_seconds
-                sent_at = chat_message.sent_at
-                if sent_at is not None:
-                    if sent_at.tzinfo is not None:
-                        import datetime as _dt
-                        sent_at = sent_at.astimezone(_dt.timezone.utc).replace(tzinfo=None)
-                    age_secs = (_utc_now() - sent_at).total_seconds()
-                    required_delay = stable_reply_delay_seconds(str(chat_message.id))
-                    if age_secs < required_delay:
-                        # Not ready yet – skip this tick, will be picked up next pass
-                        logger.debug(
-                            "Chat monitoring DM for message %s not ready yet (age %.0fs < required %.0fs)",
-                            chat_message.id, age_secs, required_delay,
-                        )
-                        continue
-                dm_account = await select_account_for_action(session, automation_id, "dm", consume_quota=False)
-                if not dm_account:
-                    logger.warning("No trusted account to send DM for message %s", chat_message.id)
-                    errors += 1
-                    continue
-                success = await _send_dm_and_create_lead(session, automation_id, chat_message, classification)
-                if success:
-                    leads_created += 1
-                else:
-                    errors += 1
+            if chat_message.matched_intent == "lead_pending":
+                classification = {
+                    "is_lead": True,
+                    "confidence": float(chat_message.trigger_confidence or 0.9),
+                    "reason": "queued",
+                    "contact_type": "telegram",
+                    "contact_value": (chat_message.sender_username or "").strip()
+                    or str(chat_message.sender_id or ""),
+                }
             else:
-                chat_message.is_processed = True
-                chat_message.matched_intent = "not_lead"
+                if not should_classify_lead_text(chat_message.text, keywords):
+                    chat_message.is_processed = True
+                    chat_message.matched_intent = "not_request"
+                    await session.commit()
+                    continue
+                classification = await _classify_message(
+                    session, automation_id, chat_message.text, offer=offer
+                )
+                if not (
+                    classification["is_lead"]
+                    and classification["confidence"] >= confidence_threshold
+                ):
+                    chat_message.is_processed = True
+                    chat_message.matched_intent = "not_lead"
+                    chat_message.trigger_confidence = classification["confidence"]
+                    await session.commit()
+                    continue
+                chat_message.matched_intent = "lead_pending"
                 chat_message.trigger_confidence = classification["confidence"]
                 await session.commit()
+                from .job_service import chat_label, clip_text, log_active
+
+                chat = await session.get(ChatTarget, chat_message.chat_target_id)
+                username = (chat_message.sender_username or "").strip().lstrip("@")
+                who = f"@{username}" if username else (chat_message.sender_name or chat_message.sender_id or "лид")
+                where = chat_label(chat) if chat is not None else "чат"
+                try:
+                    await log_active(
+                        automation_id,
+                        "chat_monitoring",
+                        f"заявка в {where} от {who}: «{clip_text(chat_message.text)}» — передаём ответственному, ЛС после паузы",
+                    )
+                except Exception:
+                    logger.debug("chat monitoring sighting log skipped", exc_info=True)
+            from .account_pacing import farm_overlap_active_hours
+
+            if bool(cfg.get("respect_night_hours", True)) and not farm_overlap_active_hours():
+                continue
+            from .human_dm import stable_reply_delay_seconds
+
+            sent_at = chat_message.sent_at
+            if sent_at is not None:
+                if sent_at.tzinfo is not None:
+                    import datetime as _dt
+                    sent_at = sent_at.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+                age_secs = (_utc_now() - sent_at).total_seconds()
+                required_delay = stable_reply_delay_seconds(str(chat_message.id))
+                if age_secs < required_delay:
+                    logger.debug(
+                        "Chat monitoring DM for message %s not ready yet (age %.0fs < required %.0fs)",
+                        chat_message.id, age_secs, required_delay,
+                    )
+                    continue
+            dm_account = await _pick_writer_account(session, automation_id)
+            if not dm_account:
+                logger.warning("No trusted account to send DM for message %s", chat_message.id)
+                errors += 1
+                continue
+            success = await _send_dm_and_create_lead(session, automation_id, chat_message, classification)
+            if success:
+                leads_created += 1
+            else:
+                errors += 1
         except Exception as exc:
             await session.rollback()
             logger.exception("Processing chat message %s failed: %s", message_id, exc)

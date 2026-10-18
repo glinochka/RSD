@@ -74,10 +74,8 @@ def is_dmp_notify_pipeline(automation: CustomAutomation) -> bool:
 
 
 def qualification_enabled(automation: CustomAutomation) -> bool:
-    """DMP-bot qualifies only if the toggle is on. Other pipelines always warm up."""
-    if is_dmp_notify_pipeline(automation):
-        return bool(getattr(automation, "is_lead_qualification_enabled", False))
-    return True
+    """DMP numbers are warmed in Telegram only when the DMP toggle is on."""
+    return bool(getattr(automation, "is_lead_qualification_enabled", False))
 
 
 def uses_sales_handoff(automation: CustomAutomation) -> bool:

@@ -45,6 +45,10 @@ const CustomAutomationDmpSettingsPage = () => {
     setError(null);
     const payload = {
       is_lead_qualification_enabled: Boolean(next.is_lead_qualification_enabled),
+      is_sasha_ai_enabled: Boolean(next.is_sasha_ai_enabled),
+      sasha_auto_push: next.sasha_auto_push !== false,
+      sasha_qualify_on_commit: next.sasha_qualify_on_commit !== false,
+      sasha_notify_on_commit: next.sasha_notify_on_commit !== false,
     };
     if (settings?.solution_kind === 'dmp_bot') {
       payload.is_amocrm_enabled = Boolean(next.is_amocrm_enabled);
@@ -77,7 +81,7 @@ const CustomAutomationDmpSettingsPage = () => {
       <div className="ubt-hero">
         <div>
           <h1>Настройки DMP</h1>
-          <p>Квалификация полученных номеров и передача в CRM / Telegram.</p>
+          <p>Один контур: номер из DMP либо звонит Sasha AI, либо его пишет аккаунт перехвата, либо он сразу уходит в Telegram-бот.</p>
         </div>
       </div>
       {error ? <p className="form-hint">{error}</p> : null}
@@ -87,10 +91,40 @@ const CustomAutomationDmpSettingsPage = () => {
         <div className="settings-toggles">
           <FeatureToggle
             title="Квалификация номеров"
-            description="ИИ находит чат по номеру и квалифицирует лид, прежде чем отдавать его дальше."
+            description={form.is_sasha_ai_enabled
+              ? 'Пока Sasha AI включена, номер с телефоном она забирает на прозвон. Этот тумблер остаётся для контактов без телефона и на случай, когда прозвон выключен: аккаунт из «Перехват заявок» пишет в ЛС, затем карточка уходит в бота.'
+              : 'Вкл: аккаунт из «Перехват заявок» находит человека по номеру, пишет в ЛС и квалифицирует, затем карточка уходит в Telegram-бота. Выкл: номер сразу приходит в бота, без диалога.'}
             checked={Boolean(form.is_lead_qualification_enabled)}
             onChange={(checked) => persistFlag({ is_lead_qualification_enabled: checked })}
           />
+          <FeatureToggle
+            title="Прозвон Sasha AI"
+            description="DMP отдаёт номер сюда, мы отправляем его Саше, после звонка результат возвращается сюда. Если договорились — в Telegram-бот уходит та же карточка, что у лидов из чатов. Заявки из чатов Саша не прозванивает."
+            checked={Boolean(form.is_sasha_ai_enabled)}
+            onChange={(checked) => persistFlag({ is_sasha_ai_enabled: checked })}
+          />
+          {form.is_sasha_ai_enabled ? (
+            <>
+              <FeatureToggle
+                title="Автоматически отдавать номера Саше"
+                description="Каждый новый контакт из DMP сразу попадает в колл-лист Sasha AI."
+                checked={form.sasha_auto_push !== false}
+                onChange={(checked) => persistFlag({ sasha_auto_push: checked })}
+              />
+              <FeatureToggle
+                title="Квалифицировать после договорённости"
+                description="Если Саша договорилась о следующем шаге, лид становится квалифицированным."
+                checked={form.sasha_qualify_on_commit !== false}
+                onChange={(checked) => persistFlag({ sasha_qualify_on_commit: checked })}
+              />
+              <FeatureToggle
+                title="Присылать лид в Telegram"
+                description="После договорённости бот получает ту же карточку: дата, телефон, что нужно, диалог звонка и прогрев."
+                checked={form.sasha_notify_on_commit !== false}
+                onChange={(checked) => persistFlag({ sasha_notify_on_commit: checked })}
+              />
+            </>
+          ) : null}
           {settings?.solution_kind === 'dmp_bot' ? (
             <FeatureToggle
               title="Отправлять в AmoCRM"
@@ -101,7 +135,32 @@ const CustomAutomationDmpSettingsPage = () => {
           ) : null}
         </div>
         <p className="form-hint" style={{ marginTop: 12 }}>
-          Telegram-аккаунт для квалификации берётся из пула решения. Бот и таблица настраиваются в
+          {form.is_sasha_ai_enabled
+            ? 'Номер с телефоном: DMP → Sasha AI → этот сервис → Telegram-бот. Контакт без телефона идёт по тумблеру квалификации.'
+            : form.is_lead_qualification_enabled
+              ? 'Номер: DMP → аккаунт из перехвата пишет в ЛС → Telegram-бот.'
+              : 'Номер: DMP → сразу Telegram-бот, без звонка и без диалога.'}
+          {' '}
+          Заявки из чатов всегда идут через перехват и тот же бот.
+        </p>
+        <p className="form-hint">
+          Подключение Sasha AI — на странице
+          {' '}
+          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_CONNECTION(id)}>Подключение</Link>
+          .
+          {' '}
+          {settings?.solution_kind === 'dmp_bot'
+            ? 'Telegram-аккаунт для квалификации берётся из пула решения.'
+            : (
+              <>
+                Telegram-аккаунт для квалификации — тот же, что выбран в
+                {' '}
+                <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_UBT(id, 'lead-intercept')}>Перехвате заявок</Link>
+                .
+              </>
+            )}
+          {' '}
+          Бот и таблица настраиваются в
           {' '}
           <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_INTEGRATIONS(id)}>Интеграциях</Link>
           {settings?.solution_kind === 'dmp_bot' ? '.' : (

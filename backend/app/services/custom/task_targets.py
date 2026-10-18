@@ -12,6 +12,7 @@ from .chat_scope import is_broadcast_channel, is_group_chat
 
 TASK_RESOURCE_KIND = {
     "neurocommenting": "channel",
+    "chat_monitoring": "chat",
     "neurochatting": "chat",
     "neuroshilling": "any",
     "chat_broadcasts": "chat",

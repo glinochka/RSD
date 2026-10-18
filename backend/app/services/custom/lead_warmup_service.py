@@ -106,7 +106,14 @@ async def auto_transfer_lead(
         from .telegram_notify_bot_service import dispatch_dmp_notifications
 
         return await dispatch_dmp_notifications(session, automation, lead)
+    from .telegram_notify_bot_service import decrypt_bot_token, dispatch_sales_bot_notification
+
     if not uses_sales_handoff(automation):
+        if decrypt_bot_token(automation):
+            bot = await dispatch_sales_bot_notification(
+                session, automation, lead, handoff_reason=handoff_reason,
+            )
+            return {"transferred": bool(bot.get("transferred")), "bot": bot, "reason": "telegram_bot"}
         lead.status = LeadStatus.CONVERTED.value
         lead.updated_at = _utc_now()
         lead.status_history = (lead.status_history or []) + [
@@ -138,8 +145,6 @@ async def auto_transfer_lead(
             result["reason"] = delivery.get("reason") or delivery.get("channel")
     elif result.get("transferred"):
         result["reason"] = result.get("reason") or "amocrm"
-    from .telegram_notify_bot_service import decrypt_bot_token, dispatch_sales_bot_notification
-
     if decrypt_bot_token(automation):
         bot = await dispatch_sales_bot_notification(
             session, automation, lead, handoff_reason=handoff_reason,

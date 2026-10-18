@@ -9,7 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
-from .lead_keywords import normalize_lead_keywords
 
 
 async def _live_pool_accounts(session: AsyncSession, automation_id: int) -> list[tuple[PoolAccount, SocialAccount]]:
@@ -89,9 +88,13 @@ async def validate_settings(
     if automation.is_chat_monitoring_enabled and not can_enable["chat_monitoring"]:
         warnings.append("Перехват заявок включён, но нет живых аккаунтов.")
     if automation.is_chat_monitoring_enabled:
-        if not normalize_lead_keywords(getattr(automation, "lead_keywords", None)):
+        blob = automation.module_settings or {}
+        nested = blob.get("chat_monitoring") if isinstance(blob, dict) else {}
+        if not (nested.get("account_ids") if isinstance(nested, dict) else None) and not (
+            nested.get("chat_ids") if isinstance(nested, dict) else None
+        ):
             warnings.append(
-                "Перехват заявок включён, но нет ключевых слов — сообщения не уйдут в LLM и в ЛС."
+                "Перехват заявок включён — задайте чаты и аккаунты в разделе Телеграм УБТ → Перехват заявок."
             )
     if automation.is_neurocommenting_enabled and not can_enable["neurocommenting"]:
         warnings.append("Нейрокомментинг включён, но нет живых аккаунтов.")

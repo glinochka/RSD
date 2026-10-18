@@ -38,7 +38,7 @@ def _coerce_keyword_items(raw_value: Any) -> list[Any]:
 
 
 def normalize_lead_keywords(raw_value: Any) -> list[str]:
-    """Lowercase unique phrases; empty list means skip LLM entirely."""
+    """Lowercase unique phrases used as offer hints for the classifier."""
     normalized: list[str] = []
     seen: set[str] = set()
     for item in _coerce_keyword_items(raw_value):
@@ -72,6 +72,36 @@ def _haystack_contains(haystack: str, needle: str) -> bool:
         pattern = rf"(?<![{_WORD_CHARS}]){re.escape(needle)}(?![{_WORD_CHARS}])"
         return bool(re.search(pattern, haystack, re.IGNORECASE))
     return needle in haystack
+
+
+_REQUEST_RE = re.compile(
+    r"(?iu)("
+    r"\b(нужен|нужна|нужно|нужны|ищу|ищем|посоветуйте|подскажите|помогите|порекомендуйте)\b|"
+    r"кто\s+(знает|делает|может|шарит|занимается|работал|сталкивался|пробовал)|"
+    r"где\s+(можно|заказать|сделать|найти|записаться)|"
+    r"есть\s+кто|"
+    r"кто[\s-]?то\s+сталкивался|"
+    r"как\s+(сделать|настроить|продвинуть|заказать|запустить)|"
+    r"сколько\s+стоит|"
+    r"\b(looking for|anyone know|recommend(ed)?)\b|"
+    r"\bneed (a|an|to|help)\b"
+    r")"
+)
+
+
+def looks_like_lead_request(text: str) -> bool:
+    """Cheap intent gate: a question/need, not necessarily containing the offer keyword."""
+    haystack = " ".join((text or "").split())
+    if len(haystack) < 8:
+        return False
+    return bool(_REQUEST_RE.search(haystack))
+
+
+def should_classify_lead_text(text: str, keywords: list[str] | None = None) -> bool:
+    """LLM only for request-like lines or an explicit offer-keyword hit."""
+    if matched_lead_keyword(text, keywords or []):
+        return True
+    return looks_like_lead_request(text)
 
 
 def matched_lead_keyword(text: str, keywords: list[str]) -> str | None:

@@ -1443,6 +1443,51 @@ class TestLeadKeywords:
         assert matched_lead_keyword("сколько стоит индонезия", ["ии"]) is None
         assert matched_lead_keyword("нужно ии для чата", ["ии"]) == "ии"
 
+    async def test_request_heuristic_and_classify_gate(self):
+        from app.services.custom.lead_keywords import looks_like_lead_request, should_classify_lead_text
+
+        assert looks_like_lead_request("Мне нужна услуга SEO")
+        assert looks_like_lead_request("Кто знает где можно сделать сайт?")
+        assert looks_like_lead_request("У меня такая проблема, кто-то сталкивался?")
+        assert not looks_like_lead_request("всем привет")
+        assert should_classify_lead_text("Кто делает SEO?", [])
+        assert should_classify_lead_text("нужен сео специалист", ["seo"])
+        assert not should_classify_lead_text("lol kek", ["seo"])
+
+    async def test_group_listener_skips_channel_posts(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_lead_listener import is_group_user_message
+
+        group = SimpleNamespace(
+            out=False,
+            is_channel=False,
+            is_group=True,
+            message=SimpleNamespace(out=False, text="Нужен сайт", post=False),
+        )
+        mega = SimpleNamespace(
+            out=False,
+            is_channel=True,
+            is_group=True,
+            message=SimpleNamespace(out=False, text="Кто знает где сделать?", post=False),
+        )
+        channel = SimpleNamespace(
+            out=False,
+            is_channel=True,
+            is_group=False,
+            message=SimpleNamespace(out=False, text="Новый пост", post=True),
+        )
+        private = SimpleNamespace(
+            out=False,
+            is_channel=False,
+            is_group=False,
+            message=SimpleNamespace(out=False, text="Привет", post=False),
+        )
+        assert is_group_user_message(group) is True
+        assert is_group_user_message(mega) is True
+        assert is_group_user_message(channel) is False
+        assert is_group_user_message(private) is False
+
     async def _add_message(
         self,
         session: AsyncSession,
@@ -1501,10 +1546,10 @@ class TestLeadKeywords:
         classify.assert_not_called()
         await test_session.refresh(message)
         assert message.is_processed is True
-        assert message.matched_intent == "no_keyword"
+        assert message.matched_intent == "not_request"
         assert result["leads_created"] == 0
 
-    async def test_empty_keywords_skip_llm(
+    async def test_empty_keywords_still_classify_request(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from app.services.custom.chat_monitoring_service import process_unprocessed_messages
@@ -1512,12 +1557,62 @@ class TestLeadKeywords:
         message = await self._add_message(test_session, custom_automation, "Кто делает SEO?")
         with patch(
             "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(
+                return_value={
+                    "is_lead": False,
+                    "confidence": 0.1,
+                    "reason": "no",
+                    "contact_type": "telegram",
+                    "contact_value": "",
+                }
+            ),
+        ) as classify:
+            await process_unprocessed_messages(test_session, custom_automation.id)
+        classify.assert_called_once()
+        await test_session.refresh(message)
+        assert message.matched_intent == "not_lead"
+
+    async def test_greeting_without_request_skips_llm(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        message = await self._add_message(test_session, custom_automation, "всем привет")
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
             new=AsyncMock(),
         ) as classify:
             await process_unprocessed_messages(test_session, custom_automation.id)
         classify.assert_not_called()
         await test_session.refresh(message)
-        assert message.matched_intent == "no_keyword"
+        assert message.matched_intent == "not_request"
+
+    async def test_indirect_request_without_keyword_calls_llm(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        message = await self._add_message(
+            test_session, custom_automation, "Кто знает где можно продвинуть магазин? Кто-то сталкивался?"
+        )
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(
+                return_value={
+                    "is_lead": False,
+                    "confidence": 0.2,
+                    "reason": "no",
+                    "contact_type": "telegram",
+                    "contact_value": "",
+                }
+            ),
+        ) as classify:
+            await process_unprocessed_messages(test_session, custom_automation.id)
+        classify.assert_called_once()
+        await test_session.refresh(message)
+        assert message.matched_intent == "not_lead"
 
     async def test_keyword_hit_calls_classify(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -1738,14 +1833,17 @@ class TestLeadKeywords:
             new=AsyncMock(return_value="Могу помочь с SEO, напишите детали."),
         ), patch(
             "app.services.custom.chat_monitoring_service.TelegramAccountClient.for_account",
-        ) as client_cm:
+        ) as client_cm, patch(
+            "app.services.custom.human_dm.stable_reply_delay_seconds",
+            return_value=0,
+        ):
             client = AsyncMock()
             client_cm.return_value.__aenter__.return_value = client
             result = await process_unprocessed_messages(test_session, custom_automation.id)
 
         assert result["leads_created"] == 1
         assert result["errors"] == 0
-        client.send_message.assert_awaited()
+        client.human_reply.assert_awaited()
         await test_session.refresh(message)
         assert message.matched_intent == "lead"
         lead = await test_session.scalar(
@@ -1776,7 +1874,7 @@ class TestLeadKeywords:
         )
         assert empty.status_code == 200
         warnings = empty.json()["warnings"]
-        assert any("ключев" in warning.lower() for warning in warnings)
+        assert any("чат" in warning.lower() or "аккаунт" in warning.lower() for warning in warnings)
 
 
 class TestSchedulerContracts:
@@ -1810,6 +1908,7 @@ class TestSchedulerContracts:
             is_neurocommenting_enabled=False,
             is_digital_footprint_enabled=False,
             is_dmp_one_enabled=False,
+            is_sasha_ai_enabled=False,
             is_amocrm_enabled=False,
             is_shilling_enabled=False,
         )
@@ -1818,6 +1917,7 @@ class TestSchedulerContracts:
             is_neurocommenting_enabled=False,
             is_digital_footprint_enabled=False,
             is_dmp_one_enabled=False,
+            is_sasha_ai_enabled=False,
             is_amocrm_enabled=False,
             is_shilling_enabled=False,
         )
@@ -3652,7 +3752,7 @@ class TestDmpBotPipeline:
         lead = await test_session.scalar(
             select(CustomLead).where(
                 CustomLead.custom_automation_id == automation_id,
-                CustomLead.contact_value == "79001112233",
+                CustomLead.contact_value.in_(("79001112233", "+79001112233")),
             )
         )
         assert lead is not None
@@ -3726,7 +3826,7 @@ class TestDmpBotPipeline:
             assert dmp.json()["created_leads"] == 1
 
         texts = [item.get("text") or "" for item in FakeTelegramClient.sent]
-        assert any(text.startswith("Новый лид:") for text in texts)
+        assert any("Источник: DMP.one" in text for text in texts)
         assert any("79009998877" in text for text in texts)
 
     async def test_bot_rate_limit_locks_after_failed_passwords(
@@ -3963,28 +4063,44 @@ class TestLeadTelegramBotHandoff:
     async def test_handoff_message_phone_only_or_full_context(self):
         from types import SimpleNamespace
 
-        from app.services.custom.telegram_notify_bot_service import format_handoff_lead_message
+        from app.services.custom.telegram_notify_bot_service import format_lead_bot_message
 
         raw = SimpleNamespace(
+            source="dmp_one",
             contact_type="phone",
             contact_value="79001112233",
             dmp_raw_data={"phone": "79001112233"},
+            created_at=None,
         )
-        assert format_handoff_lead_message(raw, agreed=False) == "Телефон: +79001112233"
+        cold = format_lead_bot_message(raw)
+        assert "Источник: DMP.one" in cold
+        assert "Телефон: +79001112233" in cold
+        assert "Username" not in cold
+        assert "Разговор:" not in cold
 
         agreed = SimpleNamespace(
+            source="chat_monitoring",
             contact_type="telegram",
             contact_value="buyer_one",
-            dmp_raw_data={"phone": "79001112233"},
+            full_name="Иван",
+            dmp_raw_data={
+                "phone": "79001112233",
+                "sender_username": "buyer_one",
+                "chat_title": "SEO чат",
+                "source_text": "Кто делает продвижение?",
+            },
+            created_at=None,
         )
-        text = format_handoff_lead_message(
+        text = format_lead_bot_message(
             agreed,
-            agreed=True,
             conversation="Лид: давайте\nМы: ок, наберу",
         )
+        assert "Источник: чат «SEO чат»" in text
         assert "Телефон: +79001112233" in text
         assert "Username: @buyer_one" in text
-        assert "Контекст:" in text
+        assert "Профиль: https://t.me/buyer_one" in text
+        assert "Что нужно: Кто делает продвижение?" in text
+        assert "Разговор:" in text
         assert "наберу" in text
 
     async def test_password_gate_then_sends_agreed_lead(
@@ -4067,8 +4183,11 @@ class TestLeadTelegramBotHandoff:
                 test_session, custom_automation, lead, handoff_reason=HANDOFF_DMP_WARMED
             )
             assert warmed["bot_sent"] == 1
-            assert any("Username: @buyer_one" in (item.get("text") or "") for item in FakeTelegramClient.sent)
-            assert any("давайте созвонимся" in (item.get("text") or "") for item in FakeTelegramClient.sent)
+            card = "\n".join(item.get("text") or "" for item in FakeTelegramClient.sent)
+            assert "Username: @buyer_one" in card
+            assert "Профиль: https://t.me/buyer_one" in card
+            assert "давайте созвонимся" in card
+            assert "Источник: перехват в чате" in card or "Источник: чат" in card
 
             raw = CustomLead(
                 custom_automation_id=automation_id,
@@ -4086,9 +4205,175 @@ class TestLeadTelegramBotHandoff:
             )
             assert cold["bot_sent"] == 1
             text = FakeTelegramClient.sent[-1].get("text") or ""
-            assert text == "Телефон: +79005554433"
+            assert "Источник: DMP.one" in text
+            assert "Телефон: +79005554433" in text
             assert "Username" not in text
-            assert "Контекст" not in text
+            assert "Разговор:" not in text
+            assert "не ответил" in text
+
+    async def test_qualification_off_sends_dmp_number_immediately(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomBotSubscriber
+        from app.services.custom.dmp_one_service import process_dmp_lead
+        from app.utils.crypto import encrypt_token
+
+        custom_automation.solution_kind = "seo_saas"
+        custom_automation.is_dmp_one_enabled = True
+        custom_automation.is_lead_qualification_enabled = False
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        await test_session.commit()
+        test_session.add(
+            CustomBotSubscriber(
+                custom_automation_id=custom_automation.id,
+                telegram_chat_id=4243,
+                status="subscribed",
+            )
+        )
+        lead = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="dmp_one",
+            contact_type="phone",
+            contact_value="79007776655",
+            dmp_raw_data={"phone": "79007776655", "website": "shop.example.com"},
+            status="new",
+        )
+        test_session.add(lead)
+        await test_session.commit()
+        await test_session.refresh(lead)
+        FakeTelegramClient.sent = []
+        FakeTelegramClient.fail_send = False
+        with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient), patch(
+            "app.services.custom.dmp_one_service.resolve_telegram_for_lead",
+            new=AsyncMock(return_value="should_not_run"),
+        ) as resolve:
+            result = await process_dmp_lead(test_session, custom_automation, lead)
+        resolve.assert_not_awaited()
+        assert result["status"] == "transferred"
+        assert result["bot_sent"] == 1
+        text = FakeTelegramClient.sent[-1].get("text") or ""
+        assert "Источник: DMP.one" in text
+        assert "79007776655" in text
+
+    async def test_sasha_phone_waits_for_the_call_before_the_bot(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomBotSubscriber
+        from app.services.custom.dmp_one_service import process_dmp_lead
+        from app.utils.crypto import encrypt_token
+
+        custom_automation.solution_kind = "fulfillment"
+        custom_automation.is_dmp_one_enabled = True
+        custom_automation.is_lead_qualification_enabled = True
+        custom_automation.is_sasha_ai_enabled = True
+        custom_automation.sasha_auto_push = True
+        custom_automation.sasha_upload_url = (
+            "https://platform.trysasha.ru/api/upload-contacts-integrations/webhook/test-token"
+        )
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        await test_session.commit()
+        test_session.add(
+            CustomBotSubscriber(
+                custom_automation_id=custom_automation.id,
+                telegram_chat_id=5151,
+                status="subscribed",
+            )
+        )
+        lead = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="dmp_one",
+            contact_type="phone",
+            contact_value="79008887766",
+            dmp_raw_data={"phone": "79008887766"},
+            status="new",
+        )
+        test_session.add(lead)
+        await test_session.commit()
+        await test_session.refresh(lead)
+        FakeTelegramClient.sent = []
+
+        async def _uploaded(session, automation, target):
+            target.sasha_status = "uploaded"
+            await session.commit()
+            return {"status": "uploaded", "lead_id": target.id}
+
+        with patch(
+            "app.services.custom.sasha_ai_service.maybe_send_lead_to_sasha",
+            new=AsyncMock(side_effect=_uploaded),
+        ) as send, patch(
+            "app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient,
+        ), patch(
+            "app.services.custom.dmp_one_service.resolve_telegram_for_lead",
+            new=AsyncMock(return_value="should_not_run"),
+        ) as resolve:
+            result = await process_dmp_lead(test_session, custom_automation, lead)
+        send.assert_awaited()
+        resolve.assert_not_awaited()
+        assert result["status"] == "uploaded"
+        assert FakeTelegramClient.sent == []
+        await test_session.refresh(lead)
+        assert lead.sasha_status == "uploaded"
+        assert lead.status == "new"
+
+    async def test_sasha_on_without_phone_still_reaches_the_bot(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomBotSubscriber
+        from app.services.custom.dmp_one_service import process_dmp_lead
+        from app.utils.crypto import encrypt_token
+
+        custom_automation.solution_kind = "fulfillment"
+        custom_automation.is_dmp_one_enabled = True
+        custom_automation.is_lead_qualification_enabled = False
+        custom_automation.is_sasha_ai_enabled = True
+        custom_automation.sasha_auto_push = True
+        custom_automation.sasha_upload_url = (
+            "https://platform.trysasha.ru/api/upload-contacts-integrations/webhook/test-token"
+        )
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        await test_session.commit()
+        test_session.add(
+            CustomBotSubscriber(
+                custom_automation_id=custom_automation.id,
+                telegram_chat_id=5152,
+                status="subscribed",
+            )
+        )
+        lead = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="dmp_one",
+            contact_type="telegram",
+            contact_value="buyer_two",
+            full_name="Ольга",
+            dmp_raw_data={"telegram": "buyer_two", "name": "Ольга"},
+            status="new",
+        )
+        test_session.add(lead)
+        await test_session.commit()
+        await test_session.refresh(lead)
+        FakeTelegramClient.sent = []
+        FakeTelegramClient.fail_send = False
+
+        with patch(
+            "app.services.custom.sasha_ai_service.maybe_send_lead_to_sasha",
+            new=AsyncMock(side_effect=AssertionError("Sasha must not be called without a phone")),
+        ), patch(
+            "app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient,
+        ):
+            result = await process_dmp_lead(test_session, custom_automation, lead)
+        assert result["status"] == "transferred"
+        assert result["bot_sent"] == 1
+        text = FakeTelegramClient.sent[-1].get("text") or ""
+        assert "Источник: DMP.one" in text
+        assert "Username: @buyer_two" in text
+        assert "Имя: Ольга" in text
+        assert "Sasha" not in text
 
 
 _FAKE_SESSION_BYTES = b"SQLite format 3\x00" + b"\x00" * 48

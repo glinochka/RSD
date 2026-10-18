@@ -59,8 +59,14 @@ class AccountSessionHub:
         for account in wanted.values():
             if account.id in self.clients:
                 from .channel_post_listener import attach_comment_listener
+                from .chat_lead_listener import attach_lead_listener
 
                 attach_comment_listener(
+                    self.clients[account.id],
+                    account_id=account.id,
+                    automation_id=self.automation_id,
+                )
+                attach_lead_listener(
                     self.clients[account.id],
                     account_id=account.id,
                     automation_id=self.automation_id,
@@ -82,8 +88,12 @@ class AccountSessionHub:
             await wrapper.keep_alive()
             self.clients[account.id] = wrapper
             from .channel_post_listener import attach_comment_listener
+            from .chat_lead_listener import attach_lead_listener
 
             attach_comment_listener(
+                wrapper, account_id=account.id, automation_id=self.automation_id
+            )
+            attach_lead_listener(
                 wrapper, account_id=account.id, automation_id=self.automation_id
             )
             await self._open_parent(account)
@@ -119,8 +129,12 @@ class AccountSessionHub:
                 await wrapper.keep_alive()
                 self.clients[account.id] = wrapper
                 from .channel_post_listener import attach_comment_listener
+                from .chat_lead_listener import attach_lead_listener
 
                 attach_comment_listener(
+                    wrapper, account_id=account.id, automation_id=self.automation_id
+                )
+                attach_lead_listener(
                     wrapper, account_id=account.id, automation_id=self.automation_id
                 )
                 await self._open_parent(fresh)

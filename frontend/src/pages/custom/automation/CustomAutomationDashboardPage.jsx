@@ -75,7 +75,9 @@ const CustomAutomationDashboardPage = () => {
   const health = data.accounts || {};
   const dmpPurchased = data.dmp?.purchased || 0;
   const dmpCost = data.dmp?.cost_rub;
-  const showDmp = dmpPurchased > 0 || (dmpCost !== undefined && dmpCost !== null && Number(dmpCost) > 0);
+  const sasha = data.sasha || {};
+  const showSasha = (sasha.uploaded || 0) > 0 || (sasha.calls || 0) > 0 || (sasha.committed_leads || 0) > 0;
+  const showDmp = dmpPurchased > 0 || (dmpCost !== undefined && dmpCost !== null && Number(dmpCost) > 0) || showSasha;
 
   return (
     <div className="ubt-page">
@@ -138,9 +140,12 @@ const CustomAutomationDashboardPage = () => {
           <div className="ubt-panel">
             <div className="ubt-panel-header">
               <div>
-                <h2>DMP</h2>
-                <p>Закупки и расход — отдельный контур.</p>
+                <h2>DMP и Sasha AI</h2>
+                <p>Закупки номеров и результаты прозвона.</p>
               </div>
+              {showSasha ? (
+                <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SASHA(id)}>Прозвон</Link>
+              ) : null}
             </div>
             <div className="ubt-health-grid">
               <div className="ubt-kpi ubt-kpi--soft ubt-kpi--ok">
@@ -150,6 +155,14 @@ const CustomAutomationDashboardPage = () => {
               <div className="ubt-kpi ubt-kpi--soft">
                 <strong>{dmpCost === undefined || dmpCost === null ? '—' : `${dmpCost} ₽`}</strong>
                 <span>Расход</span>
+              </div>
+              <div className="ubt-kpi ubt-kpi--soft ubt-kpi--ok">
+                <strong>{sasha.committed_leads ?? 0}</strong>
+                <span>Лиды Саши</span>
+              </div>
+              <div className="ubt-kpi ubt-kpi--soft">
+                <strong>{sasha.avg_quality == null ? '—' : sasha.avg_quality}</strong>
+                <span>Прогрев</span>
               </div>
             </div>
           </div>

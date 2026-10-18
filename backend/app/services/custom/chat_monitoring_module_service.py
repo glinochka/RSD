@@ -1,0 +1,420 @@
+"""Lead-intercept module: sit in target groups, classify requests, hand off to a writer DM."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...alembic.models import (
+    AutomationActionLog,
+    ChatTarget,
+    CustomAutomation,
+    CustomLead,
+    CustomPrompt,
+    PoolAccount,
+    PromptType,
+    SocialAccount,
+)
+from .account_roles import account_is_task_ready
+from .chat_addlist_service import import_chat_links, normalize_chat_assignments
+from .chat_folder_service import folder_payloads
+from .chat_membership_service import blackbox_unusable_chat
+from .chat_scope import is_group_chat
+from .job_service import list_jobs
+from .lead_keywords import normalize_lead_keywords
+from .module_delays import JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, apply_account_pacing, clamp_join_delay_pair
+from .prompt_service import activate_prompt, create_named_prompt, list_prompts
+from .proxy_service import proxy_label
+from .rotation_service import current_daily_messages_sent
+
+MODULE_KEY = "chat_monitoring"
+
+DEFAULT_CM_SETTINGS: dict[str, Any] = {
+    "account_ids": [],
+    "chat_ids": [],
+    "folder_ids": [],
+    "keywords": [],
+    "respect_night_hours": True,
+    "max_per_account": 15,
+    "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
+    "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
+    "blacklisted_account_ids": [],
+    "chat_assignments": {},
+    "reserve_chat_ids": [],
+    "prompt_id": None,
+    "require_proxy": False,
+    "hide_in_work": False,
+    "presets": [],
+}
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _as_int_list(raw: Any) -> list[int]:
+    items: list[int] = []
+    seen: set[int] = set()
+    for value in raw or []:
+        try:
+            ident = int(value)
+        except (TypeError, ValueError):
+            continue
+        if ident in seen:
+            continue
+        seen.add(ident)
+        items.append(ident)
+    return items
+
+
+def normalize_cm_settings(raw: Any) -> dict[str, Any]:
+    data = dict(DEFAULT_CM_SETTINGS)
+    incoming = raw if isinstance(raw, dict) else {}
+    data["account_ids"] = _as_int_list(incoming.get("account_ids"))
+    data["chat_ids"] = _as_int_list(incoming.get("chat_ids"))
+    data["folder_ids"] = _as_int_list(incoming.get("folder_ids"))
+    data["keywords"] = normalize_lead_keywords(incoming.get("keywords"))
+    data["respect_night_hours"] = bool(incoming.get("respect_night_hours", True))
+    apply_account_pacing(data, incoming, cap_default=15)
+    data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
+    data["blacklisted_account_ids"] = _as_int_list(incoming.get("blacklisted_account_ids"))
+    data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
+    data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))
+    try:
+        prompt_id = incoming.get("prompt_id")
+        data["prompt_id"] = int(prompt_id) if prompt_id else None
+    except (TypeError, ValueError):
+        data["prompt_id"] = None
+    data["require_proxy"] = bool(incoming.get("require_proxy"))
+    data["hide_in_work"] = bool(incoming.get("hide_in_work"))
+    presets = []
+    for item in incoming.get("presets") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        snapshot = dict(item.get("settings") or {})
+        snapshot["presets"] = []
+        presets.append({"name": name[:80], "settings": normalize_cm_settings(snapshot)})
+        if len(presets) >= 20:
+            break
+    data["presets"] = presets
+    if incoming.get("enabled") is not None:
+        data["enabled"] = bool(incoming.get("enabled"))
+    return data
+
+
+def leadgen_restrict_ids(automation: CustomAutomation | None) -> set[int] | None:
+    """Accounts selected on Перехват заявок — writers for intercept DMs and DMP qualification."""
+    settings = runtime_monitor_cfg(automation)
+    blocked = set(settings.get("blacklisted_account_ids") or [])
+    wanted: list[int] = []
+    for item in settings.get("account_ids") or []:
+        try:
+            ident = int(item)
+        except (TypeError, ValueError):
+            continue
+        if ident in blocked or ident in wanted:
+            continue
+        wanted.append(ident)
+    return set(wanted) if wanted else None
+
+
+def runtime_monitor_cfg(automation: CustomAutomation | None) -> dict[str, Any]:
+    blob = getattr(automation, "module_settings", None) or {}
+    nested = blob.get(MODULE_KEY) if isinstance(blob, dict) else None
+    settings = normalize_cm_settings(nested)
+    if not settings["keywords"]:
+        settings["keywords"] = normalize_lead_keywords(getattr(automation, "lead_keywords", None))
+    settings["enabled"] = bool(
+        getattr(automation, "is_chat_monitoring_enabled", False) or nested and nested.get("enabled")
+    )
+    return settings
+
+
+def _account_row(account: SocialAccount, pool: PoolAccount) -> dict[str, Any]:
+    in_work = bool(account.is_active and (current_daily_messages_sent(account) or 0) > 0)
+    eligible = account_is_task_ready(pool, account, "dm", exclude_spamblocked=True)
+    return {
+        "id": account.id,
+        "label": account.display_name or account.username or account.phone_number or f"#{account.id}",
+        "username": account.username,
+        "phone_number": account.phone_number,
+        "warmup_status": pool.warmup_status or "idle",
+        "proxy_label": proxy_label(getattr(account, "telegram_proxy", None)),
+        "has_proxy": bool(account.telegram_proxy or pool.proxy_id),
+        "is_active": bool(account.is_active),
+        "is_banned": bool(account.is_banned),
+        "is_frozen": bool(account.is_frozen),
+        "is_spamblocked": bool(account.is_spamblocked),
+        "is_channel_banned": bool(account.is_channel_banned),
+        "in_work": in_work,
+        "daily_messages_sent": current_daily_messages_sent(account),
+        "eligible": eligible,
+    }
+
+
+def _chat_row(chat: ChatTarget) -> dict[str, Any]:
+    return {
+        "id": chat.id,
+        "title": chat.title or chat.invite_link or f"#{chat.id}",
+        "invite_link": chat.invite_link,
+        "mode": chat.mode,
+        "join_status": chat.join_status,
+        "chat_type": chat.chat_type,
+        "is_group": is_group_chat(chat),
+        "folder_id": chat.folder_id,
+        "black_boxed": bool(chat.black_boxed_at),
+        "members_count": chat.members_count,
+    }
+
+
+async def _log_summary(session: AsyncSession, automation_id: int) -> dict[str, Any]:
+    rows = await session.execute(
+        select(AutomationActionLog.result, func.count(AutomationActionLog.id)).where(
+            AutomationActionLog.custom_automation_id == automation_id,
+            AutomationActionLog.action_type.in_(("dm", "chat_monitoring")),
+        ).group_by(AutomationActionLog.result)
+    )
+    data = {str(result or ""): int(count) for result, count in rows.all()}
+    leads = await session.scalar(
+        select(func.count(CustomLead.id)).where(
+            CustomLead.custom_automation_id == automation_id,
+            CustomLead.source == "chat_monitoring",
+        )
+    )
+    success = data.get("success", 0)
+    failed = data.get("error", 0)
+    attempts = sum(data.values())
+    return {
+        "attempts": attempts,
+        "success": success,
+        "failed": failed,
+        "success_pct": round((success / attempts) * 100, 1) if attempts else 0.0,
+        "leads": int(leads or 0),
+    }
+
+
+def _issues(settings: dict[str, Any], *, enabled: bool, chats: list[dict[str, Any]]) -> list[str]:
+    issues: list[str] = []
+    if not enabled:
+        issues.append("Модуль перехвата заявок выключен")
+    if not settings.get("account_ids"):
+        issues.append("Не выбраны аккаунты, которые пишут лиду в ЛС")
+    if not settings.get("chat_ids") and not settings.get("folder_ids"):
+        issues.append("Не указаны целевые чаты для прослушки")
+    selected = {item["id"] for item in chats if item["id"] in set(settings.get("chat_ids") or [])}
+    if selected and not any(item["id"] in selected and item.get("is_group") for item in chats):
+        issues.append("Перехват слушает только группы — среди выбранных нет чатов")
+    folder_ids = set(settings.get("folder_ids") or [])
+    if folder_ids:
+        in_folders = [item for item in chats if item.get("folder_id") in folder_ids]
+        if in_folders and not any(item.get("is_group") for item in in_folders):
+            issues.append("Перехват слушает только группы — в выбранных папках нет чатов")
+    return issues
+
+
+async def get_chat_monitoring_module(session: AsyncSession, automation_id: int) -> dict[str, Any]:
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        raise ValueError("Automation not found")
+    settings = runtime_monitor_cfg(automation)
+    await list_prompts(session, automation_id)
+    prompts = (
+        await session.execute(
+            select(CustomPrompt).where(
+                CustomPrompt.custom_automation_id == automation_id,
+                CustomPrompt.prompt_type.in_(
+                    (
+                        PromptType.CHAT_MONITORING_TRIGGER.value,
+                        PromptType.CHAT_MONITORING_RESPONSE.value,
+                    )
+                ),
+            ).order_by(CustomPrompt.is_active.desc(), CustomPrompt.created_at.desc())
+        )
+    ).scalars().all()
+    pairs = (
+        await session.execute(
+            select(SocialAccount, PoolAccount)
+            .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(PoolAccount.custom_automation_id == automation_id)
+            .order_by(SocialAccount.updated_at.desc())
+            .limit(300)
+        )
+    ).all()
+    chats = (
+        await session.execute(
+            select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id).order_by(ChatTarget.created_at.desc()).limit(400)
+        )
+    ).scalars().all()
+    folders = await folder_payloads(session, automation_id)
+    visible = [_chat_row(chat) for chat in chats if not chat.black_boxed_at]
+    black = [chat for chat in chats if chat.black_boxed_at]
+    jobs = await list_jobs(session, automation_id, bucket="all", category="module", limit=80)
+    cm_jobs = [item for item in jobs["items"] if item.get("job_type") == "chat_monitoring"][:12]
+    enabled = bool(automation.is_chat_monitoring_enabled)
+    return {
+        "enabled": enabled,
+        "settings": settings,
+        "accounts": [_account_row(account, pool) for account, pool in pairs],
+        "chats": visible,
+        "folders": folders,
+        "prompts": [
+            {
+                "id": prompt.id,
+                "name": prompt.name,
+                "content": prompt.content,
+                "prompt_type": prompt.prompt_type,
+                "is_active": prompt.is_active,
+                "is_system": prompt.name.startswith("Перехват"),
+            }
+            for prompt in prompts
+        ],
+        "jobs": cm_jobs,
+        "summary": await _log_summary(session, automation_id),
+        "blacklist": [
+            {
+                "id": chat.id,
+                "title": chat.title or chat.invite_link or f"#{chat.id}",
+                "reason": chat.last_join_error or chat.comments_check_error,
+                "black_boxed_at": chat.black_boxed_at,
+            }
+            for chat in black
+        ],
+        "issues": _issues(settings, enabled=enabled, chats=visible),
+    }
+
+
+async def save_chat_monitoring_module(
+    session: AsyncSession,
+    automation_id: int,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        raise ValueError("Automation not found")
+    settings = normalize_cm_settings(payload)
+    if payload.get("enabled") is not None:
+        automation.is_chat_monitoring_enabled = bool(payload.get("enabled"))
+        settings["enabled"] = automation.is_chat_monitoring_enabled
+    if settings["prompt_id"]:
+        try:
+            await activate_prompt(session, automation_id, settings["prompt_id"])
+        except ValueError:
+            settings["prompt_id"] = None
+    automation.lead_keywords = settings["keywords"]
+    blob = dict(automation.module_settings or {})
+    blob[MODULE_KEY] = settings
+    automation.module_settings = blob
+    automation.updated_at = _utc_now()
+    if settings["chat_ids"]:
+        chats = (
+            await session.execute(
+                select(ChatTarget).where(
+                    ChatTarget.custom_automation_id == automation_id,
+                    ChatTarget.id.in_(settings["chat_ids"]),
+                )
+            )
+        ).scalars().all()
+        for chat in chats:
+            if chat.mode == "inactive":
+                continue
+            chat.mode = "monitoring"
+            chat.is_active = True
+            chat.updated_at = _utc_now()
+    await session.commit()
+    return await get_chat_monitoring_module(session, automation_id)
+
+
+async def add_chat_monitoring_groups(session: AsyncSession, automation_id: int, raw_links: str) -> dict[str, Any]:
+    added, errors = await import_chat_links(session, automation_id, raw_links, mode="monitoring")
+    automation = await session.get(CustomAutomation, automation_id)
+    settings = runtime_monitor_cfg(automation)
+    settings["chat_ids"] = list(dict.fromkeys([*settings["chat_ids"], *added]))
+    if automation:
+        blob = dict(automation.module_settings or {})
+        blob[MODULE_KEY] = settings
+        automation.module_settings = blob
+        await session.commit()
+    data = await get_chat_monitoring_module(session, automation_id)
+    data["added_ids"] = added
+    data["add_errors"] = errors
+    return data
+
+
+async def save_chat_monitoring_preset(session: AsyncSession, automation_id: int, name: str) -> dict[str, Any]:
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        raise ValueError("Automation not found")
+    settings = runtime_monitor_cfg(automation)
+    title = (name or "").strip() or f"Заготовка {len(settings['presets']) + 1}"
+    snapshot = {key: value for key, value in settings.items() if key != "presets"}
+    settings["presets"] = [*settings["presets"], {"name": title[:80], "settings": snapshot}][-20:]
+    blob = dict(automation.module_settings or {})
+    blob[MODULE_KEY] = settings
+    automation.module_settings = blob
+    await session.commit()
+    return await get_chat_monitoring_module(session, automation_id)
+
+
+async def create_chat_monitoring_prompt(
+    session: AsyncSession,
+    automation_id: int,
+    name: str,
+    content: str,
+    *,
+    prompt_type: str = PromptType.CHAT_MONITORING_TRIGGER.value,
+) -> dict[str, Any]:
+    from .chat_monitoring_service import DEFAULT_RESPONSE_PROMPT, DEFAULT_TRIGGER_PROMPT
+
+    default = DEFAULT_TRIGGER_PROMPT if prompt_type == PromptType.CHAT_MONITORING_TRIGGER.value else DEFAULT_RESPONSE_PROMPT
+    prompt = await create_named_prompt(
+        session,
+        automation_id,
+        prompt_type=prompt_type,
+        name=name,
+        content=content or default,
+        activate=True,
+    )
+    automation = await session.get(CustomAutomation, automation_id)
+    settings = runtime_monitor_cfg(automation)
+    settings["prompt_id"] = prompt.id
+    if automation:
+        blob = dict(automation.module_settings or {})
+        blob[MODULE_KEY] = settings
+        automation.module_settings = blob
+        await session.commit()
+    return await get_chat_monitoring_module(session, automation_id)
+
+
+async def blackbox_chat_monitoring_chat(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    chat_id: int | None = None,
+    query: str | None = None,
+) -> dict[str, Any]:
+    stmt = select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id)
+    if chat_id:
+        stmt = stmt.where(ChatTarget.id == chat_id)
+    elif query and query.strip():
+        needle = f"%{query.strip()}%"
+        stmt = stmt.where(or_(ChatTarget.title.ilike(needle), ChatTarget.invite_link.ilike(needle)))
+    else:
+        raise ValueError("Укажите группу")
+    chat = (await session.execute(stmt.limit(1))).scalar_one_or_none()
+    if not chat:
+        raise ValueError("Группа не найдена")
+    await blackbox_unusable_chat(session, chat, reason="manual")
+    automation = await session.get(CustomAutomation, automation_id)
+    settings = runtime_monitor_cfg(automation)
+    settings["chat_ids"] = [item for item in settings["chat_ids"] if item != chat.id]
+    if automation:
+        blob = dict(automation.module_settings or {})
+        blob[MODULE_KEY] = settings
+        automation.module_settings = blob
+    await session.commit()
+    return await get_chat_monitoring_module(session, automation_id)

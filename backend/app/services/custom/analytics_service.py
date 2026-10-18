@@ -218,6 +218,12 @@ async def _dmp_stats(session: AsyncSession, automation_id: int) -> dict[str, Any
     }
 
 
+async def _sasha_stats(session: AsyncSession, automation_id: int) -> dict[str, Any]:
+    from .sasha_ai_service import sasha_stats
+
+    return await sasha_stats(session, automation_id)
+
+
 async def _action_stats(session: AsyncSession, automation_id: int) -> dict[str, Any]:
     since_24h = _utc_now() - timedelta(hours=24)
     since_7d = _utc_now() - timedelta(days=7)
@@ -301,6 +307,7 @@ async def get_automation_dashboard(session: AsyncSession, automation_id: int) ->
         "accounts": await _account_stats(session, automation_id),
         "leads": await _lead_stats(session, automation_id),
         "dmp": await _dmp_stats(session, automation_id),
+        "sasha": await _sasha_stats(session, automation_id),
         "actions": await _action_stats(session, automation_id),
         "chats": await _chat_target_stats(session, automation_id),
         "updated_at": _utc_now().isoformat(),

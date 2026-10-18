@@ -69,6 +69,7 @@ const JOB_TASK_KEY = {
   neurocommenting: 'neurocommenting',
   discussion: 'neurochatting',
   shilling: 'neuroshilling',
+  chat_monitoring: 'chat_monitoring',
   chat_broadcast: 'chat_broadcasts',
   parser: 'parser',
   masslooking: 'masslooking',
@@ -76,6 +77,7 @@ const JOB_TASK_KEY = {
 };
 const EXTRA_EDIT_FIELDS = {
   neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, max_per_account: 15 },
+  chat_monitoring: { join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, respect_night_hours: true },
   discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 30, max_per_chat: 1, max_per_account: 15 },
   shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
   chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },

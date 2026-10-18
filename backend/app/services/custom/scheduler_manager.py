@@ -21,6 +21,7 @@ from ...config import settings
 from .chat_join_service import run_join_pending_for_automation
 from .chat_monitoring_service import scan_chats_and_process
 from .dmp_one_service import poll_pending_imports
+from .sasha_ai_service import push_pending_leads
 from .neurocommenting_service import run_lab_neurocommenting_pass
 from .amocrm_service import run_amocrm_sync_for_automation
 from .chat_discovery_service import run_pending_discovery_for_automation
@@ -95,6 +96,7 @@ class CustomAutomationScheduler:
             "test_watch": settings.CUSTOM_TEST_WATCH_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
             "dmp_notify": 60,
+            "sasha_push": 90,
             "amocrm_sync": settings.CUSTOM_AMOCRM_SYNC_INTERVAL_SECONDS,
             "content_factory": 45,
         }
@@ -115,6 +117,7 @@ class CustomAutomationScheduler:
             "test_watch": run_lab_neurocommenting_pass,
             "dmp_poll": poll_pending_imports,
             "dmp_notify": retry_pending_dmp_notifications,
+            "sasha_push": push_pending_leads,
             "amocrm_sync": run_amocrm_sync_for_automation,
             "content_factory": run_content_factory_pass,
         }
@@ -132,6 +135,7 @@ class CustomAutomationScheduler:
                 automation.is_neurocommenting_enabled,
                 automation.is_digital_footprint_enabled,
                 automation.is_dmp_one_enabled,
+                getattr(automation, "is_sasha_ai_enabled", False),
                 automation.is_amocrm_enabled,
                 automation.is_shilling_enabled,
                 CustomAutomationScheduler._module_enabled(automation, "neurocommenting"),
@@ -155,6 +159,8 @@ class CustomAutomationScheduler:
             jobs: set[str] = {"dmp_notify"}
             if automation.is_dmp_one_enabled:
                 jobs.add("dmp_poll")
+            if getattr(automation, "is_sasha_ai_enabled", False):
+                jobs.add("sasha_push")
             if qualification_enabled(automation):
                 jobs.add("lead_warmup")
             if factory_scheduler_active(automation):
@@ -174,12 +180,14 @@ class CustomAutomationScheduler:
         }
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
-        if automation.is_chat_monitoring_enabled:
+        if automation.is_chat_monitoring_enabled or CustomAutomationScheduler._module_enabled(automation, "chat_monitoring"):
             jobs.add("monitor")
-        if automation.is_chat_monitoring_enabled or automation.is_dmp_one_enabled:
+        if automation.is_chat_monitoring_enabled or CustomAutomationScheduler._module_enabled(automation, "chat_monitoring") or automation.is_dmp_one_enabled:
             jobs.add("lead_warmup")
         if automation.is_dmp_one_enabled:
             jobs.add("dmp_poll")
+        if getattr(automation, "is_sasha_ai_enabled", False):
+            jobs.add("sasha_push")
         if automation.is_amocrm_enabled:
             jobs.add("amocrm_sync")
         if (getattr(automation, "telegram_bot_token_enc", None) or "").strip():

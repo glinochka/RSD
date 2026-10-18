@@ -16,6 +16,18 @@ const DMP_IMPORT_TYPES = [
   { value: 'other', label: 'Другое' },
 ];
 
+const SASHA_STATUS_LABELS = {
+  queued: 'в очереди',
+  uploaded: 'ушло в Сашу',
+  skipped: 'пропущен',
+  called: 'был звонок',
+  connected: 'дозвон',
+  committed: 'лид',
+  rejected: 'отказ',
+  no_answer: 'недозвон',
+  failed: 'ошибка отправки',
+};
+
 const formatDate = (value) => {
   if (!value) {
     return '—';
@@ -113,11 +125,16 @@ const CustomAutomationDmpPage = () => {
       <div className="ubt-hero">
         <div>
           <h1>Дашборд DMP</h1>
-          <p>Номера, которые пришли из DMP.one, и заказы импорта.</p>
+          <p>Номера из DMP.one. С телефоном уходят в Sasha AI, без телефона — в аккаунт перехвата или сразу в бота.</p>
         </div>
-        <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_CONNECTION(id)} className="acc-btn acc-btn--ghost">
-          Подключение
-        </Link>
+        <div className="settings-actions">
+          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SASHA(id)} className="acc-btn acc-btn--ghost">
+            Прозвон Sasha AI
+          </Link>
+          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_CONNECTION(id)} className="acc-btn acc-btn--ghost">
+            Подключение
+          </Link>
+        </div>
       </div>
 
       {message ? <p className="crm-flash">{message}</p> : null}
@@ -155,13 +172,23 @@ const CustomAutomationDmpPage = () => {
             <thead>
               <tr>
                 <th>Номер</th>
+                <th>Имя</th>
+                <th>Sasha AI</th>
+                <th>Прогрев</th>
                 <th>Дата</th>
               </tr>
             </thead>
             <tbody>
               {leads.map((lead) => (
                 <tr key={lead.id}>
-                  <td>{lead.contact_value || lead.full_name || `Лид #${lead.id}`}</td>
+                  <td>{lead.contact_value || `Лид #${lead.id}`}</td>
+                  <td>{lead.full_name || '—'}</td>
+                  <td>{SASHA_STATUS_LABELS[lead.sasha_status] || lead.sasha_status || '—'}</td>
+                  <td>
+                    {lead.sasha_lead_quality == null
+                      ? '—'
+                      : `${lead.sasha_lead_quality}/10${lead.sasha_is_commit ? ' · лид' : ''}`}
+                  </td>
                   <td>{formatDate(lead.created_at)}</td>
                 </tr>
               ))}

@@ -2136,6 +2136,24 @@ class CustomAutomation(Base):
     partner_promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     conversion_check_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     dmp_webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_sasha_ai_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    sasha_upload_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    sasha_upload_format: Mapped[str] = mapped_column(
+        String(16), default="api", server_default="api", nullable=False
+    )
+    sasha_webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sasha_hmac_secret: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sasha_auto_push: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    sasha_qualify_on_commit: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    sasha_notify_on_commit: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     is_lead_qualification_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
@@ -2220,6 +2238,10 @@ class CustomAutomation(Base):
         cascade="all, delete-orphan",
     )
     dmp_one_imports: Mapped[list["DmpOneImport"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    sasha_ai_calls: Mapped[list["SashaAiCall"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
     )
@@ -3040,6 +3062,15 @@ class CustomLead(Base):
     dmp_raw_data: Mapped[dict | None] = mapped_column(
         JSONB, default=dict, nullable=True
     )
+    sasha_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    sasha_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sasha_last_event_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sasha_lead_quality: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sasha_is_commit: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    sasha_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sasha_external_contact_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     assigned_account_id: Mapped[int | None] = mapped_column(
         ForeignKey("social_accounts.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -3070,6 +3101,9 @@ class CustomLead(Base):
         back_populates="lead",
         cascade="all, delete-orphan",
     )
+    sasha_ai_calls: Mapped[list["SashaAiCall"]] = relationship(
+        back_populates="lead",
+    )
 
 
 class CustomLeadMessage(Base):
@@ -3091,6 +3125,53 @@ class CustomLeadMessage(Base):
 
     lead: Mapped["CustomLead"] = relationship(back_populates="messages")
     social_account: Mapped["SocialAccount | None"] = relationship(back_populates="lead_messages")
+
+
+class SashaAiCall(Base):
+    __tablename__ = "sasha_ai_calls"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "event_id", name="uq_sasha_ai_call_event"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    custom_lead_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_leads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    call_list_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    call_list_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    hangup_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_commit: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    client_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_facts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agreements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lead_quality: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lead_destination: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agreements_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    session_result_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    session_result_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    record_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript: Mapped[list | None] = mapped_column(JSONB, default=list, nullable=True)
+    lead_transfer: Mapped[dict | None] = mapped_column(JSONB, default=dict, nullable=True)
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB, default=dict, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="sasha_ai_calls")
+    lead: Mapped["CustomLead | None"] = relationship(back_populates="sasha_ai_calls")
 
 
 class AutomationActionLog(Base):

@@ -6,6 +6,7 @@ import customService from '../../../services/customService';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
+import '../../../styles/customSasha.css';
 
 const LEAD_STATUSES = [
   { value: 'new', label: 'Новый' },
@@ -23,7 +24,9 @@ const CustomAutomationLeadChatPage = () => {
   const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [sashaCalls, setSashaCalls] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isPushingSasha, setIsPushingSasha] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -48,11 +51,20 @@ const CustomAutomationLeadChatPage = () => {
     }
   }, [id, leadId]);
 
+  const loadSasha = useCallback(async () => {
+    try {
+      const data = await customService.getLeadSashaCalls(id, leadId);
+      setSashaCalls(data.items || []);
+    } catch {
+      setSashaCalls([]);
+    }
+  }, [id, leadId]);
+
   const loadAll = useCallback(async () => {
     setIsLoading(true);
-    await Promise.all([loadLead(), loadMessages()]);
+    await Promise.all([loadLead(), loadMessages(), loadSasha()]);
     setIsLoading(false);
-  }, [loadLead, loadMessages]);
+  }, [loadLead, loadMessages, loadSasha]);
 
   useEffect(() => {
     loadAll();
@@ -86,6 +98,20 @@ const CustomAutomationLeadChatPage = () => {
     }
   };
 
+  const handlePushSasha = async () => {
+    setIsPushingSasha(true);
+    setMessage(null);
+    try {
+      await customService.pushLeadToSasha(id, leadId);
+      setMessage('Номер отправлен в Sasha AI');
+      await loadLead();
+    } catch (err) {
+      setError(err.message || 'Не удалось отправить в Sasha AI');
+    } finally {
+      setIsPushingSasha(false);
+    }
+  };
+
   return (
     <div className="project-crm-page">
       <div className="crm-header">
@@ -102,6 +128,11 @@ const CustomAutomationLeadChatPage = () => {
               Передать
             </button>
           ) : null}
+          {lead && lead.contact_type === 'phone' ? (
+            <button type="button" onClick={handlePushSasha} className="btn btn-outline" disabled={isPushingSasha}>
+              {isPushingSasha ? '...' : 'Отправить в Sasha AI'}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -115,6 +146,8 @@ const CustomAutomationLeadChatPage = () => {
           <p className="form-hint">Компания: {lead.company || '-'}</p>
           <p className="form-hint">Аккаунт пула: {lead.assigned_account_id || '-'}</p>
           <p className="form-hint">Источник: {lead.source}</p>
+          {lead.sasha_status ? <p className="form-hint">Sasha AI: {lead.sasha_status}{lead.sasha_lead_quality != null ? ` · прогрев ${lead.sasha_lead_quality}/10` : ''}</p> : null}
+          {lead.sasha_summary ? <p className="form-hint">О разговоре: {lead.sasha_summary}</p> : null}
           <div className="form-group">
             <label htmlFor="lead-chat-status">Статус</label>
             <CustomSelect
@@ -125,6 +158,30 @@ const CustomAutomationLeadChatPage = () => {
               disabled={updatingStatus}
             />
           </div>
+        </div>
+      ) : null}
+
+      {sashaCalls.length > 0 ? (
+        <div className="settings-section">
+          <h3 className="settings-section-title">Звонки Sasha AI</h3>
+          {sashaCalls.map((item) => (
+            <div key={item.id} className="ubt-panel" style={{ marginBottom: 12 }}>
+              <p className="form-hint">
+                {item.outcome}
+                {item.lead_quality != null ? ` · прогрев ${item.lead_quality}/10 (${item.warmth})` : ''}
+                {item.duration_ms ? ` · ${Math.round(item.duration_ms / 1000)} с` : ''}
+              </p>
+              {item.client_name ? <p className="form-hint">ФИО: {item.client_name}</p> : null}
+              {item.client_facts ? <p className="form-hint">О клиенте: {item.client_facts}</p> : null}
+              {item.agreements ? <p className="form-hint">Договорённость: {item.agreements}</p> : null}
+              {item.record_url ? (
+                <p className="form-hint">
+                  <a href={item.record_url} target="_blank" rel="noreferrer">Запись</a>
+                </p>
+              ) : null}
+              <div className="sasha-transcript">{item.transcript_text || 'Транскрипт пуст'}</div>
+            </div>
+          ))}
         </div>
       ) : null}
 

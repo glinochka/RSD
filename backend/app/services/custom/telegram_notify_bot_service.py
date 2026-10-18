@@ -70,40 +70,197 @@ def lead_telegram_username(lead: CustomLead) -> str | None:
         value = str(lead.contact_value or "").strip().lstrip("@")
         if value and value != "unknown" and not value.lstrip("-").isdigit():
             return value
-    for key in ("telegram", "username", "tg"):
+    for key in (
+        "sender_username",
+        "resolved_telegram_username",
+        "resolved_telegram",
+        "telegram",
+        "username",
+        "tg",
+    ):
         value = str(raw.get(key) or "").strip().lstrip("@")
-        if value and value != "unknown":
+        if value and value != "unknown" and not value.lstrip("-").isdigit():
             return value
     return None
+
+
+def _profile_link(lead: CustomLead, username: str | None) -> str | None:
+    if username:
+        return f"https://t.me/{username}"
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    for key in ("sender_id", "resolved_telegram_id", "telegram_id", "tg_id"):
+        value = str(raw.get(key) or "").strip()
+        if value.lstrip("-").isdigit():
+            return f"tg://user?id={value}"
+    if (lead.contact_type or "") == "telegram":
+        value = str(lead.contact_value or "").strip()
+        if value.lstrip("-").isdigit():
+            return f"tg://user?id={value}"
+    return None
+
+
+def _format_lead_when(lead: CustomLead) -> str:
+    from .work_mode import moscow_now
+
+    stamp = getattr(lead, "created_at", None) or _utc_now()
+    return moscow_now(stamp).strftime("%d.%m.%Y %H:%M")
+
+
+def _source_lines(lead: CustomLead) -> list[str]:
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    source = str(lead.source or "").strip()
+    if source == "chat_monitoring":
+        title = str(raw.get("chat_title") or "").strip()
+        lines = [f"Источник: чат «{title}»" if title else "Источник: перехват в чате"]
+        link = str(raw.get("chat_link") or "").strip()
+        if link:
+            lines.append(f"Чат: {link}")
+        return lines
+    if source == "dmp_one":
+        return ["Источник: DMP.one"]
+    if source == "sasha_ai":
+        return ["Источник: звонок Sasha AI"]
+    if source:
+        return [f"Источник: {source}"]
+    return []
+
+
+def _sasha_blob(lead: CustomLead, override: dict[str, Any] | None = None) -> dict[str, Any]:
+    if isinstance(override, dict):
+        return override
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    blob = raw.get("sasha")
+    return blob if isinstance(blob, dict) else {}
+
+
+def _warmth_label(quality: int | None) -> str:
+    if quality is None:
+        return ""
+    if quality >= 7:
+        return "горячий"
+    if quality >= 4:
+        return "тёплый"
+    return "холодный"
+
+
+def _sasha_card_lines(lead: CustomLead, blob: dict[str, Any]) -> list[str]:
+    """Phone-call block on the same card as chat and DMP leads."""
+    quality = blob.get("lead_quality")
+    if quality is None:
+        quality = getattr(lead, "sasha_lead_quality", None)
+    try:
+        quality = int(quality) if quality is not None and quality != "" else None
+    except (TypeError, ValueError):
+        quality = None
+    facts = str(blob.get("client_facts") or "").strip()
+    agreements = str(blob.get("agreements") or "").strip()
+    destination = str(blob.get("lead_destination") or "").strip()
+    transcript = str(blob.get("transcript") or "").strip()
+    record = str(blob.get("record_url") or "").strip()
+    committed = bool(blob.get("is_commit") or getattr(lead, "sasha_is_commit", False))
+    if not any((quality is not None, facts, agreements, destination, transcript, record, committed)):
+        return []
+    lines = ["Квалификация: звонок Sasha AI"]
+    if quality is not None:
+        warmth = _warmth_label(quality)
+        lines.append(f"Прогрев: {quality}/10 ({warmth})" if warmth else f"Прогрев: {quality}/10")
+    if agreements:
+        lines.append(f"Договорённость: {agreements}")
+    if destination:
+        lines.append(f"Следующий шаг: {destination}")
+    if transcript:
+        lines.append("Звонок:")
+        lines.append(transcript[:2500])
+    if record:
+        lines.append(f"Запись: {record}")
+    return lines
+
+
+def _need_text(lead: CustomLead) -> str:
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    for key in ("source_text", "need", "topic", "reason"):
+        value = str(raw.get(key) or "").strip()
+        if value and value not in {"queued", "llm_error"}:
+            return value[:1000]
+    return ""
+
+
+def format_lead_bot_message(
+    lead: CustomLead,
+    *,
+    conversation: str = "",
+    handoff_reason: str | None = None,
+    sasha: dict[str, Any] | None = None,
+) -> str:
+    """One card for chat intercept, DMP and a finished Sasha AI call."""
+    from .dmp_one_service import lead_phone
+    from .lead_delivery_service import HANDOFF_DMP_NO_REPLY, HANDOFF_DMP_WARMED
+
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    blob = _sasha_blob(lead, sasha)
+    lines = [_format_lead_when(lead)]
+    lines.extend(_source_lines(lead))
+    username = lead_telegram_username(lead)
+    if username:
+        lines.append(f"Username: @{username}")
+    profile = _profile_link(lead, username)
+    if profile:
+        lines.append(f"Профиль: {profile}")
+    phone = lead_phone(lead)
+    if not phone and (getattr(lead, "contact_type", None) or "") == "phone":
+        phone = str(getattr(lead, "contact_value", None) or "").strip() or None
+    if phone:
+        lines.append(f"Телефон: {phone}")
+    name = str(
+        getattr(lead, "full_name", None)
+        or blob.get("client_name")
+        or raw.get("sender_name")
+        or raw.get("name")
+        or raw.get("fio")
+        or ""
+    ).strip()
+    if name:
+        lines.append(f"Имя: {name}")
+    company = str(getattr(lead, "company", None) or raw.get("company") or "").strip()
+    if company:
+        lines.append(f"Компания: {company}")
+    website = str(raw.get("website") or blob.get("website") or "").strip()
+    if website and website != company:
+        lines.append(f"Сайт: {website}")
+    page = str(raw.get("page") or getattr(lead, "position", None) or "").strip()
+    if page:
+        lines.append(f"Страница: {page}")
+    need = _need_text(lead) or str(blob.get("client_facts") or "").strip()
+    if need:
+        lines.append(f"Что нужно: {need}")
+    if handoff_reason == HANDOFF_DMP_NO_REPLY:
+        lines.append("Статус: не ответил, нужен дозвон")
+    elif handoff_reason == HANDOFF_DMP_WARMED:
+        lines.append("Статус: был контакт, лид прогрет")
+    lines.extend(_sasha_card_lines(lead, blob))
+    context = (conversation or "").strip()
+    if context:
+        lines.append("Разговор:")
+        lines.append(context[:2500])
+    if len(lines) <= 1:
+        fallback = str(lead.contact_value or "").strip() or "Новый лид"
+        lines.append(fallback)
+    return "\n".join(lines)
 
 
 def format_handoff_lead_message(
     lead: CustomLead,
     *,
-    agreed: bool,
+    agreed: bool = True,
     conversation: str = "",
+    handoff_reason: str | None = None,
 ) -> str:
-    """Amo-style handoff into a chat: agreed → phone/username/context, otherwise phone only."""
-    from .dmp_one_service import lead_phone
+    del agreed
+    return format_lead_bot_message(lead, conversation=conversation, handoff_reason=handoff_reason)
 
-    phone = lead_phone(lead)
-    if not phone and (lead.contact_type or "") == "phone":
-        phone = str(lead.contact_value or "").strip() or None
-    if not agreed:
-        return f"Телефон: {phone}" if phone else str(lead.contact_value or "").strip()
-    lines: list[str] = []
-    if phone:
-        lines.append(f"Телефон: {phone}")
-    username = lead_telegram_username(lead)
-    if username:
-        lines.append(f"Username: @{username}")
-    context = (conversation or "").strip()
-    if context:
-        lines.append("Контекст:")
-        lines.append(context)
-    if not lines:
-        return str(lead.contact_value or "").strip() or "Новый лид"
-    return "\n".join(lines)
+
+def format_dmp_lead_message(lead: CustomLead) -> str:
+    return format_lead_bot_message(lead)
 
 
 def decrypt_bot_token(automation: CustomAutomation) -> str | None:
@@ -125,29 +282,6 @@ def bot_webhook_secret_ok(automation: CustomAutomation | None, incoming: str, he
     if not header_token:
         return path_ok
     return path_ok and secrets.compare_digest(header_token, expected)
-
-
-def format_dmp_lead_message(lead: CustomLead) -> str:
-    from .dmp_one_service import lead_page, lead_phone, lead_website
-
-    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
-    lines = ["Новый лид:"]
-    mapping = [
-        ("Телефон", lead_phone(lead) or raw.get("phone") or raw.get("phone_number")),
-        ("Сайт", lead_website(lead) or raw.get("website")),
-        ("IP", raw.get("ip")),
-        ("Страница", lead_page(lead) or raw.get("page")),
-        ("Имя", lead.full_name or raw.get("name") or raw.get("full_name") or raw.get("fio")),
-        ("Компания", lead.company or raw.get("company")),
-        ("Telegram", lead.contact_value if lead.contact_type == "telegram" else raw.get("telegram")),
-    ]
-    for label, value in mapping:
-        text = str(value or "").strip()
-        if text and text != "unknown":
-            lines.append(f"{label}: {text}")
-    if len(lines) == 1:
-        lines.append(str(raw)[:500] if raw else (lead.contact_value or ""))
-    return "\n".join(lines)
 
 
 async def _telegram_api(token: str, method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -600,7 +734,15 @@ async def dispatch_dmp_notifications(
     automation: CustomAutomation,
     lead: CustomLead,
 ) -> dict[str, Any]:
-    bot = await _deliver_bot(session, automation, lead)
+    from .lead_delivery_service import lead_conversation_text
+
+    conversation = await lead_conversation_text(session, lead.id)
+    bot = await _deliver_bot(
+        session,
+        automation,
+        lead,
+        text=format_lead_bot_message(lead, conversation=conversation),
+    )
     sheets = await _deliver_sheets(session, automation, lead)
     now = _utc_now()
     lead.status = LeadStatus.TRANSFERRED.value
@@ -619,16 +761,6 @@ async def dispatch_dmp_notifications(
     return {"transferred": True, "bot_sent": bot.get("sent") or 0, "bot_pending": bool(bot.get("pending")), "sheets": sheets}
 
 
-def _lead_agreed(*, handoff_reason: str | None, has_conversation: bool) -> bool:
-    from .lead_delivery_service import HANDOFF_DMP_NO_REPLY, HANDOFF_DMP_WARMED
-
-    if handoff_reason == HANDOFF_DMP_NO_REPLY:
-        return False
-    if handoff_reason == HANDOFF_DMP_WARMED:
-        return True
-    return has_conversation
-
-
 async def dispatch_sales_bot_notification(
     session: AsyncSession,
     automation: CustomAutomation,
@@ -639,11 +771,10 @@ async def dispatch_sales_bot_notification(
     from .lead_delivery_service import lead_conversation_text
 
     conversation = await lead_conversation_text(session, lead.id)
-    agreed = _lead_agreed(handoff_reason=handoff_reason, has_conversation=bool(conversation.strip()))
-    text = format_handoff_lead_message(
+    text = format_lead_bot_message(
         lead,
-        agreed=agreed,
-        conversation=conversation if agreed else "",
+        conversation=conversation,
+        handoff_reason=handoff_reason,
     )
     bot = await _deliver_bot(session, automation, lead, text=text)
     now = _utc_now()

@@ -76,6 +76,11 @@ from .schemas import (
     NeurochattingGroupsRequest,
     NeurochattingPresetRequest,
     NeurochattingPromptCreate,
+    ChatMonitoringSettings,
+    ChatMonitoringModuleResponse,
+    ChatMonitoringGroupsRequest,
+    ChatMonitoringPresetRequest,
+    ChatMonitoringPromptCreate,
     MasslookingSettings,
     MasslookingModuleResponse,
     MasslookingPresetRequest,
@@ -268,6 +273,10 @@ from ..services.custom.dmp_one_service import (
     public_webhook_url,
     rotate_dmp_webhook_secret,
 )
+from ..services.custom.sasha_ai_service import (
+    ensure_sasha_webhook_secret,
+    sasha_settings_payload,
+)
 from ..services.custom.google_sheets_service import (
     encrypt_service_account_json,
     parse_spreadsheet_id,
@@ -306,6 +315,14 @@ from ..services.custom.neurochatting_module_service import (
     get_neurochatting_module,
     save_neurochatting_module,
     save_neurochatting_preset,
+)
+from ..services.custom.chat_monitoring_module_service import (
+    add_chat_monitoring_groups,
+    blackbox_chat_monitoring_chat,
+    create_chat_monitoring_prompt,
+    get_chat_monitoring_module,
+    save_chat_monitoring_module,
+    save_chat_monitoring_preset,
 )
 from ..services.custom.masslooking_service import run_masslooking_pass
 from ..services.custom.masslooking_module_service import (
@@ -413,6 +430,10 @@ async def _settings_payload(session, db_automation, *, is_admin: bool = True) ->
         ensure_dmp_webhook_secret(db_automation)
         await session.commit()
         await session.refresh(db_automation)
+    if (db_automation.is_sasha_ai_enabled or db_automation.sasha_upload_url) and not db_automation.sasha_webhook_secret:
+        ensure_sasha_webhook_secret(db_automation)
+        await session.commit()
+        await session.refresh(db_automation)
     validation = await validate_settings(session, db_automation)
     response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
     response["lead_keywords"] = normalize_lead_keywords(db_automation.lead_keywords)
@@ -424,6 +445,7 @@ async def _settings_payload(session, db_automation, *, is_admin: bool = True) ->
     else:
         response["dmp_webhook_secret"] = None
         response["dmp_webhook_url"] = None
+    response.update(sasha_settings_payload(db_automation))
     response["telegram_bot_token_set"] = bool((db_automation.telegram_bot_token_enc or "").strip())
     response["telegram_bot_password_set"] = bool((getattr(db_automation, "telegram_bot_password_hash", None) or "").strip())
     response["telegram_bot_username"] = db_automation.telegram_bot_username
@@ -925,6 +947,115 @@ async def neurochatting_blacklist(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/chat-monitoring", response_model=ChatMonitoringModuleResponse)
+async def get_chat_monitoring_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_chat_monitoring_module(session, automation_id)
+        return ChatMonitoringModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/chat-monitoring", response_model=ChatMonitoringModuleResponse)
+async def save_chat_monitoring_screen(
+    automation_id: int,
+    payload: ChatMonitoringSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_chat_monitoring_module(session, automation_id, payload.model_dump())
+        return ChatMonitoringModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-monitoring/run")
+async def run_chat_monitoring_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: ChatMonitoringSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump(exclude_unset=True) if payload else None
+        if snapshot:
+            await save_chat_monitoring_module(session, automation_id, snapshot)
+            data = await get_chat_monitoring_module(session, automation_id)
+        else:
+            data = await get_chat_monitoring_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "chat_monitoring",
+        scan_chats_and_process,
+        automation_id,
+        params=settings,
+    )
+    background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/chat-monitoring/groups", response_model=ChatMonitoringModuleResponse)
+async def add_chat_monitoring_group_links(
+    automation_id: int,
+    payload: ChatMonitoringGroupsRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_chat_monitoring_groups(session, automation_id, payload.links)
+    if data.get("added_ids"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return ChatMonitoringModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-monitoring/presets", response_model=ChatMonitoringModuleResponse)
+async def save_chat_monitoring_launch_preset(
+    automation_id: int,
+    payload: ChatMonitoringPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_chat_monitoring_preset(session, automation_id, payload.name)
+        return ChatMonitoringModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-monitoring/prompts", response_model=ChatMonitoringModuleResponse)
+async def create_chat_monitoring_module_prompt(
+    automation_id: int,
+    payload: ChatMonitoringPromptCreate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await create_chat_monitoring_prompt(
+            session,
+            automation_id,
+            payload.name,
+            payload.content,
+            prompt_type=payload.prompt_type,
+        )
+        return ChatMonitoringModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-monitoring/blacklist", response_model=ChatMonitoringModuleResponse)
+async def chat_monitoring_blacklist(
+    automation_id: int,
+    payload: ChatBlackboxRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            data = await blackbox_chat_monitoring_chat(
+                session, automation_id, chat_id=payload.chat_id, query=payload.query
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return ChatMonitoringModuleResponse.model_validate(data)
 
 
 @router.get("/automations/{automation_id}/modules/masslooking", response_model=MasslookingModuleResponse)
@@ -1655,11 +1786,14 @@ async def update_automation_settings(
             db_automation.is_dmp_one_enabled,
             db_automation.is_amocrm_enabled,
             db_automation.is_shilling_enabled,
+            db_automation.is_sasha_ai_enabled,
         ])
         if modules_on and db_automation.status == "draft":
             db_automation.status = "active"
         if db_automation.is_dmp_one_enabled:
             ensure_dmp_webhook_secret(db_automation)
+        if db_automation.is_sasha_ai_enabled or db_automation.sasha_upload_url:
+            ensure_sasha_webhook_secret(db_automation)
         db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await session.commit()
         await session.refresh(db_automation)

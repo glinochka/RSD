@@ -257,12 +257,15 @@ async def resolve_telegram_for_lead(
     phone = lead_phone(lead)
     if not phone:
         return None
+    from .chat_monitoring_module_service import leadgen_restrict_ids
+
     account = await select_account_for_action(
         session,
         automation,
         "dmp_outreach",
         thread_id=lead.id,
         consume_quota=False,
+        restrict_account_ids=leadgen_restrict_ids(automation),
     )
     if not account or not account.session_file_path:
         return None
@@ -455,7 +458,15 @@ async def _send_outreach(
     if existing_outgoing:
         return False
 
-    account = await select_account_for_action(session, automation, "dmp_outreach", thread_id=lead.id)
+    from .chat_monitoring_module_service import leadgen_restrict_ids
+
+    account = await select_account_for_action(
+        session,
+        automation,
+        "dmp_outreach",
+        thread_id=lead.id,
+        restrict_account_ids=leadgen_restrict_ids(automation),
+    )
     if not account or not account.session_file_path:
         return False
 
@@ -525,11 +536,22 @@ async def process_dmp_lead(
         await session.commit()
         return {"lead_id": lead.id, "status": "duplicate", "canonical_lead_id": canonical.id}
 
-    if is_dmp_notify_pipeline(automation) and not qualification_enabled(automation):
-        from .telegram_notify_bot_service import dispatch_dmp_notifications
+    from .sasha_ai_service import lead_sasha_phone, maybe_send_lead_to_sasha, sasha_takes_over
+
+    # Phone leads go DMP → Sasha → back here → the same bot.
+    # A contact without a callable number stays on the Telegram path.
+    if sasha_takes_over(automation) and lead_sasha_phone(lead):
+        sasha = await maybe_send_lead_to_sasha(session, automation, lead)
+        return {"lead_id": lead.id, "status": "sasha", **(sasha or {})}
+
+    if not qualification_enabled(automation):
+        from .telegram_notify_bot_service import dispatch_dmp_notifications, dispatch_sales_bot_notification
 
         lead_id = lead.id
-        dispatched = await dispatch_dmp_notifications(session, automation, lead)
+        if is_dmp_notify_pipeline(automation):
+            dispatched = await dispatch_dmp_notifications(session, automation, lead)
+        else:
+            dispatched = await dispatch_sales_bot_notification(session, automation, lead)
         return {"lead_id": lead_id, "status": "transferred", **dispatched}
 
     conversion = await check_lead_conversion(automation, lead)

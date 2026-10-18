@@ -523,7 +523,7 @@ const CustomAutomationNeuroshillingPage = () => {
             <span className="nc-muted">Как часто</span>
             <p className="nc-note">В группе — не чаще раза в московский день, и только после ~100 сообщений или 7 тихих дней. Под постом — вместе с нейрокомментингом, если комментарии открыты. Забаненную пару пропускаем и берём другую.</p>
             <p className="nc-note">
-              Ответы реальным людям в чате — это <Link to={ubtModulePath(id, 'neurochatting')}>Нейрочаттинг</Link>. Входящие личные обрабатывает перехват заявок. Здесь аккаунты только разыгрывают свою пару реплик.
+              Ответы реальным людям в чате — это <Link to={ubtModulePath(id, 'neurochatting')}>Нейрочаттинг</Link>. Заявки из чатов ловит <Link to={ubtModulePath(id, 'lead-intercept')}>Перехват заявок</Link>. Здесь аккаунты только разыгрывают свою пару реплик.
             </p>
             <p className="nc-muted" style={{ marginTop: 10 }}>Сухой прогон ничего не отправляет. Живой тест — в <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_TEST(id)}>лаборатории</Link>.</p>
           </div>

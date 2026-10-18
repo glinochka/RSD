@@ -22,6 +22,7 @@ const UBT_OWNED_TOGGLES = new Set([
   'is_neurocommenting_enabled',
   'is_shilling_enabled',
   'is_digital_footprint_enabled',
+  'is_chat_monitoring_enabled',
 ]);
 
 const CustomAutomationSettingsPage = () => {
@@ -37,8 +38,6 @@ const CustomAutomationSettingsPage = () => {
   const [credentials, setCredentials] = useState([]);
   const [newCredential, setNewCredential] = useState({ username: '', password: '' });
   const [isCreatingAccess, setIsCreatingAccess] = useState(false);
-  const [keywordDraft, setKeywordDraft] = useState('');
-
   const loadSettings = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -88,37 +87,6 @@ const CustomAutomationSettingsPage = () => {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const leadKeywords = Array.isArray(form.lead_keywords) ? form.lead_keywords : [];
-
-  const addLeadKeywords = (raw) => {
-    const parts = String(raw || '')
-      .split(/[\n,;]+/)
-      .map((part) => part.trim().toLowerCase())
-      .filter((part) => part.length >= 2)
-      .map((part) => part.slice(0, 64));
-    if (parts.length === 0) {
-      return;
-    }
-    setForm((prev) => {
-      const current = Array.isArray(prev.lead_keywords) ? prev.lead_keywords : [];
-      const next = [...current];
-      parts.forEach((part) => {
-        if (!next.includes(part) && next.length < 50) {
-          next.push(part);
-        }
-      });
-      return { ...prev, lead_keywords: next };
-    });
-    setKeywordDraft('');
-  };
-
-  const removeLeadKeyword = (word) => {
-    setForm((prev) => ({
-      ...prev,
-      lead_keywords: (Array.isArray(prev.lead_keywords) ? prev.lead_keywords : []).filter((item) => item !== word),
-    }));
-  };
-
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setForm((prev) => ({
@@ -149,10 +117,8 @@ const CustomAutomationSettingsPage = () => {
             work_hour_start: form.work_hour_start,
             work_hour_end: form.work_hour_end,
             work_weekdays: form.work_weekdays,
-            is_chat_monitoring_enabled: form.is_chat_monitoring_enabled,
             is_dmp_one_enabled: form.is_dmp_one_enabled,
             is_amocrm_enabled: form.is_amocrm_enabled,
-            lead_keywords: Array.isArray(form.lead_keywords) ? form.lead_keywords : [],
             lead_manager_contact: form.lead_manager_contact,
             partner_utm_url: form.partner_utm_url,
             partner_promo_code: form.partner_promo_code,
@@ -259,61 +225,16 @@ const CustomAutomationSettingsPage = () => {
           </div>
           {settings.solution_kind === 'dmp_bot' ? null : (
             <p className="form-hint">
-              Нейрокомментинг, нейрочаттинг, шиллинг и прогрев включаются в своих подразделах Телеграм УБТ.
+              Нейрокомментинг, перехват заявок, нейрочаттинг, шиллинг и прогрев включаются в своих подразделах Телеграм УБТ.
             </p>
           )}
         </div>
 
         {settings.solution_kind === 'dmp_bot' ? null : (
-        <div className="settings-section">
-          <h3 className="settings-section-title">Ключевые слова для перехвата</h3>
-          <p className="form-hint">
-            Сначала совпадение со словом, потом LLM. Без списка сообщения не проверяются.
-          </p>
-          {leadKeywords.length > 0 ? (
-            <ul className="lead-keywords-list">
-              {leadKeywords.map((word) => (
-                <li key={word} className="lead-keyword-chip">
-                  <span>{word}</span>
-                  <button
-                    type="button"
-                    className="lead-keyword-remove"
-                    onClick={() => removeLeadKeyword(word)}
-                  >
-                    Удалить
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="form-hint">Пока нет слов — перехват не будет тратить токены и не напишет в ЛС.</p>
-          )}
-          <div className="lead-keyword-add">
-            <input
-              id="lead_keyword_draft"
-              type="text"
-              value={keywordDraft}
-              onChange={(e) => setKeywordDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addLeadKeywords(keywordDraft);
-                }
-              }}
-              placeholder="seo, нужен сайт"
-              maxLength={64}
-              disabled={leadKeywords.length >= 50}
-            />
-            <button
-              type="button"
-              className="btn btn-outline"
-              onClick={() => addLeadKeywords(keywordDraft)}
-              disabled={!keywordDraft.trim() || leadKeywords.length >= 50}
-            >
-              Добавить
-            </button>
-          </div>
-        </div>
+        <p className="form-hint">
+          Чаты, аккаунты и темы оффера для перехвата заявок настраиваются в{' '}
+          <Link to={ubtModulePath(id, 'lead-intercept')}>Телеграм УБТ → Перехват заявок</Link>.
+        </p>
         )}
 
         {settings.solution_kind === 'dmp_bot' ? null : (
