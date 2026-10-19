@@ -440,6 +440,44 @@ class TestLazyJoinCoverage:
         await test_session.refresh(pending)
         assert pending.status == PendingChatActionStatus.DONE.value
 
+    async def test_due_comment_sends_despite_long_target_rest(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import timedelta
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.pending_action_service import process_due_pending_actions
+
+        actor = await _add_account(test_session, custom_automation, username="restok", phone="+79991001033")
+        actor.next_action_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=35)
+        await test_session.commit()
+        chat = await _add_chat(
+            test_session,
+            custom_automation,
+            title="News rest",
+            chat_type="channel",
+            invite_link="https://t.me/flushrestchan",
+        )
+        pending = await enqueue_pending_action(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target=chat,
+            account=actor,
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:91",
+            payload={"post_id": 91, "post_text": "hello"},
+        )
+        pending.next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
+        await test_session.commit()
+        with patch(
+            "app.services.custom.pending_action_service._run_action",
+            AsyncMock(return_value=True),
+        ):
+            done = await process_due_pending_actions(test_session, custom_automation.id)
+        assert done == 1
+        await test_session.refresh(pending)
+        assert pending.status == PendingChatActionStatus.DONE.value
+
 
 async def _mark_joined(
     session: AsyncSession,

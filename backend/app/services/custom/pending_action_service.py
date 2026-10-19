@@ -1,6 +1,7 @@
 """Queue an action until the responsible account has joined the chat, then run it."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 PENDING = PendingChatActionStatus.PENDING.value
 DONE = PendingChatActionStatus.DONE.value
 FAILED = PendingChatActionStatus.FAILED.value
+COMMENT_SEND_SECONDS = 50
+COMMENT_FLUSH_SECONDS = 120
 
 
 def _utc_now() -> datetime:
@@ -67,8 +70,13 @@ def _pending_account_block(account: SocialAccount | None, action_type: str) -> t
         return True, next_wake_at(account=account)
     from .account_pacing import account_is_resting
 
+    # Long 20–40 min comment gap must not park a comment that already waited
+    # the 5–8 min post delay. Only short retry/flood rests still block.
     if account_is_resting(account):
-        return True, getattr(account, "next_action_at", None)
+        nxt = getattr(account, "next_action_at", None)
+        wait = (nxt - _utc_now()).total_seconds() if nxt is not None else 0.0
+        if 0 < wait <= 15 * 60:
+            return True, nxt
     return False, None
 
 
@@ -423,11 +431,39 @@ async def process_due_pending_actions(
     return done
 
 
+async def flush_due_comments(automation_id: int, *, limit: int = 8) -> int:
+    """Send queued comments without waiting for join or a full channel scan."""
+    from ...alembic.database import async_session_maker
+
+    async with async_session_maker() as session:
+        return await process_due_pending_actions(
+            session,
+            automation_id,
+            limit=limit,
+            action_types=("neurocommenting",),
+        )
+
+
 async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> bool:
     action.attempts += 1
     action.updated_at = _utc_now()
+    action_id = action.id
+    await session.commit()
+    action = await session.get(PendingChatAction, action_id)
+    if action is None or action.status != PENDING:
+        return False
     try:
-        ok = await _run_action(session, action)
+        timeout = COMMENT_SEND_SECONDS if action.action_type == "neurocommenting" else 90
+        ok = await asyncio.wait_for(_run_action(session, action), timeout=timeout)
+    except TimeoutError as exc:
+        logger.warning("Pending action %s (%s) timed out", action_id, action.action_type)
+        action.last_error = str(exc)[:500] or "send_timeout"
+        if action.attempts >= 5:
+            action.status = FAILED
+        else:
+            _defer_pending(action)
+        await session.commit()
+        return False
     except Exception as exc:
         logger.warning("Pending action %s (%s) failed: %s", action.id, action.action_type, exc)
         action.last_error = str(exc)[:500]

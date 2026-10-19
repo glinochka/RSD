@@ -343,19 +343,62 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
         work = [(name, fn) for name, fn in streams if name != "join"]
         if not hub.clients and not join_fn and not work:
             return {"status": "sleeping", **sync}
-        join_result = await join_fn(automation_id) if join_fn else None
+        comment_flush = 0
+        try:
+            from .pending_action_service import COMMENT_FLUSH_SECONDS, flush_due_comments
+
+            comment_flush = await asyncio.wait_for(
+                flush_due_comments(automation_id, limit=3),
+                timeout=COMMENT_FLUSH_SECONDS,
+            )
+            if comment_flush:
+                from .job_service import log_active
+
+                await log_active(
+                    automation_id,
+                    "neurocommenting",
+                    f"Отправил {comment_flush} отложенных комментариев по уже вступившим каналам",
+                )
+        except TimeoutError:
+            logger.warning("Due comment flush timed out for automation %s", automation_id)
+        except Exception as flush_exc:
+            logger.warning("Due comment flush failed for automation %s: %s", automation_id, flush_exc)
+        join_result = None
+        if join_fn:
+            try:
+                join_result = await asyncio.wait_for(join_fn(automation_id), timeout=90)
+            except TimeoutError:
+                logger.warning("Join tick timed out for automation %s", automation_id)
+                join_result = {"status": "timeout"}
         if not work:
-            return {"status": "ok", "stream": "join", "join": join_result, "result": join_result, **sync}
+            return {
+                "status": "ok",
+                "stream": "join",
+                "join": join_result,
+                "result": join_result,
+                "comment_flush": comment_flush,
+                **sync,
+            }
         job_work = [(name, fn) for name, fn in work if STREAM_JOB_TYPES.get(name)]
         lifestyle = [(name, fn) for name, fn in work if not STREAM_JOB_TYPES.get(name)]
         results: dict[str, Any] = {}
         for name, fn in job_work:
-            results[name] = await fn(automation_id)
+            try:
+                results[name] = await asyncio.wait_for(fn(automation_id), timeout=180)
+            except TimeoutError:
+                logger.warning("%s tick timed out for automation %s", name, automation_id)
+                results[name] = {"status": "timeout"}
         lifestyle_name = None
         if lifestyle:
             lifestyle_name, lifestyle_fn = lifestyle[hub.cursor % len(lifestyle)]
             hub.cursor += 1
-            results[lifestyle_name] = await lifestyle_fn(automation_id)
+            try:
+                results[lifestyle_name] = await asyncio.wait_for(
+                    lifestyle_fn(automation_id), timeout=60
+                )
+            except TimeoutError:
+                logger.warning("%s tick timed out for automation %s", lifestyle_name, automation_id)
+                results[lifestyle_name] = {"status": "timeout"}
         primary = job_work[0][0] if job_work else lifestyle_name
         return {
             "status": "ok",
@@ -363,6 +406,7 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             "join": join_result,
             "result": results.get(primary) if primary else join_result,
             "results": results,
+            "comment_flush": comment_flush,
             **sync,
         }
     except Exception as exc:

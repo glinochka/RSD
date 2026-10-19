@@ -836,20 +836,30 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
             cfg = await load_active_job_params(session, automation_id, "neurocommenting")
         if cfg is None:
             cfg = ((automation.module_settings or {}).get("neurocommenting") or {})
+        from .pending_action_service import process_due_pending_actions
+
+        flushed = await process_due_pending_actions(
+            session, automation_id, action_types=("neurocommenting",)
+        )
         if not (
             automation.is_neurocommenting_enabled
             or automation.is_shilling_enabled
             or bool(cfg.get("enabled"))
         ):
             logger.info("Post engagement disabled or automation not found for %s", automation_id)
-            return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
+            return {
+                "status": "skipped",
+                "reason": "feature_disabled",
+                "chats_processed": 0,
+                "comments_sent": flushed,
+            }
         if no_accounts_picked(cfg):
-            return {"status": "skipped", "reason": "no_accounts", "chats_processed": 0, "comments_sent": 0}
-        from .pending_action_service import process_due_pending_actions
-
-        flushed = await process_due_pending_actions(
-            session, automation_id, action_types=("neurocommenting",)
-        )
+            return {
+                "status": "skipped",
+                "reason": "no_accounts",
+                "chats_processed": 0,
+                "comments_sent": flushed,
+            }
         if flushed:
             from .job_service import log_active
 
