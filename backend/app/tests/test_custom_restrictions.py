@@ -8,7 +8,9 @@ from app.services.custom.account_restriction import (
     KIND_LIMITED,
     KIND_LIMITED_PERMANENT,
     KIND_NONE,
+    KIND_WRITE_WARNING,
     apply_restriction_classification,
+    apply_spambot_write_verdict,
     classify_spambot_reply,
     expire_if_due,
     restriction_blocks_action,
@@ -113,9 +115,122 @@ def test_restriction_label_uses_until_date():
         is_spamblocked=True,
         is_channel_banned=False,
         restriction_kind=KIND_LIMITED,
-        restriction_until=datetime(2026, 10, 15),
+        restriction_until=datetime(2026, 12, 15),
     )
-    assert "15.10" in (restriction_label(account) or "")
+    assert "15.12" in (restriction_label(account) or "")
+
+
+def test_write_warning_blocks_comments_not_humanization():
+    account = SimpleNamespace(
+        is_frozen=False,
+        is_spamblocked=False,
+        is_channel_banned=False,
+        restriction_kind=KIND_WRITE_WARNING,
+        restriction_until=datetime.utcnow() + timedelta(days=6),
+        restriction_detail=None,
+        spamblocked_at=None,
+        spamblock_checked_at=None,
+        updated_at=None,
+    )
+    assert restriction_blocks_action(account, "neurocommenting") is True
+    assert restriction_blocks_action(account, "commenting") is True
+    assert restriction_blocks_action(account, "join") is True
+    assert restriction_blocks_action(account, "peer_dialog") is False
+    assert restriction_blocks_action(account, "idle_browse") is False
+    assert restriction_blocks_action(account, "account_warmup") is False
+
+
+def test_spambot_verdict_warning_vs_permanent_vs_chat():
+    warning_acc = SimpleNamespace(
+        is_frozen=False,
+        is_spamblocked=False,
+        is_channel_banned=False,
+        restriction_kind=None,
+        restriction_until=None,
+        restriction_detail=None,
+        spamblocked_at=None,
+        spamblock_checked_at=None,
+        frozen_at=None,
+        updated_at=None,
+    )
+    assert apply_spambot_write_verdict(
+        warning_acc,
+        {"kind": KIND_LIMITED, "blocked": True, "until": datetime(2026, 10, 22), "detail": "until"},
+    ) == "warning"
+    assert warning_acc.restriction_kind == KIND_WRITE_WARNING
+    assert warning_acc.is_channel_banned is False
+    assert warning_acc.is_spamblocked is True
+
+    clean = SimpleNamespace(
+        is_frozen=False,
+        is_spamblocked=False,
+        is_channel_banned=False,
+        restriction_kind=None,
+        restriction_until=None,
+        restriction_detail=None,
+        spamblocked_at=None,
+        spamblock_checked_at=None,
+        frozen_at=None,
+        updated_at=None,
+    )
+    assert apply_spambot_write_verdict(clean, {"kind": KIND_NONE, "blocked": False, "until": None}) == "chat_level"
+    assert clean.is_channel_banned is False
+    assert clean.restriction_kind is None
+
+    forever = SimpleNamespace(
+        is_frozen=False,
+        is_spamblocked=False,
+        is_channel_banned=False,
+        restriction_kind=None,
+        restriction_until=None,
+        restriction_detail=None,
+        spamblocked_at=None,
+        spamblock_checked_at=None,
+        frozen_at=None,
+        updated_at=None,
+    )
+    assert apply_spambot_write_verdict(
+        forever,
+        {"kind": KIND_LIMITED_PERMANENT, "blocked": True, "until": None, "detail": "forever"},
+    ) == "permanent"
+    assert forever.is_channel_banned is True
+    assert forever.restriction_kind == KIND_LIMITED_PERMANENT
+
+
+def test_write_warning_expires():
+    account = SimpleNamespace(
+        is_frozen=False,
+        is_spamblocked=True,
+        restriction_kind=KIND_WRITE_WARNING,
+        restriction_until=datetime.utcnow() - timedelta(hours=1),
+        restriction_detail="old",
+        spamblocked_at=datetime.utcnow(),
+        spamblock_checked_at=None,
+        updated_at=None,
+    )
+    assert expire_if_due(account) is True
+    assert account.restriction_kind is None
+    assert restriction_kind(account) == KIND_NONE
+
+
+def test_rest_chip_antispam_is_blue_status():
+    from app.services.custom.account_pacing import account_rest_chip
+
+    account = SimpleNamespace(
+        id=9,
+        is_frozen=False,
+        is_spamblocked=True,
+        is_channel_banned=False,
+        restriction_kind=KIND_WRITE_WARNING,
+        restriction_until=datetime(2026, 10, 27),
+        flood_quarantined_until=None,
+        created_at=datetime.utcnow() - timedelta(days=40),
+        origin="farm",
+    )
+    chip = account_rest_chip(account)
+    assert chip is not None
+    assert chip["kind"] == "antispam"
+    assert "Антиспам" in chip["label"]
 
 
 def test_apply_classification_sets_flags():

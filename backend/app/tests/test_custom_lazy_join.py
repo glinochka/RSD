@@ -440,7 +440,7 @@ class TestLazyJoinCoverage:
         await test_session.refresh(pending)
         assert pending.status == PendingChatActionStatus.DONE.value
 
-    async def test_due_comment_sends_despite_long_target_rest(
+    async def test_due_comment_waits_for_target_rest(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from datetime import timedelta
@@ -474,9 +474,10 @@ class TestLazyJoinCoverage:
             AsyncMock(return_value=True),
         ):
             done = await process_due_pending_actions(test_session, custom_automation.id)
-        assert done == 1
+        assert done == 0
         await test_session.refresh(pending)
-        assert pending.status == PendingChatActionStatus.DONE.value
+        assert pending.status == PendingChatActionStatus.PENDING.value
+        assert pending.next_attempt_at is not None
 
 
 async def _mark_joined(

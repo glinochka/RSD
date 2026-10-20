@@ -645,6 +645,11 @@ def account_may_receive_peer(account: SocialAccount | None, *, now: datetime | N
 def account_may_join(account: SocialAccount | None, *, now: datetime | None = None) -> bool:
     if account_is_intercept(account):
         return False
+    from .account_restriction import restriction_kind, KIND_WRITE_WARNING, expire_if_due
+
+    expire_if_due(account, now=now)
+    if restriction_kind(account, now=now) == KIND_WRITE_WARNING:
+        return False
     return account_upload_phase(account, now=now) in {PHASE_OBSERVE, PHASE_REPLY, PHASE_RAMP}
 
 
@@ -1033,6 +1038,34 @@ def _push_next_humanization_action(account: SocialAccount, seconds: float) -> No
 # ---------------------------------------------------------------------------
 # Legacy shims
 # ---------------------------------------------------------------------------
+
+def account_rest_chip(account: SocialAccount | None, *, now: datetime | None = None) -> dict[str, str] | None:
+    """Blue Status chip while the account is in night / weekend / antispam rest."""
+    if account is None:
+        return None
+    from .account_restriction import KIND_WRITE_WARNING, restriction_kind, restriction_label
+    from .work_mode import in_configured_work_hours
+
+    current = now or _utc_now()
+    kind = restriction_kind(account, now=current)
+    if kind == KIND_WRITE_WARNING:
+        return {"kind": "antispam", "label": restriction_label(account) or "Антиспам"}
+    if account_in_settle_rest(account, now=current):
+        return {"kind": "settle", "label": "Отлёжка 24ч"}
+    if account_is_flood_quarantined(account, now=current):
+        until = getattr(account, "flood_quarantined_until", None)
+        if until is not None:
+            return {"kind": "flood", "label": f"Карантин до {until.strftime('%d.%m %H:%M')}"}
+        return {"kind": "flood", "label": "Карантин FloodWait"}
+    if account_in_target_rest_day(account, now=current):
+        from .work_mode import current_work_mode
+
+        if moscow_now(current).weekday() not in current_work_mode()["weekdays"]:
+            return {"kind": "weekend", "label": "Выходные"}
+    if not in_configured_work_hours(current, account_id=getattr(account, "id", None)):
+        return {"kind": "night", "label": "Ночь"}
+    return None
+
 
 def rest_seconds_for_account(account: SocialAccount | None, *, now: datetime | None = None) -> float:
     """Legacy: returns TARGET rest duration."""

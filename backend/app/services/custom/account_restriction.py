@@ -20,7 +20,7 @@ is freeze or a full ban.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 KIND_NONE = "none"
@@ -28,8 +28,18 @@ KIND_LIMITED = "limited"
 KIND_LIMITED_PERMANENT = "limited_permanent"
 KIND_GEO = "geo"
 KIND_FROZEN = "frozen"
+KIND_WRITE_WARNING = "write_warning"
 
 LIMITED_KINDS = {KIND_LIMITED, KIND_LIMITED_PERMANENT, KIND_GEO}
+WRITE_WARNING_DAYS = 7
+HUMANIZATION_ACTIONS = {
+    "peer_dialog",
+    "idle_browse",
+    "account_warmup",
+    "comment_contact",
+    "inspect",
+    "prepare_join",
+}
 
 DM_ACTIONS = {
     "dm",
@@ -42,6 +52,7 @@ DM_ACTIONS = {
 }
 CHANNEL_WRITE_ACTIONS = {
     "commenting",
+    "neurocommenting",
     "shilling",
     "discussion",
     "chat_broadcast",
@@ -143,12 +154,14 @@ _KIND_LABELS = {
     KIND_LIMITED_PERMANENT: "ЛС навсегда",
     KIND_GEO: "Гео-лимит",
     KIND_FROZEN: "Заморозка",
+    KIND_WRITE_WARNING: "Антиспам",
 }
 _KIND_SCOPES = {
     KIND_LIMITED: "dm_invite",
     KIND_LIMITED_PERMANENT: "dm_invite",
     KIND_GEO: "dm_invite",
     KIND_FROZEN: "all",
+    KIND_WRITE_WARNING: "public_writes",
 }
 
 
@@ -237,7 +250,7 @@ def restriction_kind(account: Any, *, now: datetime | None = None) -> str:
     if getattr(account, "is_frozen", False):
         return KIND_FROZEN
     kind = str(getattr(account, "restriction_kind", None) or "").strip().lower()
-    if kind in LIMITED_KINDS:
+    if kind in LIMITED_KINDS or kind == KIND_WRITE_WARNING:
         return kind
     if getattr(account, "is_spamblocked", False):
         return KIND_LIMITED
@@ -261,7 +274,7 @@ def restriction_label(account: Any) -> str | None:
         return None
     label = _KIND_LABELS.get(kind, kind)
     until = _naive(getattr(account, "restriction_until", None))
-    if kind == KIND_LIMITED and until:
+    if kind in {KIND_LIMITED, KIND_WRITE_WARNING} and until:
         return f"{label} до {until.strftime('%d.%m')}"
     if getattr(account, "is_channel_banned", False) and kind in LIMITED_KINDS:
         return f"{label} + каналы"
@@ -273,7 +286,7 @@ def expire_if_due(account: Any, *, now: datetime | None = None) -> bool:
     if kind == KIND_LIMITED_PERMANENT or kind == KIND_FROZEN:
         return False
     until = _naive(getattr(account, "restriction_until", None))
-    if until is None or kind not in LIMITED_KINDS:
+    if until is None or kind not in LIMITED_KINDS | {KIND_WRITE_WARNING}:
         return False
     current = _naive(now) or _utc_now()
     if until > current:
@@ -286,7 +299,7 @@ def clear_limited(account: Any) -> None:
     account.is_spamblocked = False
     account.spamblocked_at = None
     kind = str(getattr(account, "restriction_kind", None) or "").strip().lower()
-    if kind in LIMITED_KINDS or not kind:
+    if kind in LIMITED_KINDS | {KIND_WRITE_WARNING} or not kind:
         account.restriction_kind = None
         account.restriction_until = None
         account.restriction_detail = None
@@ -305,6 +318,7 @@ def apply_restriction_classification(account: Any, info: dict[str, Any] | None) 
         if getattr(account, "is_frozen", False):
             return
         clear_limited(account)
+        account.is_channel_banned = False
         return
     if kind == KIND_FROZEN:
         account.is_frozen = True
@@ -349,8 +363,50 @@ def restriction_blocks_action(account: Any | None, action_type: str) -> bool:
     kind = restriction_kind(account)
     if kind == KIND_FROZEN:
         return True
+    if kind == KIND_WRITE_WARNING:
+        if action_type in HUMANIZATION_ACTIONS:
+            return False
+        return action_type in CHANNEL_WRITE_ACTIONS or action_type in DM_ACTIONS
     if kind in LIMITED_KINDS and action_type in DM_ACTIONS:
         return True
     if getattr(account, "is_channel_banned", False) and action_type in CHANNEL_WRITE_ACTIONS:
         return True
     return False
+
+
+def apply_write_warning(account: Any, *, days: int = WRITE_WARNING_DAYS, detail: str | None = None) -> datetime:
+    """7 days without public writes after a temporary antispam warning. Humanization stays on."""
+    until = _utc_now() + timedelta(days=max(1, int(days)))
+    existing = _naive(getattr(account, "restriction_until", None))
+    if existing is not None and existing > until:
+        until = existing
+    kind = restriction_kind(account)
+    if kind in {KIND_FROZEN, KIND_LIMITED_PERMANENT}:
+        return until
+    account.restriction_kind = KIND_WRITE_WARNING
+    account.restriction_until = until
+    if detail:
+        account.restriction_detail = str(detail)[:280]
+    account.is_channel_banned = False
+    account.updated_at = _utc_now()
+    return until
+
+
+def apply_spambot_write_verdict(account: Any, info: dict[str, Any] | None) -> str:
+    """Trust @SpamBot after a channel-write error. Do not guess permanent vs warning."""
+    if not info:
+        apply_write_warning(account, detail="spambot_unknown")
+        return "unknown_warning"
+    kind = str(info.get("kind") or KIND_NONE).strip().lower()
+    if kind == KIND_NONE or info.get("blocked") is False:
+        return "chat_level"
+    if kind == KIND_FROZEN:
+        apply_restriction_classification(account, info)
+        return "frozen"
+    if kind == KIND_LIMITED_PERMANENT:
+        apply_restriction_classification(account, info)
+        account.is_channel_banned = True
+        return "permanent"
+    apply_restriction_classification(account, info)
+    apply_write_warning(account, detail=info.get("detail"))
+    return "warning"

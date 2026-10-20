@@ -4881,11 +4881,12 @@ class TestAccountHealthSpamblockAndDelete:
         kind = await update_account_after_telegram_error(
             test_session, account, Exception("USER_BANNED_IN_CHANNEL")
         )
-        assert kind == "channel_banned"
+        assert kind == "unknown_warning"
         await test_session.refresh(account)
         assert account.is_banned is False
         assert account.is_active is True
-        assert account.is_channel_banned is True
+        assert account.is_channel_banned is False
+        assert account.restriction_kind == "write_warning"
 
     async def test_frozen_account_is_not_spamblock_or_session(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -8126,6 +8127,8 @@ class TestPeerDialogAndWarmupPacing:
 
         exc = Exception("You're banned from sending messages in supergroups/channels (caused by SendMessageRequest)")
         assert _classify_telegram_error(exc)["kind"] == "channel_banned"
+        join_req = Exception("You have successfully requested to join this chat or channel (caused by JoinChannelRequest)")
+        assert _classify_telegram_error(join_req)["kind"] == "join_request"
 
     async def test_channel_banned_skips_commenting_but_allows_dm(
         self,

@@ -438,6 +438,8 @@ class AccountResponse(BaseModel):
     restriction_until: Optional[datetime] = None
     restriction_label: Optional[str] = None
     restriction_scope: Optional[str] = None
+    rest_kind: Optional[str] = None
+    rest_label: Optional[str] = None
     session_guard_enabled: bool = True
     session_guard_paused_until: Optional[datetime] = None
     risk_score: Optional[float] = None

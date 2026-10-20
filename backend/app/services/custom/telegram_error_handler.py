@@ -365,6 +365,8 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "deactivated"}
     if "bannedinchannel" in compact or "banned from sending messages in supergroups" in lowered:
         return {"kind": "channel_banned"}
+    if "inviterequestsent" in compact or "successfully requested to join" in lowered:
+        return {"kind": "join_request"}
     if "chatwriteforbidden" in compact:
         return {"kind": "chat_restricted"}
     if any(
@@ -434,6 +436,8 @@ def comment_send_error_label(exc: Exception) -> str:
     compact = blob.replace("_", "").replace(" ", "")
     if "msgidinvalid" in compact or "message id used in the peer was invalid" in blob:
         return "no_discussion"
+    if "inviterequestsent" in compact or "successfully requested to join" in blob:
+        return "join_request"
     if "channelprivate" in compact or "channel specified is private" in blob:
         return "discussion_private"
     if is_chat_write_forbidden(exc):
@@ -595,6 +599,51 @@ async def log_action_error(
         logger.warning("Failed to write action error log: %s", exc)
 
 
+async def _apply_channel_write_ban(
+    session: AsyncSession,
+    account: SocialAccount,
+    *,
+    telegram_client: Any | None = None,
+    automation_id: int | None = None,
+) -> str:
+    """Ask @SpamBot what the write ban actually is. Guessing permanent vs warning is forbidden."""
+    from .account_restriction import KIND_LIMITED, apply_spambot_write_verdict, restriction_label
+
+    spam_info = None
+    if telegram_client is not None and hasattr(telegram_client, "check_spamblock"):
+        try:
+            spam_state = await telegram_client.check_spamblock(force=True)
+            spam_info = (spam_state or {}).get("classification")
+            kind = str((spam_info or {}).get("kind") or "")
+            if spam_state and spam_state.get("spamblocked") is True and kind == KIND_LIMITED:
+                lifted = await telegram_client.appeal_temporary_spamblock()
+                account.spamblock_appealed_at = _utc_now()
+                spam_info = (lifted or {}).get("classification") or spam_info
+        except Exception as probe_exc:
+            logger.warning(
+                "SpamBot probe after channel write ban failed for %s: %s",
+                account.id,
+                probe_exc,
+            )
+    outcome = apply_spambot_write_verdict(account, spam_info)
+    await session.commit()
+    if automation_id and outcome in {"warning", "unknown_warning", "permanent"}:
+        try:
+            from .job_service import actor_label, log_active
+
+            if outcome == "permanent":
+                message = f"{actor_label(account)} постоянный антиспам — ждём ответ @SpamBot"
+            else:
+                label = restriction_label(account) or "Антиспам"
+                message = (
+                    f"{actor_label(account)} {label}: 7 дней без комментов, только очеловечивание"
+                )
+            await log_active(automation_id, "neurocommenting", message, level="warning")
+        except Exception:
+            logger.debug("Antispam rest log skipped", exc_info=True)
+    return outcome
+
+
 async def execute_with_telegram_retry(
     session: AsyncSession,
     account: SocialAccount,
@@ -609,6 +658,7 @@ async def execute_with_telegram_retry(
     base_delay: float = 1.0,
     pace: bool = True,
     log_errors: bool = True,
+    telegram_client: Any | None = None,
 ) -> Any:
     """Run a Telegram coroutine. Failed requests park 3–5 minutes before the next attempt.
 
@@ -690,8 +740,12 @@ async def execute_with_telegram_retry(
                 )
                 raise
             if kind == "channel_banned":
-                mark_channel_banned(account)
-                await session.commit()
+                await _apply_channel_write_ban(
+                    session,
+                    account,
+                    telegram_client=telegram_client,
+                    automation_id=automation_id,
+                )
                 await log_action_error(
                     session, account,
                     action_type=action_type,
@@ -801,9 +855,7 @@ async def update_account_after_telegram_error(
         await session.commit()
         return "spamblock"
     if kind == "channel_banned":
-        mark_channel_banned(account)
-        await session.commit()
-        return "channel_banned"
+        return await _apply_channel_write_ban(session, account)
     if kind == "session":
         from .session_hygiene_service import promote_spare_session
 

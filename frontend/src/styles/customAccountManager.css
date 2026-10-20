@@ -419,6 +419,7 @@ a.acc-icon-btn {
 .acc-chip--warn { background: #fff4d6; color: #b45309; }
 .acc-chip--bad { background: #fde8ee; color: #be123c; }
 .acc-chip--info { background: #f0f0f0; color: #2f2f2f; }
+.acc-chip--rest { background: #dbeafe; color: #1d4ed8; }
 .acc-chip--mute { background: #f3f4f6; color: #9ca3af; }
 .acc-chip--hold { background: #fff4d6; color: #b45309; }
 .acc-chip--pool { background: #ece7fe; color: #6d28d9; }

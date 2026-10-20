@@ -178,7 +178,7 @@ async def queue_listened_comment(
     post_text: str,
     posted_at: datetime | None,
 ) -> dict[str, Any]:
-    from .account_pacing import farm_overlap_active_hours
+    from .account_pacing import account_is_resting, account_may_do_work, farm_overlap_active_hours
     from .chat_membership_service import account_is_joined
     from .job_service import actor_label, chat_label, load_active_job_params, log_active
     from .module_delays import format_delay_ru
@@ -190,7 +190,12 @@ async def queue_listened_comment(
         _delay_bounds,
         _word_count,
     )
-    from .pending_action_service import enqueue_pending_action, has_pending_action
+    from .account_restriction import restriction_blocks_action
+    from .pending_action_service import (
+        enqueue_pending_action,
+        has_pending_action,
+        has_pending_comment_for_account,
+    )
     from .post_engagement import post_target_id
     from .task_dedup import account_owns_chat
     from .task_targets import resolve_task_chat_ids
@@ -204,6 +209,12 @@ async def queue_listened_comment(
     account = await session.get(SocialAccount, account_id)
     if account is None or not account.is_active:
         return {"status": "skipped", "reason": "no_account"}
+    if restriction_blocks_action(account, "neurocommenting") or not account_may_do_work(account):
+        return {"status": "skipped", "reason": "restricted"}
+    if account_is_resting(account):
+        return {"status": "skipped", "reason": "resting"}
+    if await has_pending_comment_for_account(session, automation_id, account_id):
+        return {"status": "skipped", "reason": "account_busy"}
     chat = await _find_task_chat(session, automation_id, chat_id=chat_id, username=username)
     if chat is None:
         return {"status": "skipped", "reason": "unknown_chat"}

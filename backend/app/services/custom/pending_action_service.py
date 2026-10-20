@@ -69,14 +69,12 @@ def _pending_account_block(account: SocialAccount | None, action_type: str) -> t
     if not farm_overlap_active_hours():
         return True, next_wake_at(account=account)
     from .account_pacing import account_is_resting
+    from .account_restriction import restriction_blocks_action
 
-    # Long 20–40 min comment gap must not park a comment that already waited
-    # the 5–8 min post delay. Only short retry/flood rests still block.
+    if restriction_blocks_action(account, "neurocommenting"):
+        return True, getattr(account, "restriction_until", None)
     if account_is_resting(account):
-        nxt = getattr(account, "next_action_at", None)
-        wait = (nxt - _utc_now()).total_seconds() if nxt is not None else 0.0
-        if 0 < wait <= 15 * 60:
-            return True, nxt
+        return True, getattr(account, "next_action_at", None)
     return False, None
 
 
@@ -90,6 +88,7 @@ _PENDING_FAIL_RU = {
     "account_blocked": "аккаунт не может писать в канал",
     "account_cannot_write": "аккаунт не может писать",
     "no_session": "нет файла сессии",
+    "join_request": "ждёт одобрения в чат комментариев",
 }
 
 
@@ -159,6 +158,22 @@ async def has_pending_action(
             PendingChatAction.target_id == str(target_id),
             PendingChatAction.status == PENDING,
         )
+    )
+    return found is not None
+
+
+async def has_pending_comment_for_account(
+    session: AsyncSession,
+    automation_id: int,
+    account_id: int,
+) -> bool:
+    found = await session.scalar(
+        select(PendingChatAction.id).where(
+            PendingChatAction.custom_automation_id == automation_id,
+            PendingChatAction.social_account_id == account_id,
+            PendingChatAction.action_type == "neurocommenting",
+            PendingChatAction.status == PENDING,
+        ).limit(1)
     )
     return found is not None
 

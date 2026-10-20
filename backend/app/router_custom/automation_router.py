@@ -1847,6 +1847,20 @@ def _restriction_scope(social_account: SocialAccount) -> str | None:
         return None
 
 
+def _account_rest_chip(social_account: SocialAccount) -> dict | None:
+    try:
+        from ..services.custom.account_pacing import account_rest_chip
+
+        return account_rest_chip(social_account)
+    except Exception:
+        return None
+
+
+def _rest_fields(social_account: SocialAccount) -> dict:
+    chip = _account_rest_chip(social_account) or {}
+    return {"rest_kind": chip.get("kind"), "rest_label": chip.get("label")}
+
+
 def _account_response(
     pool_account: PoolAccount,
     social_account: SocialAccount,
@@ -1875,6 +1889,7 @@ def _account_response(
         restriction_until=getattr(social_account, "restriction_until", None),
         restriction_label=_restriction_label(social_account),
         restriction_scope=_restriction_scope(social_account),
+        **_rest_fields(social_account),
         session_guard_enabled=bool(getattr(social_account, "session_guard_enabled", True)),
         session_guard_paused_until=getattr(social_account, "session_guard_paused_until", None),
         risk_score=social_account.risk_score,
@@ -2040,7 +2055,16 @@ async def list_accounts(
         max_daily = automation.max_daily_messages_per_account
         _reset_counters_if_needed([social_account for _, social_account in rows])
         await session.commit()
-        items = [_account_response(pool_account, social_account, max_daily) for pool_account, social_account in rows]
+        from ..services.custom.work_mode import apply_work_mode, reset_work_mode
+
+        token = apply_work_mode(automation)
+        try:
+            items = [
+                _account_response(pool_account, social_account, max_daily)
+                for pool_account, social_account in rows
+            ]
+        finally:
+            reset_work_mode(token)
         return AccountListResponse(items=items, total=total or 0)
 
 

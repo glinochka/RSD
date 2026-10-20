@@ -167,6 +167,9 @@ const statusMeta = (account) => {
   if (account.status === 'empty' || !account.session_file_path) {
     return { label: 'Пусто', chip: 'mute' };
   }
+  if (account.rest_label) {
+    return { label: account.rest_label, chip: 'rest' };
+  }
   return { label: 'Активен', chip: 'ok' };
 };
 

@@ -383,7 +383,11 @@ async def _send_comment(
     lab_mode: bool = False,
 ) -> str | None:
     """Return None if the comment was sent, otherwise a short error code."""
+    from .account_restriction import restriction_blocks_action
+
     if getattr(account, "is_channel_banned", False) or getattr(account, "is_frozen", False):
+        return "account_cannot_write"
+    if restriction_blocks_action(account, "neurocommenting"):
         return "account_cannot_write"
     if not account.session_file_path:
         return "no_session"
@@ -428,6 +432,7 @@ async def _send_comment(
                 payload=payload,
                 automation_id=automation_id,
                 log_errors=False,
+                telegram_client=client,
             )
     except Exception as exc:
         logger.warning("Send comment failed for chat %s post %s: %s", chat_target.id, post_id, exc)
