@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
+from ...alembic.models import CustomAutomation, PoolAccount, SocialAccount
 from ...config import settings as app_settings
 from ...utils.crypto import decrypt_token, encrypt_token
 from .account_pacing import account_may_do_work, farm_overlap_active_hours
@@ -41,29 +41,44 @@ TEXT_PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "ChatGPT",
         "kind": "openai",
         "base_url": "https://api.openai.com/v1",
-        "models": ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"),
-        "default_model": "gpt-4o-mini",
+        "models": (
+            {"id": "gpt-6-luna", "label": "GPT-6 Luna"},
+            {"id": "gpt-6-sol", "label": "GPT-6 Sol"},
+            {"id": "gpt-6-astra", "label": "GPT-6 Astra"},
+            {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+        ),
+        "default_model": "gpt-6-luna",
     },
     "claude": {
         "label": "Claude",
         "kind": "anthropic",
         "base_url": "https://api.anthropic.com",
-        "models": ("claude-sonnet-4-5", "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"),
-        "default_model": "claude-sonnet-4-5",
+        "models": (
+            {"id": "claude-haiku-5-5", "label": "Haiku 5.5"},
+            {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
+            {"id": "claude-opus-5-5", "label": "Opus 5.5"},
+        ),
+        "default_model": "claude-sonnet-5-5",
     },
     "grok": {
         "label": "Grok",
         "kind": "openai",
         "base_url": "https://api.x.ai/v1",
-        "models": ("grok-3-mini", "grok-3", "grok-2-latest"),
-        "default_model": "grok-3-mini",
+        "models": (
+            {"id": "grok-4.7", "label": "Grok 4.7"},
+            {"id": "grok-4.3", "label": "Grok 4.3"},
+        ),
+        "default_model": "grok-4.7",
     },
     "deepseek": {
         "label": "DeepSeek",
         "kind": "openai",
         "base_url": "https://api.deepseek.com",
-        "models": ("deepseek-chat", "deepseek-reasoner"),
-        "default_model": "deepseek-chat",
+        "models": (
+            {"id": "deepseek-flash", "label": "DeepSeek Flash"},
+            {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro"},
+        ),
+        "default_model": "deepseek-flash",
     },
 }
 IMAGE_PROVIDERS: dict[str, dict[str, Any]] = {
@@ -71,16 +86,38 @@ IMAGE_PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "ChatGPT",
         "kind": "openai",
         "base_url": "https://api.openai.com/v1",
-        "models": ("gpt-image-1", "dall-e-3"),
-        "default_model": "gpt-image-1",
+        "models": (
+            {"id": "gpt-image-2.5-flare", "label": "GPT Image 2.5 Flare"},
+            {"id": "gpt-image-2.5-sunburst", "label": "GPT Image 2.5 Sunburst"},
+        ),
+        "default_model": "gpt-image-2.5-flare",
     },
     "grok": {
         "label": "Grok",
         "kind": "openai",
         "base_url": "https://api.x.ai/v1",
-        "models": ("grok-2-image",),
-        "default_model": "grok-2-image",
+        "models": ({"id": "grok-imagine-image-2.0", "label": "Grok Imagine 2.0"},),
+        "default_model": "grok-imagine-image-2.0",
     },
+}
+MODEL_ALIASES = {
+    "deepseek-chat": "deepseek-flash",
+    "deepseek-reasoner": "deepseek-v4-pro",
+    "deepseek-v4-flash": "deepseek-flash",
+    "gpt-4o-mini": "gpt-6-luna",
+    "gpt-4o": "gpt-6-sol",
+    "gpt-4.1-mini": "gpt-6-luna",
+    "gpt-4.1": "gpt-6-sol",
+    "claude-sonnet-4-5": "claude-sonnet-5-5",
+    "claude-3-5-haiku-latest": "claude-haiku-5-5",
+    "claude-3-5-sonnet-latest": "claude-sonnet-5-5",
+    "claude-sonnet-4-6": "claude-sonnet-5-5",
+    "grok-3-mini": "grok-4.3",
+    "grok-3": "grok-4.7",
+    "grok-2-latest": "grok-4.7",
+    "dall-e-3": "gpt-image-2.5-flare",
+    "gpt-image-1": "gpt-image-2.5-flare",
+    "grok-2-image": "grok-imagine-image-2.0",
 }
 _SECRET_SKIP = {
     "channels",
@@ -133,7 +170,7 @@ def default_neuroblog_settings() -> dict[str, Any]:
         "product_url": "",
         "prompt": "",
         "text_provider": "deepseek",
-        "text_model": "deepseek-chat",
+        "text_model": "deepseek-flash",
         "text_api_key_enc": "",
         "image_provider": "",
         "image_model": "",
@@ -218,13 +255,27 @@ def infer_image_provider(model: str, explicit: Any = None) -> str:
     return ""
 
 
+def _model_entries(spec: dict[str, Any]) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in spec.get("models") or ():
+        if isinstance(item, dict):
+            ident = str(item.get("id") or "").strip()
+            if ident:
+                entries.append({"id": ident, "label": str(item.get("label") or ident)})
+            continue
+        ident = str(item).strip()
+        if ident:
+            entries.append({"id": ident, "label": ident})
+    return entries
+
+
 def _pick_model(provider: str, requested: str, catalog: dict[str, dict[str, Any]]) -> str:
     spec = catalog.get(provider) or {}
-    models = tuple(spec.get("models") or ())
-    name = str(requested or "").strip()
-    if name and (name in models or not models):
+    ids = tuple(item["id"] for item in _model_entries(spec))
+    name = MODEL_ALIASES.get(str(requested or "").strip(), str(requested or "").strip())
+    if name in ids:
         return name
-    return str(spec.get("default_model") or (models[0] if models else name))
+    return str(spec.get("default_model") or (ids[0] if ids else name))
 
 
 def _merge_secret(incoming: dict[str, Any], stored: dict[str, Any], plain_key: str, enc_key: str) -> str:
@@ -302,7 +353,7 @@ def catalog_payload() -> dict[str, Any]:
             {
                 "id": key,
                 "label": spec["label"],
-                "models": [{"id": item, "label": item} for item in spec["models"]],
+                "models": _model_entries(spec),
                 "images": key in IMAGE_PROVIDERS,
             }
             for key, spec in TEXT_PROVIDERS.items()
@@ -311,7 +362,7 @@ def catalog_payload() -> dict[str, Any]:
             {
                 "id": key,
                 "label": spec["label"],
-                "models": [{"id": item, "label": item} for item in spec["models"]],
+                "models": _model_entries(spec),
             }
             for key, spec in IMAGE_PROVIDERS.items()
         ],
@@ -534,14 +585,19 @@ async def get_neuroblog_module(session: AsyncSession, automation_id: int) -> dic
         await session.execute(
             select(SocialAccount, PoolAccount)
             .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
-            .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
-            .where(PoolAccount.custom_automation_id == automation_id, AccountPool.is_default.is_(True))
-            .order_by(SocialAccount.id.asc())
+            .where(PoolAccount.custom_automation_id == automation_id)
+            .order_by(SocialAccount.updated_at.desc())
             .limit(300)
         )
     ).all()
     channels = cfg.get("channels") or {}
-    accounts = [_account_row(account, pool, channels.get(str(account.id)) or {}) for account, pool in pairs]
+    seen: set[int] = set()
+    accounts = []
+    for account, pool in pairs:
+        if account.id in seen:
+            continue
+        seen.add(account.id)
+        accounts.append(_account_row(account, pool, channels.get(str(account.id)) or {}))
     attached = sum(1 for item in accounts if item.get("id") in set(cfg.get("account_ids") or []) and item.get("channel_attached"))
     return {
         "enabled": bool(cfg.get("enabled")),

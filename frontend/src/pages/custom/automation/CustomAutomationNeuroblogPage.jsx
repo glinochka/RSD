@@ -23,7 +23,7 @@ const EMPTY = {
   product_url: '',
   prompt: '',
   text_provider: 'deepseek',
-  text_model: 'deepseek-chat',
+  text_model: 'deepseek-flash',
   image_provider: '',
   image_model: '',
   require_proxy: false,
@@ -39,15 +39,15 @@ const THEME_FALLBACK = [
 ];
 
 const TEXT_FALLBACK = [
-  { id: 'chatgpt', label: 'ChatGPT', models: [{ id: 'gpt-4o-mini', label: 'gpt-4o-mini' }], images: true },
-  { id: 'claude', label: 'Claude', models: [{ id: 'claude-sonnet-4-5', label: 'claude-sonnet-4-5' }], images: false },
-  { id: 'grok', label: 'Grok', models: [{ id: 'grok-3-mini', label: 'grok-3-mini' }], images: true },
-  { id: 'deepseek', label: 'DeepSeek', models: [{ id: 'deepseek-chat', label: 'deepseek-chat' }], images: false },
+  { id: 'chatgpt', label: 'ChatGPT', models: [{ id: 'gpt-6-luna', label: 'GPT-6 Luna' }, { id: 'gpt-6-sol', label: 'GPT-6 Sol' }, { id: 'gpt-6-astra', label: 'GPT-6 Astra' }], images: true },
+  { id: 'claude', label: 'Claude', models: [{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }, { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' }], images: false },
+  { id: 'grok', label: 'Grok', models: [{ id: 'grok-4.7', label: 'Grok 4.7' }, { id: 'grok-4.3', label: 'Grok 4.3' }], images: true },
+  { id: 'deepseek', label: 'DeepSeek', models: [{ id: 'deepseek-flash', label: 'DeepSeek Flash' }, { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }], images: false },
 ];
 
 const IMAGE_FALLBACK = [
-  { id: 'chatgpt', label: 'ChatGPT', models: [{ id: 'gpt-image-1', label: 'gpt-image-1' }] },
-  { id: 'grok', label: 'Grok', models: [{ id: 'grok-2-image', label: 'grok-2-image' }] },
+  { id: 'chatgpt', label: 'ChatGPT', models: [{ id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' }] },
+  { id: 'grok', label: 'Grok', models: [{ id: 'grok-imagine-image-2.0', label: 'Grok Imagine 2.0' }] },
 ];
 
 const formatWhen = (value) => {
@@ -254,7 +254,7 @@ const CustomAutomationNeuroblogPage = () => {
 
       <div className="nc-card">
         <div className="nc-card-head">
-          <h2>Нейроблог</h2>
+          <h2>Выбор аккаунтов <span className="nc-muted">{selectedAccounts.size} выбрано</span></h2>
           <FeatureToggle
             compact
             title={enabled ? 'Модуль включён' : 'Модуль выключен'}
@@ -267,14 +267,8 @@ const CustomAutomationNeuroblogPage = () => {
         </div>
         <p className="nc-intro">
           У каждого выбранного аккаунта свой Telegram-канал. Он прикрепляется к профилю как личный канал —
-          в описание профиля ссылку не ставим. Один текст уходит во все каналы задачи. Продукт живёт только в постах, нативно.
+          в описание профиля ссылку не ставим. Один текст уходит во все каналы задачи.
         </p>
-      </div>
-
-      <div className="nc-card">
-        <div className="nc-card-head">
-          <h2>Аккаунты <span className="nc-muted">{selectedAccounts.size} выбрано</span></h2>
-        </div>
         <div className="nc-split">
           <div className="nc-pane">
             <div className="nc-pane-head">
@@ -282,14 +276,21 @@ const CustomAutomationNeuroblogPage = () => {
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => load()}>Обновить</button>
             </div>
             <div className="nc-row">
-              <input className="nc-search" value={accountQuery} onChange={(event) => setAccountQuery(event.target.value)} placeholder="Поиск по ID, телефону, username..." />
+              <input
+                className="nc-search"
+                name="neuroblog-account-search"
+                autoComplete="off"
+                value={accountQuery}
+                onChange={(event) => setAccountQuery(event.target.value)}
+                placeholder="Поиск по ID, телефону, username..."
+              />
             </div>
             <div className="nc-row">
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: accounts.filter((item) => item.eligible).map((item) => item.id) })}>Добавить все</button>
               <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
               <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
-            {accounts.length === 0 ? <div className="nc-empty">Нет рабочих аккаунтов</div> : (
+            {accounts.length === 0 ? <div className="nc-empty">Нет аккаунтов, соответствующих фильтрам</div> : (
               <div className="nc-list">
                 {accounts.map((item) => (
                   <button key={item.id} type="button" className={`nc-item ${selectedAccounts.has(item.id) ? 'is-on' : ''}`} onClick={() => toggleAccount(item.id)}>
@@ -305,7 +306,7 @@ const CustomAutomationNeuroblogPage = () => {
           </div>
           <div className="nc-pane">
             <div className="nc-pane-head">
-              <strong>Личные каналы {chosenAccounts.length}</strong>
+              <strong>Выбрано для нейроблога {chosenAccounts.length}</strong>
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => patch({ account_ids: [] })}>Удалить все</button>
             </div>
             {chosenAccounts.length === 0 ? <div className="nc-empty">Аккаунты не выбраны</div> : (
@@ -315,7 +316,8 @@ const CustomAutomationNeuroblogPage = () => {
                     <div>
                       <strong>{item.label}</strong>
                       <span>
-                        {item.channel_attached ? 'личный канал прикреплён' : item.channel_status === 'created' ? 'канал создан, прикрепим при запуске' : 'канал появится при запуске'}
+                        {item.daily_messages_sent || 0} действий сегодня
+                        {item.channel_attached ? ' · канал прикреплён' : item.channel_status === 'created' ? ' · канал создан' : ''}
                       </span>
                     </div>
                     <span>×</span>
@@ -366,12 +368,12 @@ const CustomAutomationNeuroblogPage = () => {
             <Stepper value={settings.posts_per_day} min={1} max={5} onChange={(value) => patch({ posts_per_day: value })} />
           </div>
           <p className="nc-hint">Слоты случайные внутри рабочего окна фермы по Москве. Ночью молчим.</p>
-          <div className="nc-chips" style={{ marginTop: 8 }}>
+          <div className="nc-row" style={{ marginTop: 8 }}>
             {themes.map((theme) => (
               <button
                 key={theme.id}
                 type="button"
-                className={(settings.themes || []).includes(theme.id) ? 'is-on' : ''}
+                className={`nc-chip ${(settings.themes || []).includes(theme.id) ? 'is-on' : ''}`}
                 onClick={() => toggleTheme(theme.id)}
               >
                 {theme.label}
@@ -385,12 +387,12 @@ const CustomAutomationNeuroblogPage = () => {
       <div className="nc-card">
         <div className="nc-card-head"><h2>Свои модели</h2></div>
         <p className="nc-hint">Подключите ChatGPT, Claude, Grok или DeepSeek своим API-ключом. Ключ хранится шифром и на экран больше не возвращается.</p>
-        <div className="nc-chips">
+        <div className="nc-row">
           {textProviders.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={settings.text_provider === item.id ? 'is-on' : ''}
+              className={`nc-chip ${settings.text_provider === item.id ? 'is-on' : ''}`}
               onClick={() => setTextProvider(item.id)}
             >
               {item.label}

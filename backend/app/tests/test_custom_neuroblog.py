@@ -53,10 +53,20 @@ def test_slots_are_sorted_and_due_only_after_their_time():
 def test_legacy_deepseek_model_keeps_provider():
     cfg = normalize_neuroblog_settings({"text_model": "deepseek-chat"}, previous={})
     assert cfg["text_provider"] == "deepseek"
+    assert cfg["text_model"] == "deepseek-flash"
     assert infer_text_provider("gpt-4o-mini") == "chatgpt"
-    assert infer_text_provider("claude-sonnet-4-5") == "claude"
+    assert infer_text_provider("claude-sonnet-5-5") == "claude"
     assert infer_image_provider("dall-e-3", None) == "chatgpt"
     assert infer_image_provider("", "") == ""
+
+
+def test_saved_old_models_map_to_current_catalog():
+    cfg = normalize_neuroblog_settings(
+        {"text_provider": "chatgpt", "text_model": "gpt-4o-mini", "image_provider": "chatgpt", "image_model": "dall-e-3"},
+        previous={},
+    )
+    assert cfg["text_model"] == "gpt-6-luna"
+    assert cfg["image_model"] == "gpt-image-2.5-flare"
 
 
 def test_api_key_is_encrypted_and_hidden():
