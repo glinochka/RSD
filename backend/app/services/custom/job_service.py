@@ -23,7 +23,7 @@ VISIBLE_ACTIVE_STATUSES = ACTIVE_STATUSES | {PAUSED_STATUS}
 HISTORY_STATUSES = {"completed", "error", "cancelled", "skipped"}
 _SKIP_PARAM_KEYS = {"presets", "_job_id"}
 _READONLY_PARAM_KEYS = {"joins_complete"}
-PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling", "chat_monitoring"}
+PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling", "chat_monitoring", "neuroblog"}
 STREAM_JOB_TYPES = {
     "neurocommenting": "neurocommenting",
     "neurochatting": "discussion",
@@ -32,6 +32,7 @@ STREAM_JOB_TYPES = {
     "dm_broadcast": "dm_broadcast",
     "masslooking": "masslooking",
     "masspriming": "masspriming",
+    "neuroblog": "neuroblog",
 }
 JOIN_JOB_TYPES = {
     "neurocommenting",
@@ -54,6 +55,7 @@ MODULE_BINDINGS = {
     "masspriming": ("masspriming", None),
     "parser": ("parser", None),
     "shilling": ("neuroshilling", "is_shilling_enabled"),
+    "neuroblog": ("neuroblog", None),
 }
 
 JOB_META = {
@@ -915,6 +917,10 @@ def _normalize_module_params(job_type: str, incoming: dict[str, Any]) -> dict[st
         from .warmup_module_service import normalize_warmup_settings
 
         return normalize_warmup_settings(incoming)
+    if job_type == "neuroblog":
+        from .neuroblog_service import normalize_neuroblog_settings
+
+        return normalize_neuroblog_settings(incoming, previous=incoming)
     return incoming
 
 

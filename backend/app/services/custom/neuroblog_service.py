@@ -241,8 +241,10 @@ def infer_text_provider(model: str, explicit: str = "") -> str:
 
 
 def infer_image_provider(model: str, explicit: Any = None) -> str:
+    if explicit == "off":
+        return "off"
     if explicit == "":
-        if str(model or "") in {"dall-e-3", "gpt-image-1"}:
+        if str(model or "") in {"dall-e-3", "gpt-image-1", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}:
             return "chatgpt"
         return ""
     if explicit in IMAGE_PROVIDERS:
@@ -283,7 +285,7 @@ def _merge_secret(incoming: dict[str, Any], stored: dict[str, Any], plain_key: s
         return ""
     if _is_new_secret(incoming.get(plain_key)):
         return _store_secret(str(incoming.get(plain_key)))
-    previous = str(stored.get(enc_key) or "")
+    previous = str(stored.get(enc_key) or incoming.get(enc_key) or "").strip()
     if previous:
         return previous
     leftover = stored.get(plain_key)
@@ -302,8 +304,21 @@ def resolved_text_key(cfg: dict[str, Any]) -> tuple[str, str]:
     return "", "missing"
 
 
+def effective_image_provider(cfg: dict[str, Any]) -> str:
+    """Empty image provider follows the text model when that model can draw."""
+    explicit = str(cfg.get("image_provider") or "")
+    if explicit == "off":
+        return ""
+    if explicit in IMAGE_PROVIDERS:
+        return explicit
+    text = str(cfg.get("text_provider") or "")
+    if text in IMAGE_PROVIDERS:
+        return text
+    return ""
+
+
 def resolved_image_key(cfg: dict[str, Any]) -> tuple[str, str]:
-    provider = str(cfg.get("image_provider") or "")
+    provider = effective_image_provider(cfg)
     if not provider:
         return "", "off"
     user_key = _read_secret(cfg.get("image_api_key_enc"))
@@ -400,8 +415,8 @@ def neuroblog_notices(cfg: dict[str, Any]) -> list[str]:
     notices: list[str] = []
     if resolved_text_key(cfg)[1] == "server":
         notices.append("Свой ключ не сохранён — текст пойдёт через серверный ключ выбранного провайдера")
-    if IMAGE_THEMES.intersection(cfg.get("themes") or []) and not cfg.get("image_provider"):
-        notices.append("Кейс и инфографика уйдут без картинки, пока не подключите ChatGPT или Grok")
+    if IMAGE_THEMES.intersection(cfg.get("themes") or []) and not effective_image_provider(cfg):
+        notices.append("Кейс и инфографика уйдут без картинки: Claude и DeepSeek не рисуют. Выберите ChatGPT или Grok")
     return notices
 
 
@@ -447,7 +462,9 @@ def normalize_neuroblog_settings(raw: Any, *, previous: dict[str, Any] | None = 
         incoming.get("image_provider") if "image_provider" in incoming else stored.get("image_provider"),
     )
     data["image_provider"] = image_provider
-    data["image_model"] = _pick_model(image_provider, image_model, IMAGE_PROVIDERS) if image_provider else ""
+    data["image_model"] = (
+        _pick_model(image_provider, image_model, IMAGE_PROVIDERS) if image_provider in IMAGE_PROVIDERS else ""
+    )
     data["text_api_key_enc"] = _merge_secret(incoming, stored, "text_api_key", "text_api_key_enc")
     data["image_api_key_enc"] = _merge_secret(incoming, stored, "image_api_key", "image_api_key_enc")
     data["require_proxy"] = bool(incoming.get("require_proxy", stored.get("require_proxy", False)))
@@ -590,6 +607,8 @@ async def get_neuroblog_module(session: AsyncSession, automation_id: int) -> dic
             .limit(300)
         )
     ).all()
+    if cfg.get("enabled"):
+        await sync_neuroblog_task(automation_id, enabled=True, params=public_neuroblog_settings(cfg))
     channels = cfg.get("channels") or {}
     seen: set[int] = set()
     accounts = []
@@ -643,6 +662,7 @@ async def save_neuroblog_module(session: AsyncSession, automation_id: int, paylo
         cfg["enabled"] = bool(current.get("enabled"))
     _store_cfg(automation, cfg)
     await session.commit()
+    await sync_neuroblog_task(automation_id, enabled=bool(cfg.get("enabled")), params=public_neuroblog_settings(cfg))
     return await get_neuroblog_module(session, automation_id)
 
 
@@ -718,7 +738,41 @@ def _channel_needs_setup(account: SocialAccount, cfg: dict[str, Any]) -> bool:
         return True
     if cfg.get("channel_title") and stored.get("title") != cfg.get("channel_title"):
         return True
+    if not stored.get("username"):
+        return True
     return False
+
+
+async def _publish_channel(raw: Any, channel: Any, account_id: int, stored: dict[str, Any]) -> None:
+    """Personal-channel picker only lists public channels the account created."""
+    from telethon.tl.functions.channels import CheckUsernameRequest, UpdateUsernameRequest
+
+    current = str(getattr(channel, "username", None) or stored.get("username") or "").strip().lstrip("@")
+    if current:
+        stored["username"] = current
+        stored["link"] = f"https://t.me/{current}"
+        stored.pop("username_error", None)
+        return
+    last = "не удалось подобрать адрес"
+    for _ in range(5):
+        candidate = f"notes{account_id}{random.randint(1000, 9999)}"
+        try:
+            available = await raw(CheckUsernameRequest(channel, candidate))
+            if not available:
+                continue
+            await raw(UpdateUsernameRequest(channel, candidate))
+            stored["username"] = candidate
+            stored["link"] = f"https://t.me/{candidate}"
+            stored.pop("username_error", None)
+            try:
+                channel.username = candidate
+            except Exception:
+                pass
+            return
+        except Exception as exc:
+            last = str(exc)[:200]
+            logger.info("Neuroblog username %s skipped for %s: %s", candidate, account_id, exc)
+    stored["username_error"] = last
 
 
 async def _complete_text(cfg: dict[str, Any], prompt: str) -> str:
@@ -782,23 +836,37 @@ async def _generate_draft(cfg: dict[str, Any]) -> dict[str, Any]:
 Картинка нужна только для кейса или инфографики (график, схема, цифры). Для блога и размышлений needs_image=false.
 Ответ строго JSON: {{"theme":"expert|case|blog|reflection|infographic","text":"...","needs_image":false,"image_prompt":""}}
 """.strip()
-    return parse_post_draft(await _complete_text(cfg, instructions))
+    draft = parse_post_draft(await _complete_text(cfg, instructions))
+    allowed = [item for item in (cfg.get("themes") or []) if item in THEMES]
+    if len(allowed) == 1:
+        draft["theme"] = allowed[0]
+    draft["needs_image"] = image_needed(draft["theme"], True)
+    if not draft["needs_image"]:
+        draft["image_prompt"] = ""
+    elif not draft.get("image_prompt"):
+        draft["image_prompt"] = f"Clean editorial illustration, no text, for a short post: {draft['text'][:240]}"
+    return draft
 
 
 async def _generate_image(cfg: dict[str, Any], prompt: str, automation_id: int) -> str:
     from openai import AsyncOpenAI
 
-    provider = str(cfg.get("image_provider") or "")
+    provider = effective_image_provider(cfg)
     spec = IMAGE_PROVIDERS.get(provider)
     api_key, _source = resolved_image_key(cfg)
     if not prompt or not spec or not api_key:
         return ""
     client = AsyncOpenAI(api_key=api_key, base_url=spec["base_url"], timeout=90.0, max_retries=0)
-    model = str(cfg.get("image_model") or spec["default_model"])
+    explicit = str(cfg.get("image_provider") or "")
+    model = str(cfg.get("image_model") or "") if explicit == provider else ""
+    model = model or str(spec["default_model"])
+    kwargs: dict[str, Any] = {"model": model, "prompt": prompt[:900]}
+    if provider == "chatgpt":
+        kwargs["size"] = "1024x1024"
     try:
-        result = await client.images.generate(model=model, prompt=prompt[:900], size="1024x1024", n=1)
+        result = await client.images.generate(**kwargs)
     except Exception:
-        result = await client.images.generate(model=model, prompt=prompt[:900], n=1)
+        result = await client.images.generate(model=model, prompt=prompt[:900])
     data = (result.data or [None])[0]
     raw = getattr(data, "b64_json", None)
     folder = Path(app_settings.MEDIA_ROOT).resolve() / "neuroblog" / str(automation_id)
@@ -815,7 +883,9 @@ async def _generate_image(cfg: dict[str, Any], prompt: str, automation_id: int) 
     import httpx
 
     async with httpx.AsyncClient(timeout=40.0) as http:
-        response = await http.get(url)
+        response = await http.get(url, headers={"Authorization": f"Bearer {api_key}"})
+        if response.status_code >= 400:
+            response = await http.get(url)
         response.raise_for_status()
         path.write_bytes(response.content)
     return str(path)
@@ -879,17 +949,17 @@ async def _ensure_channel(account: SocialAccount, cfg: dict[str, Any]) -> dict[s
         if channel is None:
             created = await raw(CreateChannelRequest(title=title, about=about, broadcast=True, megagroup=False))
             channel = created.chats[0]
-            username = str(getattr(channel, "username", None) or "")
             stored = {
                 "id": int(getattr(channel, "id")),
                 "access_hash": int(getattr(channel, "access_hash", 0) or 0),
-                "username": username,
-                "link": f"https://t.me/{username}" if username else "",
+                "username": str(getattr(channel, "username", None) or ""),
+                "link": "",
                 "title": title,
                 "about": about,
                 "personal_attached": False,
                 "bio_set": False,
             }
+        await _publish_channel(raw, channel, account.id, stored)
         if title and stored.get("title") != title:
             try:
                 await raw(EditTitleRequest(channel, title))
@@ -909,13 +979,24 @@ async def _ensure_channel(account: SocialAccount, cfg: dict[str, Any]) -> dict[s
                 uploaded = await raw.upload_file(str(file_path))
                 await raw(EditPhotoRequest(channel, InputChatUploadedPhoto(uploaded)))
                 stored["avatar_set"] = True
-        if not stored.get("personal_attached"):
+        if stored.get("username"):
             try:
                 await raw(UpdatePersonalChannelRequest(get_input_channel(channel)))
-                stored["personal_attached"] = True
+                from telethon.tl.functions.users import GetFullUserRequest
+
+                me = await raw.get_me()
+                full = await raw(GetFullUserRequest(me))
+                pinned = getattr(getattr(full, "full_user", None), "personal_channel_id", None)
+                stored["personal_attached"] = bool(pinned) and int(pinned) == int(getattr(channel, "id"))
+                if not stored["personal_attached"]:
+                    stored["attach_error"] = "Telegram не записал канал в профиль"
             except Exception as exc:
                 stored["personal_attached"] = False
+                stored["attach_error"] = str(exc)[:200]
                 logger.info("Neuroblog personal channel skipped for %s: %s", account.id, exc)
+        elif not stored.get("username"):
+            stored["personal_attached"] = False
+            stored["attach_error"] = stored.get("username_error") or "каналу не выдался публичный адрес"
         await _clear_channel_link_from_bio(client, raw, stored)
     cfg.setdefault("channels", {})[str(account.id)] = stored
     return stored
@@ -938,6 +1019,49 @@ async def _send_post(account: SocialAccount, channel: dict[str, Any], text: str,
         await client.client.send_message(entity, text[:1024] if kwargs else text[:3500], **kwargs)
 
 
+async def sync_neuroblog_task(automation_id: int, *, enabled: bool, params: dict[str, Any] | None = None) -> str:
+    """Keep one running Tasks card while the module is on. Stop cancels it."""
+    from ...alembic.database import async_session_maker
+    from ...alembic.models import CustomJob
+    from .job_service import append_log, find_active_job_id, mark_running, spawn_job
+
+    async with async_session_maker() as session:
+        rows = (
+            await session.execute(
+                select(CustomJob).where(
+                    CustomJob.custom_automation_id == automation_id,
+                    CustomJob.job_type == "neuroblog",
+                    CustomJob.status.in_(("pending", "running", "processing", "awaiting_approval", "paused")),
+                )
+            )
+        ).scalars().all()
+        if not enabled:
+            now = _utc_now()
+            for job in rows:
+                job.status = "cancelled"
+                job.completed_at = now
+                job.updated_at = now
+                logs = list(job.logs or [])
+                logs.append({"ts": now.isoformat(), "level": "info", "message": "Модуль выключен"})
+                job.logs = logs[-200:]
+            if rows:
+                await session.commit()
+            return "stopped"
+        if any(job.status == "paused" for job in rows):
+            return "paused"
+    if await find_active_job_id(automation_id, "neuroblog"):
+        return "running"
+    safe = {
+        key: value
+        for key, value in (params or {}).items()
+        if key in {"account_ids", "posts_per_day", "themes", "text_provider", "text_model", "image_provider", "channel_title"}
+    }
+    job_id = await spawn_job(automation_id, "neuroblog", params=safe)
+    await mark_running(job_id)
+    await append_log(job_id, "Нейроблог включён. Канал публикуется и крепится к профилю как личный, посты идут по слотам.")
+    return "running"
+
+
 async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict[str, Any]:
     from ...alembic.database import async_session_maker
 
@@ -950,8 +1074,22 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
         token = apply_work_mode(automation)
         try:
             cfg = _load_cfg(automation)
-            if not cfg.get("enabled") and not force:
+            if cfg.get("enabled"):
+                gate = await sync_neuroblog_task(
+                    automation_id, enabled=True, params=public_neuroblog_settings(cfg)
+                )
+                if gate == "paused" and not force:
+                    return {"status": "skipped", "reason": "paused"}
+            elif not force:
                 return {"status": "skipped", "reason": "disabled"}
+            logged_from = len(cfg.get("logs") or [])
+
+            async def _flush_job_logs() -> None:
+                from .job_service import log_active
+
+                for item in (cfg.get("logs") or [])[logged_from:]:
+                    await log_active(automation_id, "neuroblog", str(item.get("message") or ""))
+
             if not force and not farm_overlap_active_hours():
                 return {"status": "skipped", "reason": "night"}
             account_ids = list(cfg.get("account_ids") or [])
@@ -961,6 +1099,7 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
                 _append_log(cfg, "Нет API-ключа текстовой модели")
                 _store_cfg(automation, cfg)
                 await session.commit()
+                await _flush_job_logs()
                 return {"status": "skipped", "reason": "no_text_key"}
             _refresh_slots(cfg, automation_id)
             accounts = (
@@ -979,6 +1118,7 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
             if not ready:
                 _store_cfg(automation, cfg)
                 await session.commit()
+                await _flush_job_logs()
                 return {"status": "skipped", "reason": "nobody_ready"}
             setups = 0
             for account in ready:
@@ -988,7 +1128,10 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
                     continue
                 try:
                     channel = await _ensure_channel(account, cfg)
-                    status = "прикрепил как личный" if channel.get("personal_attached") else "создал, жду прикрепления"
+                    if channel.get("personal_attached"):
+                        status = f"прикрепил как личный @{channel.get('username') or ''}".strip()
+                    else:
+                        status = f"не прикрепился: {channel.get('attach_error') or 'без публичного адреса'}"
                     _append_log(cfg, f"Канал аккаунта {account.id}: {status}")
                 except Exception as exc:
                     _append_log(cfg, f"Не собрал канал для {account.id}: {exc}")
@@ -1006,11 +1149,18 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
                     _append_log(cfg, "Модель вернула пустой пост")
                 else:
                     image_path = ""
-                    if draft["needs_image"] and cfg.get("image_provider"):
-                        try:
-                            image_path = await _generate_image(cfg, draft.get("image_prompt") or "", automation_id)
-                        except Exception as exc:
-                            _append_log(cfg, f"Картинку не собрал: {exc}")
+                    if draft["needs_image"]:
+                        if not effective_image_provider(cfg):
+                            _append_log(cfg, "Картинку не собрал: для кейса и инфографики нужна модель ChatGPT или Grok")
+                        elif resolved_image_key(cfg)[1] == "missing":
+                            _append_log(cfg, "Картинку не собрал: нет API-ключа ChatGPT или Grok")
+                        else:
+                            try:
+                                image_path = await _generate_image(cfg, draft.get("image_prompt") or "", automation_id)
+                                if not image_path:
+                                    _append_log(cfg, "Картинку не собрал: модель вернула пустой файл")
+                            except Exception as exc:
+                                _append_log(cfg, f"Картинку не собрал: {exc}")
                     open_post = {
                         "day": cfg["day_key"],
                         "at": _utc_now().isoformat(timespec="minutes"),
@@ -1023,7 +1173,8 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
                     cfg.setdefault("posts", []).append(open_post)
                     cfg["posts"] = cfg["posts"][-_MAX_POSTS:]
                     created = True
-                    _append_log(cfg, f"Собрал пост «{THEME_LABELS.get(draft['theme'], draft['theme'])}»")
+                    picture = " с картинкой" if image_path else ""
+                    _append_log(cfg, f"Собрал пост «{THEME_LABELS.get(draft['theme'], draft['theme'])}»{picture}")
             sent = 0
             if open_post is not None:
                 already = {int(value) for value in open_post.get("sent") or []}
@@ -1045,6 +1196,7 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
                 open_post["sent"] = sorted(already)
             _store_cfg(automation, cfg)
             await session.commit()
+            await _flush_job_logs()
             return {"status": "ok", "created": created, "sent": sent}
         finally:
             reset_work_mode(token)

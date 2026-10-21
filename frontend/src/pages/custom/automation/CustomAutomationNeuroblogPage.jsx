@@ -79,7 +79,6 @@ const CustomAutomationNeuroblogPage = () => {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [searchLocked, setSearchLocked] = useState(true);
   const [avatarFileName, setAvatarFileName] = useState('');
 
   const applyPayload = (payload) => {
@@ -232,8 +231,8 @@ const CustomAutomationNeuroblogPage = () => {
   };
 
   const setImageProvider = (providerId) => {
-    if (!providerId) {
-      patch({ image_provider: '', image_model: '' });
+    if (!providerId || providerId === 'off') {
+      patch({ image_provider: providerId || '', image_model: '' });
       return;
     }
     const spec = imageProviders.find((item) => item.id === providerId);
@@ -276,22 +275,18 @@ const CustomAutomationNeuroblogPage = () => {
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => load()}>Обновить</button>
             </div>
             <div className="nc-row">
-              <input tabIndex={-1} aria-hidden="true" autoComplete="username" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} />
-              <input tabIndex={-1} aria-hidden="true" type="password" autoComplete="current-password" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} />
               <input
                 className="nc-search"
-                type="search"
-                name="ubt-account-filter"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                data-lpignore="true"
-                data-1p-ignore="true"
-                readOnly={searchLocked}
-                value={/.+@.+\./.test(accountQuery.trim()) ? '' : accountQuery}
-                onFocus={() => setSearchLocked(false)}
-                onChange={(event) => setAccountQuery(event.target.value)}
+                type="text"
+                autoComplete="one-time-code"
+                value={accountQuery}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (/.+@.+\./.test(next.trim())) {
+                    return;
+                  }
+                  setAccountQuery(next);
+                }}
                 placeholder="Поиск по ID, телефону, username..."
               />
             </div>
@@ -443,7 +438,8 @@ const CustomAutomationNeuroblogPage = () => {
         </div>
         <div className="nc-row" style={{ marginTop: 16 }}>
           <span className="nc-muted">Картинки</span>
-          <button type="button" className={`nc-chip ${!settings.image_provider ? 'is-on' : ''}`} onClick={() => setImageProvider('')}>Без картинок</button>
+          <button type="button" className={`nc-chip ${!settings.image_provider ? 'is-on' : ''}`} onClick={() => setImageProvider('')}>Как у текста</button>
+          <button type="button" className={`nc-chip ${settings.image_provider === 'off' ? 'is-on' : ''}`} onClick={() => setImageProvider('off')}>Без картинок</button>
           {imageProviders.map((item) => (
             <button
               key={item.id}
@@ -455,8 +451,8 @@ const CustomAutomationNeuroblogPage = () => {
             </button>
           ))}
         </div>
-        <p className="nc-hint">Claude и DeepSeek картинки не рисуют. Для кейса и инфографики нужен ChatGPT или Grok.</p>
-        {settings.image_provider ? (
+        <p className="nc-hint">«Как у текста» рисует картинку тем же ключом, если выбраны ChatGPT или Grok. Claude и DeepSeek картинки не умеют. Кейс и инфографика без такой модели уходят текстом.</p>
+        {settings.image_provider && settings.image_provider !== 'off' ? (
           <div className="nc-grid" style={{ marginTop: 12 }}>
             <label>
               Модель картинок
