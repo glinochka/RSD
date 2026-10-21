@@ -67,6 +67,7 @@ import CustomAutomationModulePlaceholder from './pages/custom/automation/CustomA
 import CustomAutomationTasksPage from './pages/custom/automation/CustomAutomationTasksPage';
 import CustomAutomationStatsPage from './pages/custom/automation/CustomAutomationStatsPage';
 import CustomAutomationNeurocommentingPage from './pages/custom/automation/CustomAutomationNeurocommentingPage';
+import CustomAutomationNeuroblogPage from './pages/custom/automation/CustomAutomationNeuroblogPage';
 import CustomAutomationLeadInterceptPage from './pages/custom/automation/CustomAutomationLeadInterceptPage';
 import CustomAutomationNeurochattingPage from './pages/custom/automation/CustomAutomationNeurochattingPage';
 import CustomAutomationMasslookingPage from './pages/custom/automation/CustomAutomationMasslookingPage';
@@ -254,6 +255,7 @@ const App = () => {
                   <Route path="ubt/tasks" element={<CustomAutomationTasksPage />} />
                   <Route path="ubt/stats" element={<CustomAutomationStatsPage />} />
                   <Route path="ubt/neurocommenting" element={<CustomAutomationNeurocommentingPage />} />
+                  <Route path="ubt/neuroblog" element={<CustomAutomationNeuroblogPage />} />
                   <Route path="ubt/lead-intercept" element={<CustomAutomationLeadInterceptPage />} />
                   <Route path="ubt/neurochatting" element={<CustomAutomationNeurochattingPage />} />
                   <Route path="ubt/masslooking" element={<CustomAutomationMasslookingPage />} />

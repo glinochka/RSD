@@ -53,6 +53,7 @@ DM_ACTIONS = {
 CHANNEL_WRITE_ACTIONS = {
     "commenting",
     "neurocommenting",
+    "neuroblog",
     "shilling",
     "discussion",
     "chat_broadcast",

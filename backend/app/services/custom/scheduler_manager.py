@@ -35,6 +35,7 @@ from .intercept_reauth_service import run_intercept_reauth_for_automation
 from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
 from .warmup_module_service import warmup_scheduler_active
 from .content_factory_pipeline import factory_scheduler_active, run_content_factory_pass
+from .neuroblog_service import neuroblog_scheduler_active, run_neuroblog_pass
 
 logger = getLogger(__name__)
 
@@ -99,6 +100,7 @@ class CustomAutomationScheduler:
             "sasha_push": 90,
             "amocrm_sync": settings.CUSTOM_AMOCRM_SYNC_INTERVAL_SECONDS,
             "content_factory": 45,
+            "neuroblog": 120,
         }
 
     @staticmethod
@@ -120,6 +122,7 @@ class CustomAutomationScheduler:
             "sasha_push": push_pending_leads,
             "amocrm_sync": run_amocrm_sync_for_automation,
             "content_factory": run_content_factory_pass,
+            "neuroblog": run_neuroblog_pass,
         }
 
     @staticmethod
@@ -148,6 +151,7 @@ class CustomAutomationScheduler:
                 CustomAutomationScheduler._module_enabled(automation, "parser"),
                 warmup_scheduler_active(automation),
                 factory_scheduler_active(automation),
+                neuroblog_scheduler_active(automation),
             ]
         )
 
@@ -194,6 +198,8 @@ class CustomAutomationScheduler:
             jobs.add("dmp_notify")
         if factory_scheduler_active(automation):
             jobs.add("content_factory")
+        if neuroblog_scheduler_active(automation):
+            jobs.add("neuroblog")
         return jobs
 
     async def _fetch_active_automations(self, session: AsyncSession) -> list[CustomAutomation]:

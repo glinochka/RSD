@@ -6,6 +6,7 @@ export const UBT_MODULES = [
   { id: 'tasks', label: 'Задачи' },
   { id: 'stats', label: 'Моя статистика' },
   { id: 'neurocommenting', label: 'Нейрокомментинг' },
+  { id: 'neuroblog', label: 'Нейроблог' },
   { id: 'lead-intercept', label: 'Перехват заявок' },
   { id: 'neurochatting', label: 'Нейрочаттинг' },
   { id: 'masslooking', label: 'Масслукинг' },

@@ -884,6 +884,44 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getNeuroblogModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROBLOG(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeuroblogModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROBLOG(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runNeuroblogModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROBLOG_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async uploadNeuroblogAvatar(automationId, file) {
+    const body = new FormData();
+    body.append('file', file);
+    const headers = getAuthHeaders();
+    delete headers['Content-Type'];
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROBLOG_AVATAR(automationId)}`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    return handleResponse(response);
+  },
+
   async getWarmupModule(automationId) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_WARMUP(automationId)}`, {
       method: 'GET',

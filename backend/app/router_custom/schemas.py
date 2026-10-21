@@ -1789,6 +1789,33 @@ class WarmupPresetRequest(BaseModel):
     name: str = ""
 
 
+class NeuroblogModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    settings: dict[str, Any] = Field(default_factory=dict)
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    channels: list[dict[str, Any]] = Field(default_factory=list)
+    posts: list[dict[str, Any]] = Field(default_factory=list)
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    next_slots: list[str] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    notices: list[str] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    themes: list[dict[str, str]] = Field(default_factory=list)
+    text_providers: list[dict[str, Any]] = Field(default_factory=list)
+    image_providers: list[dict[str, Any]] = Field(default_factory=list)
+    text_models: list[str] = Field(default_factory=list)
+    image_models: list[dict[str, str]] = Field(default_factory=list)
+
+
+class NeuroblogSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool | None = None
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatMessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

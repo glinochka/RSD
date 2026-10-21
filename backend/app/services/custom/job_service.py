@@ -72,6 +72,7 @@ JOB_META = {
     "chat_broadcast": {"category": "module", "title": "Чат-рассылки", "badge": "ЧР"},
     "dm_broadcast": {"category": "module", "title": "ЛС-рассылки", "badge": "ЛС"},
     "shilling": {"category": "module", "title": "Нейрошиллинг", "badge": "НШ"},
+    "neuroblog": {"category": "module", "title": "Нейроблог", "badge": "НБ"},
     "inspect": {"category": "module", "title": "Проверка комментариев", "badge": "КМ"},
     "join": {"category": "module", "title": "Вступление в чаты", "badge": "ВС"},
 }

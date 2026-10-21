@@ -108,6 +108,8 @@ from .schemas import (
     WarmupModuleResponse,
     WarmupTargetsRequest,
     WarmupPresetRequest,
+    NeuroblogModuleResponse,
+    NeuroblogSaveRequest,
     ChatFolderListResponse,
     ChatFolderResponse,
     ChatImportJobListResponse,
@@ -1409,6 +1411,60 @@ async def neuroshilling_blacklist(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/neuroblog", response_model=NeuroblogModuleResponse)
+async def get_neuroblog_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.neuroblog_service import get_neuroblog_module
+
+    async with async_session_maker() as session:
+        data = await get_neuroblog_module(session, automation_id)
+        return NeuroblogModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/neuroblog", response_model=NeuroblogModuleResponse)
+async def save_neuroblog_screen(
+    automation_id: int,
+    payload: NeuroblogSaveRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.neuroblog_service import save_neuroblog_module
+
+    async with async_session_maker() as session:
+        data = await save_neuroblog_module(session, automation_id, payload.model_dump())
+        return NeuroblogModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroblog/run", response_model=NeuroblogModuleResponse)
+async def run_neuroblog_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.neuroblog_service import get_neuroblog_module, run_neuroblog_pass
+
+    await run_neuroblog_pass(automation_id, force=True)
+    async with async_session_maker() as session:
+        data = await get_neuroblog_module(session, automation_id)
+        return NeuroblogModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroblog/avatar", response_model=NeuroblogModuleResponse)
+async def upload_neuroblog_avatar(
+    automation_id: int,
+    file: UploadFile = File(...),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.neuroblog_service import save_neuroblog_avatar
+
+    content = await file.read()
+    if len(content) > 5_000_000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Аватарка больше 5 МБ")
+    async with async_session_maker() as session:
+        data = await save_neuroblog_avatar(session, automation_id, file.filename or "avatar.jpg", content)
+        return NeuroblogModuleResponse.model_validate(data)
 
 
 @router.get("/automations/{automation_id}/modules/warmup", response_model=WarmupModuleResponse)

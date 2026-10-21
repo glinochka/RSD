@@ -208,6 +208,7 @@ const UBT_ICONS = {
   tasks: ListIcon,
   stats: ChartIcon,
   neurocommenting: CommentIcon,
+  neuroblog: MegaphoneIcon,
   'lead-intercept': EnvelopeIcon,
   neurochatting: ChatIcon,
   masslooking: EyeIcon,
