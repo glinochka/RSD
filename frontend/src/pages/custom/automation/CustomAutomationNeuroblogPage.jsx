@@ -4,6 +4,7 @@ import FeatureToggle from '../../../components/FeatureToggle';
 import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
+import CustomFileButton from '../../../components/custom/CustomFileButton';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { toggleNumericId, ubtModulePath } from './customNav';
@@ -78,6 +79,7 @@ const CustomAutomationNeuroblogPage = () => {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
+  const [avatarFileName, setAvatarFileName] = useState('');
 
   const applyPayload = (payload) => {
     setData(payload);
@@ -341,16 +343,15 @@ const CustomAutomationNeuroblogPage = () => {
             <textarea className="nc-area" rows={3} value={settings.channel_about || ''} onChange={(event) => patch({ channel_about: event.target.value })} />
           </label>
           <p className="nc-hint">Это about самого канала. Профиль аккаунта не трогаем: канал виден как личный Telegram-канал.</p>
-          <label>
-            Аватарка канала {settings.avatar_uploaded ? <span className="nc-muted">загружена</span> : null}
-            <input
-              type="file"
+          <div className="nc-field">
+            <span className="nc-field-label">Аватарка канала</span>
+            <CustomFileButton
+              variant="ubt"
               accept="image/png,image/jpeg,image/webp"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (!file) {
-                  return;
-                }
+              busy={busy}
+              fileName={avatarFileName || (settings.avatar_uploaded ? 'Сохранена на сервере' : '')}
+              onFile={(file) => {
+                setAvatarFileName(file.name);
                 runSafe(async () => {
                   if (dirtyRef.current) {
                     await persist();
@@ -358,8 +359,11 @@ const CustomAutomationNeuroblogPage = () => {
                   applyPayload(await customService.uploadNeuroblogAvatar(id, file));
                 }, 'Аватарка сохранена');
               }}
-            />
-          </label>
+            >
+              Выбрать фото
+            </CustomFileButton>
+            <p className="nc-hint">PNG, JPG или WebP, до 5 МБ. Применится ко всем каналам задачи при следующем проходе.</p>
+          </div>
         </div>
         <div className="nc-card">
           <div className="nc-card-head"><h2>Расписание и темы</h2></div>

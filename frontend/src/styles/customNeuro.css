@@ -922,6 +922,27 @@
   color: #374151;
 }
 
+.nc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nc-field-label {
+  font-size: 0.875rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+.nc-field .custom-file-btn {
+  align-items: center;
+}
+
+.nc-field .custom-file-btn__name {
+  font-size: 0.8125rem;
+  color: #6b7280;
+}
+
 .nc-page input,
 .nc-page textarea,
 .nc-page select {
