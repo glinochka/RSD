@@ -79,6 +79,7 @@ const CustomAutomationNeuroblogPage = () => {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
+  const [searchLocked, setSearchLocked] = useState(true);
   const [avatarFileName, setAvatarFileName] = useState('');
 
   const applyPayload = (payload) => {
@@ -190,7 +191,8 @@ const CustomAutomationNeuroblogPage = () => {
 
   const accounts = useMemo(() => {
     const items = data?.accounts || [];
-    const needle = accountQuery.trim().toLowerCase();
+    const raw = accountQuery.trim().toLowerCase();
+    const needle = /.+@.+\./.test(raw) ? '' : raw;
     return items.filter((item) => {
       if (!item.eligible) {
         return false;
@@ -267,10 +269,6 @@ const CustomAutomationNeuroblogPage = () => {
             }}
           />
         </div>
-        <p className="nc-intro">
-          У каждого выбранного аккаунта свой Telegram-канал. Он прикрепляется к профилю как личный канал —
-          в описание профиля ссылку не ставим. Один текст уходит во все каналы задачи.
-        </p>
         <div className="nc-split">
           <div className="nc-pane">
             <div className="nc-pane-head">
@@ -278,11 +276,21 @@ const CustomAutomationNeuroblogPage = () => {
               <button type="button" className="acc-btn acc-btn--ghost" onClick={() => load()}>Обновить</button>
             </div>
             <div className="nc-row">
+              <input tabIndex={-1} aria-hidden="true" autoComplete="username" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} />
+              <input tabIndex={-1} aria-hidden="true" type="password" autoComplete="current-password" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} />
               <input
                 className="nc-search"
-                name="neuroblog-account-search"
+                type="search"
+                name="ubt-account-filter"
                 autoComplete="off"
-                value={accountQuery}
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                data-lpignore="true"
+                data-1p-ignore="true"
+                readOnly={searchLocked}
+                value={/.+@.+\./.test(accountQuery.trim()) ? '' : accountQuery}
+                onFocus={() => setSearchLocked(false)}
                 onChange={(event) => setAccountQuery(event.target.value)}
                 placeholder="Поиск по ID, телефону, username..."
               />
@@ -292,7 +300,15 @@ const CustomAutomationNeuroblogPage = () => {
               <UbtCheck checked={Boolean(settings.require_proxy)} onChange={(value) => persistFlag({ require_proxy: value })}>Рабочие прокси</UbtCheck>
               <UbtCheck checked={Boolean(settings.hide_in_work)} onChange={(value) => persistFlag({ hide_in_work: value })}>Скрыть в работе</UbtCheck>
             </div>
-            {accounts.length === 0 ? <div className="nc-empty">Нет аккаунтов, соответствующих фильтрам</div> : (
+            {accounts.length === 0 ? (
+              <div className="nc-empty">
+                {(data.accounts || []).length === 0
+                  ? 'Нет аккаунтов в пуле'
+                  : settings.hide_in_work || settings.require_proxy
+                    ? 'Нет аккаунтов, соответствующих фильтрам. Снимите «Рабочие прокси» или «Скрыть в работе».'
+                    : 'Нет аккаунтов, соответствующих фильтрам'}
+              </div>
+            ) : (
               <div className="nc-list">
                 {accounts.map((item) => (
                   <button key={item.id} type="button" className={`nc-item ${selectedAccounts.has(item.id) ? 'is-on' : ''}`} onClick={() => toggleAccount(item.id)}>
@@ -418,7 +434,7 @@ const CustomAutomationNeuroblogPage = () => {
             <input
               className="nc-input"
               type="password"
-              autoComplete="off"
+              autoComplete="new-password"
               value={textKey}
               placeholder={settings.text_api_key_set ? 'оставь пустым, чтобы не менять' : 'sk-...'}
               onChange={(event) => { setTextKey(event.target.value); setDirty(true); }}
@@ -456,7 +472,7 @@ const CustomAutomationNeuroblogPage = () => {
               <input
                 className="nc-input"
                 type="password"
-                autoComplete="off"
+                autoComplete="new-password"
                 value={imageKey}
                 placeholder={settings.image_api_key_set ? 'оставь пустым, чтобы не менять' : 'ключ или пусто — взять текстовый'}
                 onChange={(event) => { setImageKey(event.target.value); setDirty(true); }}

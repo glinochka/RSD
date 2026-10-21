@@ -569,7 +569,7 @@ def _account_row(account: SocialAccount, pool: PoolAccount, channel: dict[str, A
         "is_channel_banned": bool(account.is_channel_banned),
         "in_work": in_work,
         "daily_messages_sent": current_daily_messages_sent(account),
-        "eligible": account_is_task_ready(pool, account, "neuroblog"),
+        "eligible": account_is_task_ready(pool, account, "commenting"),
         "channel_title": channel.get("title") or "",
         "channel_attached": attached,
         "channel_status": "attached" if attached else ("created" if channel.get("id") else "none"),
