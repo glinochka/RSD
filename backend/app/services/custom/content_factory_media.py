@@ -283,6 +283,77 @@ def uniqualize_file(*, source: Path, dest: Path, recipe: dict[str, Any], aspect_
     return dest
 
 
+def slides_to_mp4(slide_paths: list[Path], dest: Path, *, seconds: float = 2.4) -> Path:
+    """Still frames become a vertical video that swipes on its own. YouTube has no photo carousel."""
+    existing = [path for path in slide_paths if path.exists() and path.stat().st_size > 0]
+    if len(existing) < 2:
+        raise RuntimeError("Для слайд-шоу нужно хотя бы два кадра")
+    if not ffmpeg_bin():
+        raise RuntimeError("ffmpeg не найден — YouTube-слайдшоу из карусели не собрать")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    hold = max(1.2, min(float(seconds), 4.0))
+    args = ["-y"]
+    filters = []
+    for index, path in enumerate(existing):
+        args.extend(["-loop", "1", "-t", f"{hold:.2f}", "-i", str(path)])
+        filters.append(
+            f"[{index}:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+            f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v{index}]"
+        )
+    concat = "".join(f"[v{index}]" for index in range(len(existing)))
+    filters.append(f"{concat}concat=n={len(existing)}:v=1:a=0[v]")
+    args.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(dest),
+        ]
+    )
+    _run_ffmpeg(args, timeout=180)
+    return dest
+
+
+async def generate_slide_png(*, provider: str, model: str, api_key: str, prompt: str, dest: Path) -> Path:
+    from openai import AsyncOpenAI
+
+    spec = {
+        "chatgpt": "https://api.openai.com/v1",
+        "grok": "https://api.x.ai/v1",
+    }
+    base = spec.get(provider)
+    if not base or not api_key:
+        raise RuntimeError("Для карусели нужен ключ ChatGPT или Grok")
+    client = AsyncOpenAI(api_key=api_key, base_url=base, timeout=90.0, max_retries=0)
+    kwargs = {"model": model or ("grok-imagine-image-2.0" if provider == "grok" else "gpt-image-2.5-flare"), "prompt": prompt[:900]}
+    if provider == "chatgpt":
+        kwargs["size"] = "1024x1536"
+    try:
+        result = await client.images.generate(**kwargs)
+    except Exception:
+        result = await client.images.generate(model=kwargs["model"], prompt=kwargs["prompt"])
+    data = (result.data or [None])[0]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    raw = getattr(data, "b64_json", None)
+    if raw:
+        import base64
+
+        dest.write_bytes(base64.b64decode(raw))
+        return dest
+    url = getattr(data, "url", None)
+    if not url:
+        raise RuntimeError("Модель картинок вернула пустой кадр")
+    await download_to_file(url, dest)
+    return dest
+
+
 async def resolve_video_bytes(video_url: str | None) -> bytes:
     local = local_path_from_url(video_url)
     if local:

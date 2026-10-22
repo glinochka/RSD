@@ -7,7 +7,7 @@ export const CF_PLATFORMS = [
   {
     id: 'instagram',
     title: 'Instagram Reels',
-    hint: 'Meta Graph: access token и Instagram User ID.',
+    hint: 'Видео уходит в Reels. Фото-карусель публикуется в ленту: в Reels листание кадров не поддерживается.',
   },
   {
     id: 'tiktok',

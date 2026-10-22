@@ -125,6 +125,7 @@ _SECRET_SKIP = {
     "logs",
     "slots",
     "day_key",
+    "mirrored_ids",
     "avatar_path",
     "text_api_key",
     "image_api_key",
@@ -169,6 +170,12 @@ def default_neuroblog_settings() -> dict[str, Any]:
         "product_name": "",
         "product_url": "",
         "prompt": "",
+        "content_mode": "write",
+        "source_channel": "",
+        "signature_enabled": False,
+        "signature_text": "",
+        "signature_url": "",
+        "avatar_from_profile": False,
         "text_provider": "deepseek",
         "text_model": "deepseek-flash",
         "text_api_key_enc": "",
@@ -180,6 +187,7 @@ def default_neuroblog_settings() -> dict[str, Any]:
         "avatar_path": "",
         "channels": {},
         "posts": [],
+        "mirrored_ids": [],
         "day_key": "",
         "slots": [],
         "logs": [],
@@ -402,6 +410,8 @@ def neuroblog_issues(cfg: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     if not cfg.get("account_ids"):
         issues.append("Выберите аккаунты, у которых появится личный канал")
+    if cfg.get("content_mode") == "mirror" and not cfg.get("source_channel"):
+        issues.append("Укажите канал, который копируем")
     _key, source = resolved_text_key(cfg)
     if source == "missing":
         label = TEXT_PROVIDERS.get(str(cfg.get("text_provider") or ""), {}).get("label") or "модели"
@@ -424,7 +434,7 @@ def normalize_neuroblog_settings(raw: Any, *, previous: dict[str, Any] | None = 
     base = default_neuroblog_settings()
     stored = previous if isinstance(previous, dict) else {}
     incoming = raw if isinstance(raw, dict) else {}
-    skip_overlay = _SECRET_SKIP | {"posts", "slots", "logs", "day_key", "channels", "avatar_path"}
+    skip_overlay = _SECRET_SKIP | {"posts", "slots", "logs", "day_key", "channels", "avatar_path", "mirrored_ids"}
     data = {
         **base,
         **stored,
@@ -450,6 +460,13 @@ def normalize_neuroblog_settings(raw: Any, *, previous: dict[str, Any] | None = 
     data["product_name"] = str(incoming.get("product_name", stored.get("product_name") or "")).strip()[:120]
     data["product_url"] = str(incoming.get("product_url", stored.get("product_url") or "")).strip()[:300]
     data["prompt"] = str(incoming.get("prompt", stored.get("prompt") or "")).strip()[:4000]
+    mode = str(incoming.get("content_mode", stored.get("content_mode") or "write")).strip().lower()
+    data["content_mode"] = mode if mode in {"write", "mirror"} else "write"
+    data["source_channel"] = _channel_username(incoming.get("source_channel", stored.get("source_channel") or ""))
+    data["signature_enabled"] = bool(incoming.get("signature_enabled", stored.get("signature_enabled", False)))
+    data["signature_text"] = " ".join(str(incoming.get("signature_text", stored.get("signature_text") or "")).split())[:200]
+    data["signature_url"] = str(incoming.get("signature_url", stored.get("signature_url") or "")).strip()[:300]
+    data["avatar_from_profile"] = bool(incoming.get("avatar_from_profile", stored.get("avatar_from_profile", False)))
     provider = infer_text_provider(
         str(incoming.get("text_model", stored.get("text_model") or "")),
         str(incoming.get("text_provider", stored.get("text_provider") or "")).strip(),
@@ -472,6 +489,13 @@ def normalize_neuroblog_settings(raw: Any, *, previous: dict[str, Any] | None = 
     data["avatar_path"] = str(stored.get("avatar_path") or incoming.get("avatar_path") or "")[:512]
     data["channels"] = stored.get("channels") if isinstance(stored.get("channels"), dict) else {}
     data["posts"] = list(stored.get("posts") or [])[-_MAX_POSTS:]
+    mirrored: list[int] = []
+    for item in stored.get("mirrored_ids") or []:
+        try:
+            mirrored.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    data["mirrored_ids"] = mirrored[-300:]
     data["day_key"] = str(stored.get("day_key") or "")
     data["slots"] = list(stored.get("slots") or [])
     data["logs"] = list(stored.get("logs") or [])[-_MAX_LOGS:]
@@ -486,6 +510,63 @@ def image_needed(theme: str, requested: bool = True) -> bool:
     return bool(requested) and str(theme) in IMAGE_THEMES
 
 
+def _channel_username(raw: Any) -> str:
+    text = str(raw or "").strip()
+    text = re.sub(r"https?://(t\.me|telegram\.me)/", "", text, flags=re.I)
+    return text.lstrip("@").split("/")[0].split("?")[0][:64]
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def format_telegram_body(raw: str) -> str:
+    """Keep paragraph breaks. A single wall of text is split into short blocks."""
+    text = str(raw or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if "\n" not in text and len(text) > 160:
+        parts = [part.strip() for part in re.split(r"(?<=[.!?…])\s+", text) if part.strip()]
+        chunks: list[str] = []
+        buf = ""
+        for part in parts:
+            if buf and len(buf) + len(part) > 180:
+                chunks.append(buf)
+                buf = part
+            else:
+                buf = f"{buf} {part}".strip()
+        if buf:
+            chunks.append(buf)
+        text = "\n\n".join(chunks)
+    return text[:3500]
+
+
+def compose_signed_message(text: str, cfg: dict[str, Any], *, limit: int = 3500) -> tuple[str, list[Any]]:
+    """Append a native sign-off. The URL stays on the words, not as a visible link."""
+    from telethon.tl.types import MessageEntityTextUrl
+
+    body = format_telegram_body(text)
+    if not cfg.get("signature_enabled"):
+        return body[:limit], []
+    line = " ".join(str(cfg.get("signature_text") or "").split())
+    line = re.sub(r"https?://\S+", "", line).strip()
+    url = str(cfg.get("signature_url") or cfg.get("product_url") or "").strip()
+    if not line:
+        return body[:limit], []
+    separator = "\n\n———\n"
+    room = limit - len(separator) - len(line)
+    if room < 40:
+        return body[:limit], []
+    if len(body) > room:
+        body = body[: room - 1].rstrip() + "…"
+    full = f"{body}{separator}{line}" if body else line
+    entities: list[Any] = []
+    if url.startswith("http"):
+        prefix = full[: full.rfind(line)]
+        entities.append(MessageEntityTextUrl(offset=_utf16_len(prefix), length=_utf16_len(line), url=url[:500]))
+    return full, entities
+
+
 def parse_post_draft(raw: str) -> dict[str, Any]:
     match = _JSON_BLOCK.search(raw or "")
     blob = match.group(0) if match else (raw or "")
@@ -498,7 +579,7 @@ def parse_post_draft(raw: str) -> dict[str, Any]:
     theme = str(data.get("theme") or "blog").strip().lower()
     if theme not in THEMES:
         theme = "blog"
-    text = " ".join(str(data.get("text") or "").split())
+    text = format_telegram_body(str(data.get("text") or ""))
     prompt = " ".join(str(data.get("image_prompt") or "").split())
     return {
         "theme": theme,
@@ -740,6 +821,9 @@ def _channel_needs_setup(account: SocialAccount, cfg: dict[str, Any]) -> bool:
         return True
     if not stored.get("username"):
         return True
+    want_avatar = "profile" if cfg.get("avatar_from_profile") else ("file" if cfg.get("avatar_path") else "")
+    if want_avatar and stored.get("avatar_source") != want_avatar:
+        return True
     return False
 
 
@@ -818,6 +902,71 @@ async def _complete_text(cfg: dict[str, Any], prompt: str) -> str:
     return result.choices[0].message.content or ""
 
 
+async def _mirror_draft(cfg: dict[str, Any], account: SocialAccount, automation_id: int) -> dict[str, Any]:
+    """Republish a source channel post as our own message, after a light edit."""
+    from .telegram_account_client import TelegramAccountClient
+
+    source = _channel_username(cfg.get("source_channel"))
+    if not source:
+        _append_log(cfg, "Копирование: не указан канал-источник")
+        return {"text": ""}
+    seen = {int(item) for item in (cfg.get("mirrored_ids") or [])}
+    async with TelegramAccountClient.for_account(account) as client:
+        raw = client.client
+        entity = await raw.get_entity(source)
+        messages = await raw.get_messages(entity, limit=30)
+        chosen = None
+        for message in reversed(list(messages or [])):
+            if not message or int(getattr(message, "id", 0) or 0) in seen:
+                continue
+            if getattr(message, "action", None):
+                continue
+            if not (getattr(message, "message", None) or getattr(message, "photo", None)):
+                continue
+            chosen = message
+            break
+        if chosen is None:
+            _append_log(cfg, f"В @{source} нет новых постов")
+            return {"text": ""}
+        source_text = str(getattr(chosen, "message", None) or "").strip()
+        image_path = ""
+        if getattr(chosen, "photo", None):
+            folder = Path(app_settings.MEDIA_ROOT).resolve() / "neuroblog" / str(automation_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / f"mirror-{int(chosen.id)}.jpg"
+            saved = await raw.download_media(chosen, file=str(target))
+            if saved and Path(str(saved)).exists():
+                image_path = str(saved)
+    seen.add(int(chosen.id))
+    cfg["mirrored_ids"] = sorted(seen)[-300:]
+    if not source_text and not image_path:
+        _append_log(cfg, f"Пост {chosen.id} из @{source} пустой, пропустил")
+        return {"text": ""}
+    instructions = f"""
+Это чужой пост из Telegram-канала @{source}. Реши, публиковать ли его в нашем личном канале как свой текст.
+Пропусти (action=skip), если это жёсткая реклама, розыгрыш, набор подписчиков, казино, крипта, чужая партнёрка или пустышка.
+Если пост нормальный, слегка поправь формулировки, чтобы он звучал своим. Смысл и факты не выдумывай.
+Оформи как сообщение Telegram: короткие абзацы через пустую строку, без markdown, без пометки «переслано».
+Исходник:
+{source_text or "(только картинка)"}
+Ответ строго JSON: {{"action":"post"|"skip","reason":"...","text":"..."}}
+""".strip()
+    raw_answer = await _complete_text(cfg, instructions)
+    match = _JSON_BLOCK.search(raw_answer or "")
+    try:
+        decision = json.loads(match.group(0) if match else (raw_answer or ""))
+    except json.JSONDecodeError:
+        decision = {}
+    if not isinstance(decision, dict) or str(decision.get("action") or "").lower() == "skip":
+        _append_log(cfg, f"Пост {chosen.id} из @{source} не взял: {decision.get('reason') or 'модерация'}")
+        return {"text": ""}
+    text = format_telegram_body(str(decision.get("text") or source_text))
+    if not text:
+        return {"text": ""}
+    _append_log(cfg, f"Взял пост {chosen.id} из @{source} без пометки пересылки")
+    return {"theme": "mirror", "text": text, "needs_image": False, "image_prompt": "", "image_path": image_path}
+
+
 async def _generate_draft(cfg: dict[str, Any]) -> dict[str, Any]:
     previous = [
         f"{index + 1}. [{item.get('theme')}] {item.get('text')}"
@@ -829,12 +978,19 @@ async def _generate_draft(cfg: dict[str, Any]) -> dict[str, Any]:
 Стилистика: {cfg.get("style") or "живой текст"}.
 Допустимые темы: {themes}. Выбери одну.
 Продукт упоминай нативно и редко, только если уместно: {cfg.get("product_name") or "не задан"}.
-Ссылка на продукт, если упоминаешь: {cfg.get("product_url") or "нет"}.
+Ссылка на продукт, если упоминаешь: {cfg.get("product_url") or "нет"}. В тексте ссылку не пиши голым URL, если можно обойтись словами.
 Дополнительные указания: {cfg.get("prompt") or "нет"}.
 Предыдущие посты, можно сослаться если уместно:
 {chr(10).join(previous) or "пока нет"}
+Как писать: это сообщение в Telegram, его читают с телефона.
+- 2–5 коротких абзацев, между ними пустая строка.
+- Один абзац — одна мысль, до 2–3 предложений.
+- Можно короткий список, каждый пункт с новой строки.
+- Без канцелярита, без полотна на весь экран, без markdown-звёздочек.
+- Первая строка цепляет, последняя закрывает мысль. Подпись в конце не добавляй — её поставит система.
 Картинка нужна только для кейса или инфографики (график, схема, цифры). Для блога и размышлений needs_image=false.
-Ответ строго JSON: {{"theme":"expert|case|blog|reflection|infographic","text":"...","needs_image":false,"image_prompt":""}}
+Ответ строго JSON. В поле text сохрани переносы строк как \\n.
+{{"theme":"expert|case|blog|reflection|infographic","text":"...","needs_image":false,"image_prompt":""}}
 """.strip()
     draft = parse_post_draft(await _complete_text(cfg, instructions))
     allowed = [item for item in (cfg.get("themes") or []) if item in THEMES]
@@ -972,13 +1128,33 @@ async def _ensure_channel(account: SocialAccount, cfg: dict[str, Any]) -> dict[s
                 stored["about"] = about
             except Exception as exc:
                 logger.info("Neuroblog about skipped for %s: %s", account.id, exc)
-        avatar = str(cfg.get("avatar_path") or "")
-        if avatar and not stored.get("avatar_set"):
-            file_path = Path(app_settings.MEDIA_ROOT).resolve() / avatar
-            if file_path.exists():
-                uploaded = await raw.upload_file(str(file_path))
-                await raw(EditPhotoRequest(channel, InputChatUploadedPhoto(uploaded)))
-                stored["avatar_set"] = True
+        if cfg.get("avatar_from_profile"):
+            if stored.get("avatar_source") != "profile":
+                try:
+                    import io
+
+                    photos = await raw.get_profile_photos("me", limit=1)
+                    if photos:
+                        buf = io.BytesIO()
+                        await raw.download_media(photos[0], file=buf)
+                        if buf.getvalue():
+                            buf.seek(0)
+                            buf.name = "profile.jpg"
+                            uploaded = await raw.upload_file(buf)
+                            await raw(EditPhotoRequest(channel, InputChatUploadedPhoto(uploaded)))
+                            stored["avatar_set"] = True
+                    stored["avatar_source"] = "profile"
+                except Exception as exc:
+                    logger.info("Neuroblog profile avatar skipped for %s: %s", account.id, exc)
+        else:
+            avatar = str(cfg.get("avatar_path") or "")
+            if avatar and stored.get("avatar_source") != "file":
+                file_path = Path(app_settings.MEDIA_ROOT).resolve() / avatar
+                if file_path.exists():
+                    uploaded = await raw.upload_file(str(file_path))
+                    await raw(EditPhotoRequest(channel, InputChatUploadedPhoto(uploaded)))
+                    stored["avatar_set"] = True
+                    stored["avatar_source"] = "file"
         if stored.get("username"):
             try:
                 await raw(UpdatePersonalChannelRequest(get_input_channel(channel)))
@@ -1002,7 +1178,13 @@ async def _ensure_channel(account: SocialAccount, cfg: dict[str, Any]) -> dict[s
     return stored
 
 
-async def _send_post(account: SocialAccount, channel: dict[str, Any], text: str, image_path: str) -> None:
+async def _send_post(
+    account: SocialAccount,
+    channel: dict[str, Any],
+    text: str,
+    image_path: str,
+    entities: list[Any] | None = None,
+) -> None:
     from telethon.tl.types import InputPeerChannel
 
     from .telegram_account_client import TelegramAccountClient
@@ -1014,9 +1196,11 @@ async def _send_post(account: SocialAccount, channel: dict[str, Any], text: str,
         else:
             entity = channel.get("username") or int(channel["id"])
         kwargs: dict[str, Any] = {}
+        if entities:
+            kwargs["formatting_entities"] = entities
         if image_path and Path(image_path).exists():
             kwargs["file"] = image_path
-        await client.client.send_message(entity, text[:1024] if kwargs else text[:3500], **kwargs)
+        await client.client.send_message(entity, text, **kwargs)
 
 
 async def sync_neuroblog_task(automation_id: int, *, enabled: bool, params: dict[str, Any] | None = None) -> str:
@@ -1141,15 +1325,19 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
             created = False
             if open_post is None and (force or due_slot(cfg.get("slots") or [], _posts_today(cfg))):
                 try:
-                    draft = await _generate_draft(cfg)
+                    if str(cfg.get("content_mode") or "write") == "mirror":
+                        draft = await _mirror_draft(cfg, ready[0], automation_id)
+                    else:
+                        draft = await _generate_draft(cfg)
                 except Exception as exc:
                     _append_log(cfg, f"Текст не собрал: {exc}")
                     draft = {"text": ""}
                 if not draft.get("text"):
-                    _append_log(cfg, "Модель вернула пустой пост")
+                    if str(cfg.get("content_mode") or "write") != "mirror":
+                        _append_log(cfg, "Модель вернула пустой пост")
                 else:
-                    image_path = ""
-                    if draft["needs_image"]:
+                    image_path = str(draft.get("image_path") or "")
+                    if draft.get("needs_image") and not image_path:
                         if not effective_image_provider(cfg):
                             _append_log(cfg, "Картинку не собрал: для кейса и инфографики нужна модель ChatGPT или Grok")
                         elif resolved_image_key(cfg)[1] == "missing":
@@ -1187,7 +1375,15 @@ async def run_neuroblog_pass(automation_id: int, *, force: bool = False) -> dict
                     if not channel or not channel.get("id"):
                         continue
                     try:
-                        await _send_post(account, channel, open_post["text"], open_post.get("image_path") or "")
+                        limit = 1024 if open_post.get("image_path") else 3500
+                        body, entities = compose_signed_message(open_post["text"], cfg, limit=limit)
+                        await _send_post(
+                            account,
+                            channel,
+                            body,
+                            open_post.get("image_path") or "",
+                            entities,
+                        )
                         already.add(account.id)
                         sent += 1
                     except Exception as exc:

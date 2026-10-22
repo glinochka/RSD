@@ -45,6 +45,10 @@ const EMPTY = {
   script_model: 'deepseek-chat',
   video_model: 'kling',
   tts_model: '',
+  carousel_share: 0,
+  image_provider: 'chatgpt',
+  image_model: 'gpt-image-2.5-flare',
+  xai_api_key: '',
   openai_api_key: '',
   kling_api_key: '',
   runway_api_key: '',
@@ -79,13 +83,14 @@ const CustomAutomationContentFactorySettingsPage = () => {
     runway_api_key: '',
     luma_api_key: '',
     elevenlabs_api_key: '',
+    xai_api_key: '',
   });
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await customService.getContentFactorySettings(id);
-      const next = { ...EMPTY, ...data, openai_api_key: '', kling_api_key: '', runway_api_key: '', luma_api_key: '', elevenlabs_api_key: '' };
+      const next = { ...EMPTY, ...data, openai_api_key: '', kling_api_key: '', runway_api_key: '', luma_api_key: '', elevenlabs_api_key: '', xai_api_key: '' };
       setForm(next);
       setSnapshot(fingerprint(next));
       setMeta(data);
@@ -116,7 +121,7 @@ const CustomAutomationContentFactorySettingsPage = () => {
       setIsSaving(false);
       return;
     }
-    ['openai_api_key', 'kling_api_key', 'runway_api_key', 'luma_api_key', 'elevenlabs_api_key'].forEach((key) => {
+    ['openai_api_key', 'kling_api_key', 'runway_api_key', 'luma_api_key', 'elevenlabs_api_key', 'xai_api_key'].forEach((key) => {
       if (!payload[key]) {
         delete payload[key];
       }
@@ -132,6 +137,7 @@ const CustomAutomationContentFactorySettingsPage = () => {
         runway_api_key: '',
         luma_api_key: '',
         elevenlabs_api_key: '',
+        xai_api_key: '',
       };
       setForm(next);
       setSnapshot(fingerprint(next));
@@ -338,6 +344,43 @@ const CustomAutomationContentFactorySettingsPage = () => {
             <div className="form-group">
               <label htmlFor="cf-lkey">Luma {meta.luma_api_key_set ? '(сохранён)' : ''}</label>
               <input id="cf-lkey" type="password" value={form.luma_api_key} onChange={(e) => setField('luma_api_key', e.target.value)} autoComplete="off" />
+            </div>
+          </div>
+          <div className="form-group" style={{ marginTop: 16 }}>
+            <label htmlFor="cf-mix">Видео / фото-карусели: {100 - Number(form.carousel_share || 0)}% видео · {Number(form.carousel_share || 0)}% карусели</label>
+            <input
+              id="cf-mix"
+              type="range"
+              min="0"
+              max="100"
+              value={form.carousel_share || 0}
+              onChange={(e) => setField('carousel_share', Number(e.target.value))}
+            />
+            <p className="form-hint">
+              Карусель листается руками в TikTok, Pinterest и ленте Instagram. В Reels такого формата нет — туда уходит только видео.
+              YouTube получает те же кадры как ролик, где слайды сменяются сами. Нужен ffmpeg на сервере.
+            </p>
+          </div>
+          <div className="cf-form-grid">
+            <div className="form-group">
+              <label htmlFor="cf-imodel2">Модель картинок</label>
+              <CustomSelect
+                id="cf-imodel2"
+                value={form.image_provider || 'chatgpt'}
+                options={[
+                  { value: 'chatgpt', label: 'ChatGPT' },
+                  { value: 'grok', label: 'Grok' },
+                ]}
+                onChange={(e) => setField('image_provider', e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-islug">Имя модели</label>
+              <input id="cf-islug" value={form.image_model || ''} onChange={(e) => setField('image_model', e.target.value)} placeholder="gpt-image-2.5-flare или grok-imagine-image-2.0" />
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-xkey">Grok / xAI {meta.xai_api_key_set ? '(сохранён)' : ''}</label>
+              <input id="cf-xkey" type="password" value={form.xai_api_key} onChange={(e) => setField('xai_api_key', e.target.value)} autoComplete="off" placeholder="для каруселей Grok" />
             </div>
           </div>
         </div>

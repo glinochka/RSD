@@ -7,6 +7,7 @@ from app.alembic.models import CustomAdmin, CustomAutomation, CustomAutomationCr
 from app.services.custom.content_factory_antifraud import (
     caption_variant,
     factory_return_url,
+    pick_media_kind,
     hook_is_strong,
     uniqualize_recipe,
     uniqueness_hash,
@@ -406,3 +407,10 @@ async def test_multi_clip_kling_stitches_master(
     assert recipes
     first = next(iter(recipes.values()))
     assert first.get("video_url")
+
+
+def test_carousel_share_is_the_photo_slice():
+    assert pick_media_kind(0, 1) == "video"
+    assert pick_media_kind(30, 30) == "carousel"
+    assert pick_media_kind(30, 31) == "video"
+    assert pick_media_kind(100, 100) == "carousel"

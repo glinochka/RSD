@@ -36,17 +36,29 @@ async def publish_to_platform(
     video_id: int,
     account_id: int,
     publisher_state: dict[str, Any] | None = None,
+    image_urls: list[str] | None = None,
 ) -> dict[str, Any]:
+    slides = [url for url in (image_urls or []) if str(url).startswith("http")]
     if sandbox:
+        kind = "карусель" if slides else "ролик"
         return {
             "status": "sandbox",
             "external_id": f"sandbox-{platform}-{video_id}-{account_id}",
             "posted_url": "",
-            "note": "Песочница: в сеть не публиковали.",
+            "note": f"Песочница: {kind} в сеть не публиковали.",
         }
     if platform == "youtube":
+        if slides and not str(video_url or "").strip():
+            raise PublisherError("YouTube: слайд-шоу из кадров не собралось. На сервере нужен ffmpeg.")
         return await _publish_youtube(credentials=credentials, video_url=video_url, title=title, caption=caption)
     if platform == "instagram":
+        if slides:
+            return await _publish_instagram_carousel(
+                credentials=credentials,
+                image_urls=slides,
+                caption=caption,
+                publisher_state=publisher_state or {},
+            )
         return await _publish_instagram(
             credentials=credentials,
             video_url=video_url,
@@ -54,8 +66,12 @@ async def publish_to_platform(
             publisher_state=publisher_state or {},
         )
     if platform == "tiktok":
+        if slides:
+            return await _publish_tiktok_photos(credentials=credentials, image_urls=slides, caption=caption)
         return await _publish_tiktok(credentials=credentials, video_url=video_url, caption=caption)
     if platform == "pinterest":
+        if slides:
+            return await _publish_pinterest_images(credentials=credentials, image_urls=slides, title=title, caption=caption)
         return await _publish_pinterest(credentials=credentials, video_url=video_url, title=title, caption=caption)
     raise PublisherError(f"Неизвестная площадка: {platform}")
 
@@ -176,6 +192,155 @@ async def _publish_instagram(
         "external_id": media_id,
         "posted_url": f"https://www.instagram.com/reel/{media_id}/",
         "publisher_state": {"ig_container_id": container_id, "ig_media_id": media_id},
+    }
+
+
+async def _publish_instagram_carousel(
+    *,
+    credentials: dict[str, Any],
+    image_urls: list[str],
+    caption: str,
+    publisher_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Feed carousel. Instagram Reels cannot be a photo swipe, so this is a regular carousel post."""
+    token = str(credentials.get("access_token") or "").strip()
+    user_id = str(credentials.get("ig_user_id") or credentials.get("external_id") or "").strip()
+    if not token or not user_id:
+        raise PublisherError("Instagram: нужен access_token и ig_user_id")
+    container_id = str((publisher_state or {}).get("ig_container_id") or "").strip()
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        if not container_id:
+            children = []
+            for url in image_urls[:10]:
+                create = await client.post(
+                    f"https://graph.facebook.com/v21.0/{user_id}/media",
+                    data={"image_url": url, "is_carousel_item": "true", "access_token": token},
+                )
+                if not create.is_success:
+                    raise PublisherError(f"Instagram кадр: HTTP {create.status_code} {create.text[:200]}")
+                child = str((create.json() or {}).get("id") or "").strip()
+                if not child:
+                    raise PublisherError("Instagram не вернул кадр карусели")
+                children.append(child)
+            parent = await client.post(
+                f"https://graph.facebook.com/v21.0/{user_id}/media",
+                data={
+                    "media_type": "CAROUSEL",
+                    "children": ",".join(children),
+                    "caption": caption[:2200],
+                    "access_token": token,
+                },
+            )
+            if not parent.is_success:
+                raise PublisherError(f"Instagram карусель: HTTP {parent.status_code} {parent.text[:200]}")
+            container_id = str((parent.json() or {}).get("id") or "").strip()
+            if not container_id:
+                raise PublisherError("Instagram не вернул карусель")
+        status_resp = await client.get(
+            f"https://graph.facebook.com/v21.0/{container_id}",
+            params={"fields": "status_code", "access_token": token},
+        )
+        code = str((status_resp.json() or {}).get("status_code") or "").upper() if status_resp.is_success else ""
+        if code not in {"FINISHED", "PUBLISHED", ""}:
+            return {
+                "status": "processing",
+                "external_id": container_id,
+                "posted_url": "",
+                "publisher_state": {"ig_container_id": container_id},
+                "note": "Instagram собирает карусель. Опубликуем на следующем тике.",
+            }
+        publish = await client.post(
+            f"https://graph.facebook.com/v21.0/{user_id}/media_publish",
+            data={"creation_id": container_id, "access_token": token},
+        )
+        if not publish.is_success:
+            return {
+                "status": "processing",
+                "external_id": container_id,
+                "posted_url": "",
+                "publisher_state": {"ig_container_id": container_id},
+                "note": "Карусель ещё обрабатывается Instagram.",
+            }
+        media_id = str((publish.json() or {}).get("id") or container_id).strip()
+    return {
+        "status": "posted",
+        "external_id": media_id,
+        "posted_url": f"https://www.instagram.com/p/{media_id}/",
+        "publisher_state": {"ig_container_id": container_id, "ig_media_id": media_id},
+        "note": "Это карусель в ленте, не Reels: в Reels фото-листание не публикуется.",
+    }
+
+
+async def _publish_tiktok_photos(*, credentials: dict[str, Any], image_urls: list[str], caption: str) -> dict[str, Any]:
+    token = str(credentials.get("access_token") or "").strip()
+    if not token:
+        raise PublisherError("TikTok: нужен access_token")
+    payload = {
+        "post_info": {"title": caption[:90], "privacy_level": "PUBLIC_TO_EVERYONE", "disable_comment": False},
+        "source_info": {"source": "PULL_FROM_URL", "photo_cover_index": 0, "photo_images": image_urls[:35]},
+        "post_mode": "DIRECT_POST",
+        "media_type": "PHOTO",
+    }
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        response = await client.post(
+            "https://open.tiktokapis.com/v2/post/publish/content/init/",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    if not response.is_success:
+        raise PublisherError(f"TikTok карусель: HTTP {response.status_code} {response.text[:240]}")
+    data = response.json() if response.content else {}
+    inner = data.get("data") if isinstance(data, dict) else {}
+    publish_id = str((inner or {}).get("publish_id") or "").strip()
+    if not publish_id:
+        raise PublisherError("TikTok не вернул publish_id карусели")
+    return {
+        "status": "processing",
+        "external_id": publish_id,
+        "posted_url": "",
+        "note": "TikTok принял фото-карусель.",
+        "publisher_state": {"tiktok_publish_id": publish_id},
+    }
+
+
+async def _publish_pinterest_images(
+    *,
+    credentials: dict[str, Any],
+    image_urls: list[str],
+    title: str,
+    caption: str,
+) -> dict[str, Any]:
+    token = str(credentials.get("access_token") or "").strip()
+    board_id = str(credentials.get("board_id") or "").strip()
+    if not token or not board_id:
+        raise PublisherError("Pinterest: нужен access_token и board_id")
+    if len(image_urls) >= 2:
+        media = {
+            "source_type": "multiple_image_urls",
+            "items": [{"url": url, "title": (title or "Кадр")[:100]} for url in image_urls[:5]],
+        }
+    else:
+        media = {"source_type": "image_url", "url": image_urls[0]}
+    payload = {
+        "board_id": board_id,
+        "title": (title or "Карусель")[:100],
+        "description": caption[:500],
+        "media_source": media,
+    }
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        response = await client.post(
+            "https://api.pinterest.com/v5/pins",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    if not response.is_success:
+        raise PublisherError(f"Pinterest карусель: HTTP {response.status_code} {response.text[:240]}")
+    data = response.json() if response.content else {}
+    pin_id = str((data or {}).get("id") or "").strip()
+    return {
+        "status": "posted",
+        "external_id": pin_id,
+        "posted_url": f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else "",
     }
 
 

@@ -3287,6 +3287,9 @@ class CustomContentFactorySettings(Base):
     script_model: Mapped[str] = mapped_column(String(128), default="deepseek-chat", server_default="deepseek-chat", nullable=False)
     video_model: Mapped[str] = mapped_column(String(128), default="kling", server_default="kling", nullable=False)
     tts_model: Mapped[str] = mapped_column(String(128), default="", server_default="", nullable=False)
+    carousel_share: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    image_provider: Mapped[str] = mapped_column(String(32), default="chatgpt", server_default="chatgpt", nullable=False)
+    image_model: Mapped[str] = mapped_column(String(128), default="gpt-image-2.5-flare", server_default="gpt-image-2.5-flare", nullable=False)
 
     openai_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     anthropic_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -3294,6 +3297,7 @@ class CustomContentFactorySettings(Base):
     runway_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     luma_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     elevenlabs_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    xai_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     warmup_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7", nullable=False)
     warmup_actions_per_day: Mapped[int] = mapped_column(Integer, default=8, server_default="8", nullable=False)

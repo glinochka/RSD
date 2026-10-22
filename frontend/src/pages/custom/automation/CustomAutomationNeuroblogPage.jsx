@@ -23,6 +23,12 @@ const EMPTY = {
   product_name: '',
   product_url: '',
   prompt: '',
+  content_mode: 'write',
+  source_channel: '',
+  signature_enabled: false,
+  signature_text: '',
+  signature_url: '',
+  avatar_from_profile: false,
   text_provider: 'deepseek',
   text_model: 'deepseek-flash',
   image_provider: '',
@@ -136,6 +142,12 @@ const CustomAutomationNeuroblogPage = () => {
         product_name: current.product_name,
         product_url: current.product_url,
         prompt: current.prompt,
+        content_mode: current.content_mode === 'mirror' ? 'mirror' : 'write',
+        source_channel: current.source_channel,
+        signature_enabled: Boolean(current.signature_enabled),
+        signature_text: current.signature_text,
+        signature_url: current.signature_url,
+        avatar_from_profile: Boolean(current.avatar_from_profile),
         text_provider: current.text_provider,
         text_model: current.text_model,
         image_provider: current.image_provider,
@@ -355,10 +367,18 @@ const CustomAutomationNeuroblogPage = () => {
           </label>
           <p className="nc-hint">Это about самого канала. Профиль аккаунта не трогаем: канал виден как личный Telegram-канал.</p>
           <div className="nc-field">
-            <span className="nc-field-label">Аватарка канала</span>
+            <FeatureToggle
+              compact
+              title="Как у профиля"
+              description="Аватарка канала совпадает с фото автора. Свой файл тогда не используется."
+              checked={Boolean(settings.avatar_from_profile)}
+              onChange={(value) => patch({ avatar_from_profile: value })}
+            />
+            <span className="nc-field-label">Своя аватарка</span>
             <CustomFileButton
               variant="ubt"
               accept="image/png,image/jpeg,image/webp"
+              disabled={Boolean(settings.avatar_from_profile)}
               busy={busy}
               fileName={avatarFileName || (settings.avatar_uploaded ? 'Сохранена на сервере' : '')}
               onFile={(file) => {
@@ -396,6 +416,46 @@ const CustomAutomationNeuroblogPage = () => {
             ))}
           </div>
           <p className="nc-hint">Картинка только для кейса и инфографики. Эксперт, блог и размышление уходят текстом.</p>
+        </div>
+      </div>
+
+      <div className="nc-split">
+        <div className="nc-card">
+          <div className="nc-card-head"><h2>Откуда посты</h2></div>
+          <div className="nc-row">
+            <button type="button" className={`nc-chip ${settings.content_mode !== 'mirror' ? 'is-on' : ''}`} onClick={() => patch({ content_mode: 'write' })}>Свои тексты</button>
+            <button type="button" className={`nc-chip ${settings.content_mode === 'mirror' ? 'is-on' : ''}`} onClick={() => patch({ content_mode: 'mirror' })}>Чужой канал</button>
+          </div>
+          {settings.content_mode === 'mirror' ? (
+            <>
+              <label>
+                Канал-источник
+                <input className="nc-input" value={settings.source_channel || ''} onChange={(event) => patch({ source_channel: event.target.value })} placeholder="@channel или https://t.me/channel" />
+              </label>
+              <p className="nc-hint">Берём новые посты, отсекаем жёсткую рекламу и чуть правим формулировки. В нашем канале это обычное сообщение, без пометки «переслано».</p>
+            </>
+          ) : (
+            <p className="nc-hint">Один текст на все выбранные каналы. Абзацы короткие, как в живом Telegram.</p>
+          )}
+        </div>
+        <div className="nc-card">
+          <div className="nc-card-head"><h2>Подпись</h2></div>
+          <FeatureToggle
+            compact
+            title="Подпись в конце поста"
+            description="Нативная строка про продукт. Адрес не виден: ссылка сидит на самих словах."
+            checked={Boolean(settings.signature_enabled)}
+            onChange={(value) => patch({ signature_enabled: value })}
+          />
+          <label>
+            Текст подписи
+            <input className="nc-input" value={settings.signature_text || ''} onChange={(event) => patch({ signature_text: event.target.value })} placeholder="Прокачать SEO сайта можно тут" />
+          </label>
+          <label>
+            Скрытая ссылка
+            <input className="nc-input" value={settings.signature_url || ''} onChange={(event) => patch({ signature_url: event.target.value })} placeholder="https://... если пусто — ссылка на продукт" />
+          </label>
+          <p className="nc-hint">В канале будет текст, черта и эта строка. URL в посте не печатается.</p>
         </div>
       </div>
 

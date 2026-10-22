@@ -113,6 +113,13 @@ def jitter_post_time(moment: datetime, *, avoid_exact_hour: bool) -> datetime:
     return shifted.replace(tzinfo=None) if shifted.tzinfo else shifted
 
 
+def pick_media_kind(carousel_share: int, roll: int) -> str:
+    """roll is 1..100. Share is the percent of posts that should be photo carousels."""
+    share = max(0, min(100, int(carousel_share or 0)))
+    ticket = max(1, min(100, int(roll or 1)))
+    return "carousel" if ticket <= share else "video"
+
+
 def enqueue_interval_hours(videos_per_day: float) -> float:
     per_day = max(0.2, min(float(videos_per_day or 1), 8.0))
     return 24.0 / per_day

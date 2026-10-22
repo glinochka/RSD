@@ -273,7 +273,10 @@ const CustomAutomationContentFactoryResultsPage = () => {
                   <div className="ubt-panel-header">
                     <div>
                       <h3>{video.hook || video.idea || `Ролик #${video.id}`}</h3>
-                      <p>{video.content_format} · {video.visual_style} · {video.duration_seconds}с · {video.aspect_ratio}</p>
+                      <p>
+                        {(video.extra?.media_kind === 'carousel' ? 'Карусель' : 'Видео')}
+                        {' · '}{video.content_format} · {video.visual_style} · {video.duration_seconds}с · {video.aspect_ratio}
+                      </p>
                     </div>
                     <span className={`cf-tag${video.status === 'failed' ? ' cf-tag--danger' : ['posted', 'sandbox'].includes(video.status) ? ' cf-tag--ok' : ''}`}>
                       {CF_STATUS[video.status] || video.status}

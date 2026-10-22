@@ -37,6 +37,7 @@ from .content_factory_antifraud import (
     is_due,
     jitter_post_time,
     now_utc,
+    pick_media_kind,
     pick_warmup_action,
     should_clear_shadowban,
     should_flag_shadowban,
@@ -49,9 +50,11 @@ from .content_factory_media import (
     clip_prompt,
     concat_clips,
     download_to_file,
+    generate_slide_png,
     local_path_from_url,
     plan_clip_durations,
     public_media_url,
+    slides_to_mp4,
     uniqualize_file,
     video_dir,
     write_thumbnail,
@@ -169,6 +172,7 @@ async def _enqueue_if_due(
     formats = list(settings.content_formats or ["educational"])
     styles = list(settings.visual_styles or ["realism"])
     duration = random.randint(int(settings.duration_min or 30), max(int(settings.duration_min or 30), int(settings.duration_max or 45)))
+    media_kind = pick_media_kind(int(getattr(settings, "carousel_share", 0) or 0), random.randint(1, 100))
     video = CustomContentFactoryVideo(
         custom_automation_id=automation_id,
         status="queued",
@@ -180,7 +184,7 @@ async def _enqueue_if_due(
         hashtags=[],
         storyboard=[],
         uniqualization={},
-        extra={},
+        extra={"media_kind": media_kind},
         created_at=now_utc(),
         updated_at=now_utc(),
     )
@@ -226,7 +230,10 @@ async def _advance_video(
         elif video.status in {"ideating", "scripting"}:
             await _write_idea_and_script(session, video, settings)
         elif video.status == "rendering":
-            await _render_video(session, video, settings)
+            if str((video.extra or {}).get("media_kind") or "") == "carousel":
+                await _render_carousel(session, video, settings)
+            else:
+                await _render_video(session, video, settings)
         elif video.status == "uniqualizing":
             await _uniqualize(session, video, settings)
         elif video.status in {"ready", "posting"}:
@@ -308,9 +315,14 @@ async def _generate_pack(
 ) -> dict[str, Any]:
     fallback = _fallback_pack(settings, video, used_hooks)
     prompt = _authoring_prompt(settings, video, used_hooks)
+    carousel = str((video.extra or {}).get("media_kind") or "") == "carousel"
     completion = await _llm_json(
         settings,
-        system_prompt="Ты сценарист коротких вертикальных роликов 30-60 секунд. Верни только JSON.",
+        system_prompt=(
+            "Ты автор фото-каруселей для TikTok, Pinterest и Instagram. Верни только JSON."
+            if carousel
+            else "Ты сценарист коротких вертикальных роликов 30-60 секунд. Верни только JSON."
+        ),
         user_prompt=prompt,
         model=settings.script_model or settings.idea_model,
     )
@@ -329,6 +341,23 @@ async def _generate_pack(
 
 
 def _authoring_prompt(settings: CustomContentFactorySettings, video: CustomContentFactoryVideo, used_hooks: list[str]) -> str:
+    if str((video.extra or {}).get("media_kind") or "") == "carousel":
+        return (
+            f"Продукт: {settings.product_name or 'сервис'}\n"
+            f"Описание: {settings.product_description}\n"
+            f"Аудитория: {settings.audience}\n"
+            f"Ниша: {settings.niche}\n"
+            f"Формат: {video.content_format}; стиль: {video.visual_style}; язык: {settings.language}\n"
+            f"Тон: {settings.tone}. Голос бренда: {settings.brand_voice}\n"
+            f"Нельзя: {settings.forbidden_topics or 'кликбейт про гарантии дохода'}\n"
+            "Это фото-карусель на 5 кадров 9:16. Человек листает сам в TikTok, Pinterest и Instagram. "
+            "YouTube получит те же кадры как короткое видео, где кадры сменяются сами.\n"
+            "Каждый кадр — одна мысль, крупный объект, без мелкого текста на картинке.\n"
+            f"Не повторяй хуки: {used_hooks[:8]}\n"
+            "JSON поля: idea, hook, script, caption, hashtags (массив), storyboard "
+            "(ровно 5 объектов {visual, voiceover}), content_format, visual_style. "
+            "visual — промпт картинки на английском. voiceover — короткая подпись кадра."
+        )
     durations = plan_clip_durations(int(video.duration_seconds or 30))
     starts = []
     cursor = 0
@@ -536,6 +565,76 @@ async def _stitch_clips(video: CustomContentFactoryVideo) -> None:
     if thumb:
         video.thumbnail_url = public_media_url(thumb)
     video.render_task_id = None
+
+
+def _carousel_key(settings: CustomContentFactorySettings) -> tuple[str, str, str]:
+    provider = str(getattr(settings, "image_provider", "") or "chatgpt").strip().lower()
+    if provider not in {"chatgpt", "grok"}:
+        provider = "chatgpt"
+    model = str(getattr(settings, "image_model", "") or "").strip()
+    if provider == "grok":
+        key = decrypted_secret(settings, "xai_api_key") if hasattr(settings, "xai_api_key_enc") else ""
+        key = key or (getattr(app_settings, "XAI_API_KEY", "") or "").strip()
+        return provider, model or "grok-imagine-image-2.0", key
+    key = decrypted_secret(settings, "openai_api_key") or (app_settings.OPENAI_API_KEY or "").strip()
+    return provider, model or "gpt-image-2.5-flare", key
+
+
+async def _render_carousel(
+    session: AsyncSession,
+    video: CustomContentFactoryVideo,
+    settings: CustomContentFactorySettings,
+) -> None:
+    provider, model, api_key = _carousel_key(settings)
+    if not api_key:
+        raise RuntimeError("Для фото-карусели нужен API-ключ ChatGPT или Grok")
+    slides = [item for item in (video.storyboard or []) if isinstance(item, dict)][:6]
+    if len(slides) < 2:
+        slides = [
+            {"visual": f"Vertical editorial photo about {settings.product_name or 'the product'}, frame {index + 1}, no text", "voiceover": ""}
+            for index in range(5)
+        ]
+    folder = video_dir(video.custom_automation_id, video.id)
+    paths: list[Path] = []
+    urls: list[str] = []
+    for index, slide in enumerate(slides):
+        prompt = str(slide.get("visual") or slide.get("voiceover") or settings.product_name or "editorial photo")
+        dest = folder / f"slide-{index:02d}.png"
+        await generate_slide_png(provider=provider, model=model, api_key=api_key, prompt=prompt, dest=dest)
+        paths.append(dest)
+        urls.append(public_media_url(dest))
+    extra = dict(video.extra or {})
+    extra["media_kind"] = "carousel"
+    extra["slide_urls"] = urls
+    extra["slides_done"] = len(urls)
+    extra["note"] = (
+        f"Карусель из {len(urls)} кадров ({provider}). "
+        "TikTok, Pinterest и Instagram листаются руками. YouTube получает автоматическое слайд-шоу."
+    )
+    extra["awaiting_kling"] = False
+    show = folder / "slideshow.mp4"
+    try:
+        slides_to_mp4(paths, show, seconds=2.4)
+        video.video_url = public_media_url(show)
+        thumb = write_thumbnail(show, folder / "thumb.jpg")
+        if thumb:
+            video.thumbnail_url = public_media_url(thumb)
+    except Exception as exc:
+        extra["slideshow_error"] = str(exc)[:300]
+        video.video_url = None
+    video.extra = extra
+    video.status = "uniqualizing"
+    await record_token_usage(
+        session,
+        automation_id=video.custom_automation_id,
+        video_id=video.id,
+        provider=provider,
+        model=model,
+        operation="carousel",
+        prompt_tokens=0,
+        completion_tokens=0,
+        cost_usd=0.04 * len(paths),
+    )
 
 
 async def _render_video(
@@ -833,6 +932,9 @@ async def _post_video(
                 video_id=video.id,
                 account_id=account.id,
                 publisher_state=publisher_state,
+                image_urls=list((video.extra or {}).get("slide_urls") or [])
+                if str((video.extra or {}).get("media_kind") or "") == "carousel"
+                else None,
             )
         except PublisherError as exc:
             post.status = "failed"

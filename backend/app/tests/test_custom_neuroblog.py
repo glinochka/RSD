@@ -5,7 +5,9 @@ from pathlib import Path
 
 from app.services.custom.neuroblog_service import (
     bio_mentions_channel,
+    compose_signed_message,
     default_neuroblog_settings,
+    format_telegram_body,
     due_slot,
     image_needed,
     infer_image_provider,
@@ -48,6 +50,29 @@ def test_slots_are_sorted_and_due_only_after_their_time():
     assert due_slot(slots, 0, now=datetime(2026, 10, 21, 3, 0)) is False
     assert due_slot(slots, 0, now=datetime(2026, 10, 21, 20, 0)) is True
     assert due_slot(slots, 3, now=datetime(2026, 10, 21, 20, 0)) is False
+
+
+def test_telegram_body_keeps_paragraphs_and_splits_a_wall():
+    spaced = format_telegram_body("Первая мысль.\n\nВторая мысль.")
+    assert "\n\n" in spaced
+    wall = format_telegram_body(
+        "Это первая мысль про отчёт и про то, как его читают с телефона. "
+        "Это вторая мысль про цифры, которые нельзя прятать в середине абзаца. "
+        "Это третья мысль про вывод, который должен стоять отдельно."
+    )
+    assert "\n\n" in wall
+
+
+def test_signature_hides_the_url_on_the_words():
+    text, entities = compose_signed_message(
+        "Короткий пост.",
+        {"signature_enabled": True, "signature_text": "Прокачать SEO можно тут", "signature_url": "https://example.com"},
+    )
+    assert "https://example.com" not in text
+    assert "Прокачать SEO можно тут" in text
+    assert "———" in text
+    assert entities and entities[0].url == "https://example.com"
+    assert text.endswith("Прокачать SEO можно тут")
 
 
 def test_legacy_deepseek_model_keeps_provider():
