@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -178,7 +178,7 @@ async def queue_listened_comment(
     post_text: str,
     posted_at: datetime | None,
 ) -> dict[str, Any]:
-    from .account_pacing import account_is_resting, account_may_do_work, farm_overlap_active_hours
+    from .account_pacing import account_may_do_work, farm_overlap_active_hours
     from .chat_membership_service import account_is_joined
     from .job_service import actor_label, chat_label, load_active_job_params, log_active
     from .module_delays import format_delay_ru
@@ -187,14 +187,18 @@ async def queue_listened_comment(
         POST_COMMENT_DELAY_MIN_SECONDS,
         _already_commented,
         _as_int_list,
+        _count_chat_comments_today,
         _delay_bounds,
         _word_count,
+        chat_comment_daily_limit,
+        comment_ready_at,
     )
     from .account_restriction import restriction_blocks_action
     from .pending_action_service import (
+        COMMENT_QUEUE_PER_ACCOUNT,
         enqueue_pending_action,
         has_pending_action,
-        has_pending_comment_for_account,
+        pending_comment_count,
     )
     from .post_engagement import post_target_id
     from .task_dedup import account_owns_chat
@@ -211,9 +215,7 @@ async def queue_listened_comment(
         return {"status": "skipped", "reason": "no_account"}
     if restriction_blocks_action(account, "neurocommenting") or not account_may_do_work(account):
         return {"status": "skipped", "reason": "restricted"}
-    if account_is_resting(account):
-        return {"status": "skipped", "reason": "resting"}
-    if await has_pending_comment_for_account(session, automation_id, account_id):
+    if await pending_comment_count(session, automation_id, account_id) >= COMMENT_QUEUE_PER_ACCOUNT:
         return {"status": "skipped", "reason": "account_busy"}
     chat = await _find_task_chat(session, automation_id, chat_id=chat_id, username=username)
     if chat is None:
@@ -264,14 +266,19 @@ async def queue_listened_comment(
         return {"status": "skipped", "reason": "already_commented"}
     if await has_pending_action(session, automation_id, "neurocommenting", target):
         return {"status": "skipped", "reason": "already_queued"}
+    per_chat = chat_comment_daily_limit({"max_per_day": cfg.get("max_per_chat")})
+    if await _count_chat_comments_today(session, automation_id, chat.id) >= per_chat:
+        return {"status": "skipped", "reason": "chat_daily_limit"}
     delay_min, delay_max = _delay_bounds(cfg)
     if delay_min <= 0:
         delay_min, delay_max = float(POST_COMMENT_DELAY_MIN_SECONDS), float(POST_COMMENT_DELAY_MAX_SECONDS)
     wait = random.uniform(delay_min, delay_max)
     posted = posted_at or _utc_now()
-    age = (_utc_now() - posted).total_seconds()
-    remaining = max(0.0, wait - age)
-    delay_until = posted + timedelta(seconds=wait)
+    rest_until = getattr(account, "next_action_at", None)
+    if rest_until is not None and rest_until <= _utc_now():
+        rest_until = None
+    delay_until = comment_ready_at(posted_at=posted, wait_seconds=wait, rest_until=rest_until)
+    remaining = max(0.0, (delay_until - _utc_now()).total_seconds())
     try:
         prompt_id = int(cfg["prompt_id"]) if cfg.get("prompt_id") else None
     except (TypeError, ValueError):
@@ -285,8 +292,8 @@ async def queue_listened_comment(
         target_id=target,
         payload={"post_id": post_id, "post_text": (post_text or "")[:500], "prompt_id": prompt_id},
     )
-    if not pending:
-        return {"status": "skipped", "reason": "queue_failed"}
+    if not pending or pending.status == "done":
+        return {"status": "skipped", "reason": "queue_failed" if not pending else "already_queued"}
     if remaining > 1:
         pending.next_attempt_at = delay_until
     await session.commit()

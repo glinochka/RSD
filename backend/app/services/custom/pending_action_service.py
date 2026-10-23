@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,11 @@ PENDING = PendingChatActionStatus.PENDING.value
 DONE = PendingChatActionStatus.DONE.value
 FAILED = PendingChatActionStatus.FAILED.value
 COMMENT_SEND_SECONDS = 50
-COMMENT_FLUSH_SECONDS = 120
+COMMENT_FLUSH_SECONDS = 200
+# One in-flight comment used to occupy the account: every later post was dropped
+# until that row finally sent. Keep a short queue; the 40–60 min action gap
+# still sends them one at a time.
+COMMENT_QUEUE_PER_ACCOUNT = 6
 
 
 def _utc_now() -> datetime:
@@ -89,6 +93,8 @@ _PENDING_FAIL_RU = {
     "account_cannot_write": "аккаунт не может писать",
     "no_session": "нет файла сессии",
     "join_request": "ждёт одобрения в чат комментариев",
+    "chat_daily_limit": "на этот канал уже хватит комментариев сегодня",
+    "chat_daily_target_limit": "на этот канал уже хватит комментариев сегодня",
 }
 
 
@@ -167,15 +173,23 @@ async def has_pending_comment_for_account(
     automation_id: int,
     account_id: int,
 ) -> bool:
-    found = await session.scalar(
-        select(PendingChatAction.id).where(
+    return await pending_comment_count(session, automation_id, account_id) > 0
+
+
+async def pending_comment_count(
+    session: AsyncSession,
+    automation_id: int,
+    account_id: int,
+) -> int:
+    count = await session.scalar(
+        select(func.count(PendingChatAction.id)).where(
             PendingChatAction.custom_automation_id == automation_id,
             PendingChatAction.social_account_id == account_id,
             PendingChatAction.action_type == "neurocommenting",
             PendingChatAction.status == PENDING,
-        ).limit(1)
+        )
     )
-    return found is not None
+    return int(count or 0)
 
 
 async def enqueue_pending_action(
@@ -494,11 +508,12 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
         action.next_attempt_at = None
         await session.commit()
         return True
-    action.last_error = action.last_error or "not_ready"
-    if action.attempts >= 5:
-        action.status = FAILED
-    else:
-        _defer_pending(action)
+    if action.status != FAILED:
+        action.last_error = action.last_error or "not_ready"
+        if action.attempts >= 5:
+            action.status = FAILED
+        else:
+            _defer_pending(action)
     await session.commit()
     if action.action_type == "neurocommenting" and (
         action.attempts <= 1 or action.status == FAILED
@@ -555,11 +570,20 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
                 return False
             account = writer
             action.social_account_id = writer.id
+        from .job_service import load_active_job_params
+        from .neurocommenting_service import _count_chat_comments_today, chat_comment_daily_limit
+
+        cfg = await load_active_job_params(session, action.custom_automation_id, "neurocommenting") or {}
+        per_chat = chat_comment_daily_limit({"max_per_day": cfg.get("max_per_chat")})
+        sent_in_chat = await _count_chat_comments_today(session, action.custom_automation_id, chat.id)
+        if sent_in_chat >= per_chat:
+            action.last_error = "chat_daily_limit"
+            action.status = FAILED
+            return False
         daily_cap = int(getattr(chat, "max_daily_target_actions", 3) or 3)
         if await count_target_actions_today(session, action.custom_automation_id, chat.id) >= daily_cap:
             action.last_error = "chat_daily_target_limit"
-            from .account_pacing import next_target_wake_at
-            _defer_pending(action, until=next_target_wake_at(account=account))
+            action.status = FAILED
             return False
         # Drop the pending-row lock before Telegram / DeepSeek. Two loops
         # (join + sessions) otherwise wait on each other for hours.
@@ -602,11 +626,9 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             if send_error in {"no_discussion", "comments_closed", "discussion_private"}:
                 action.status = FAILED
             return False
-        from .job_service import load_active_job_params
         from .module_delays import action_gap_seconds
         from .account_pacing import schedule_account_target_rest
 
-        cfg = await load_active_job_params(session, action.custom_automation_id, "neurocommenting") or {}
         schedule_account_target_rest(account, seconds=action_gap_seconds(cfg))
         return True
     if action.action_type == "shilling_post":

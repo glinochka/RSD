@@ -480,6 +480,23 @@ def test_neurocommenting_can_sanitize_generated_text():
     assert sanitize_public_text("ок, согласен") == "ок, согласен"
 
 
+def test_comment_ready_at_keeps_the_action_gap():
+    from datetime import datetime, timedelta
+
+    from app.services.custom.neurocommenting_service import comment_ready_at
+    from app.services.custom.pending_action_service import COMMENT_QUEUE_PER_ACCOUNT
+
+    posted = datetime(2026, 10, 22, 8, 0, 0)
+    rest = posted + timedelta(minutes=50)
+    assert comment_ready_at(posted_at=posted, wait_seconds=11 * 60, rest_until=rest) == rest
+    assert comment_ready_at(
+        posted_at=posted,
+        wait_seconds=11 * 60,
+        rest_until=posted + timedelta(minutes=5),
+    ) == posted + timedelta(minutes=11)
+    assert COMMENT_QUEUE_PER_ACCOUNT > 1
+
+
 def test_channel_post_listener_peer_keys_and_post_filter():
     from types import SimpleNamespace
 

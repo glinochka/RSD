@@ -331,24 +331,14 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
                 continue
             gated.append((name, fn))
         streams = gated
-        sync = await hub.sync(accounts)
-        try:
-            from .account_session_guard_service import maybe_guard_hub_clients
-
-            guard = await maybe_guard_hub_clients(hub)
-            sync = {**sync, "guard": guard}
-        except Exception as guard_exc:
-            logger.debug("Session guard tick skipped: %s", guard_exc)
-        join_fn = next((fn for name, fn in streams if name == "join"), None)
-        work = [(name, fn) for name, fn in streams if name != "join"]
-        if not hub.clients and not join_fn and not work:
-            return {"status": "sleeping", **sync}
+        # Send due comments before opening sessions. A hung connect used to sit
+        # in front of this flush, so a comment promised in 10 minutes left hours later.
         comment_flush = 0
         try:
             from .pending_action_service import COMMENT_FLUSH_SECONDS, flush_due_comments
 
             comment_flush = await asyncio.wait_for(
-                flush_due_comments(automation_id, limit=3),
+                flush_due_comments(automation_id, limit=4),
                 timeout=COMMENT_FLUSH_SECONDS,
             )
             if comment_flush:
@@ -363,6 +353,22 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             logger.warning("Due comment flush timed out for automation %s", automation_id)
         except Exception as flush_exc:
             logger.warning("Due comment flush failed for automation %s: %s", automation_id, flush_exc)
+        try:
+            sync = await asyncio.wait_for(hub.sync(accounts), timeout=75)
+        except TimeoutError:
+            logger.warning("Account session sync timed out for automation %s", automation_id)
+            sync = {"opened": 0, "closed": 0, "live": len(hub.clients), "status": "timeout"}
+        try:
+            from .account_session_guard_service import maybe_guard_hub_clients
+
+            guard = await maybe_guard_hub_clients(hub)
+            sync = {**sync, "guard": guard}
+        except Exception as guard_exc:
+            logger.debug("Session guard tick skipped: %s", guard_exc)
+        join_fn = next((fn for name, fn in streams if name == "join"), None)
+        work = [(name, fn) for name, fn in streams if name != "join"]
+        if not hub.clients and not join_fn and not work:
+            return {"status": "sleeping", "comment_flush": comment_flush, **sync}
         join_result = None
         if join_fn:
             try:

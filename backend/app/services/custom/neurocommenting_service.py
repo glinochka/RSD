@@ -276,6 +276,22 @@ def _as_int_list(raw: Any) -> list[int]:
     return items
 
 
+def comment_ready_at(
+    *,
+    posted_at: datetime,
+    wait_seconds: float,
+    rest_until: datetime | None,
+) -> datetime:
+    """Antibot pause after the post, then the account's action gap if it is later.
+
+    A comment queued during the 40–60 min rest must wait that rest out, not be dropped.
+    """
+    ready = posted_at + timedelta(seconds=max(0.0, float(wait_seconds)))
+    if rest_until is not None and rest_until > ready:
+        return rest_until
+    return ready
+
+
 def _delay_bounds(run_config: dict[str, Any] | None) -> tuple[float, float]:
     from .module_delays import clamp_action_delay_pair
 
@@ -701,6 +717,38 @@ async def process_chat_target(
         ):
             continue
         if not lab_mode and account_is_resting(actor):
+            from .pending_action_service import COMMENT_QUEUE_PER_ACCOUNT, pending_comment_count
+
+            if await pending_comment_count(session, automation_id, actor.id) < COMMENT_QUEUE_PER_ACCOUNT:
+                posted_at = _message_posted_at(post) or _utc_now()
+                wait = random.uniform(delay_min, delay_max)
+                ready = comment_ready_at(
+                    posted_at=posted_at,
+                    wait_seconds=wait,
+                    rest_until=getattr(actor, "next_action_at", None),
+                )
+                pending = await enqueue_pending_action(
+                    session,
+                    automation_id=automation_id,
+                    chat_target=chat_target,
+                    account=actor,
+                    action_type="neurocommenting",
+                    target_id=post_target_id(chat_target.id, post.id),
+                    payload={"post_id": post.id, "post_text": (post.text or "")[:500], "prompt_id": prompt_id},
+                )
+                if pending and pending.status != "done":
+                    pending.next_attempt_at = ready
+                    await session.commit()
+                    from .job_service import actor_label, chat_label, log_active
+
+                    remaining = max(0.0, (ready - _utc_now()).total_seconds())
+                    await log_active(
+                        automation_id,
+                        "neurocommenting",
+                        f"{actor_label(actor)} отложил комментарий в {chat_label(chat_target)} "
+                        f"на {format_delay_ru(remaining)} — пауза между действиями",
+                    )
+                    deferred += 1
             continue
         pool = await session.scalar(
             select(PoolAccount).where(
