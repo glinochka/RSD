@@ -1004,6 +1004,29 @@ async def resume_job(session: AsyncSession, automation_id: int, job_id: str) -> 
     return serialize_custom(job)
 
 
+async def mirror_include_joined(session: AsyncSession, automation_id: int, job_type: str, enabled: bool) -> None:
+    """Keep the running task card in step with the module toggle."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    job = await session.scalar(
+        select(CustomJob)
+        .where(
+            CustomJob.custom_automation_id == automation_id,
+            CustomJob.job_type == job_type,
+            CustomJob.status.in_(tuple(VISIBLE_ACTIVE_STATUSES)),
+        )
+        .order_by(CustomJob.id.desc())
+        .limit(1)
+    )
+    if job is None:
+        return
+    params = dict(job.params or {})
+    params["include_joined"] = bool(enabled)
+    job.params = params
+    flag_modified(job, "params")
+    job.updated_at = _utc_now()
+
+
 async def update_job(
     session: AsyncSession,
     automation_id: int,

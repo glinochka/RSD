@@ -424,6 +424,12 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_PROMPT: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}`,
   CUSTOM_AUTOMATION_PROMPT_TOGGLE: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}/toggle`,
   CUSTOM_AUTOMATION_PROMPT_TEST: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}/test`,
+  CUSTOM_AUTOMATION_PROMPT_REVISE: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}/revise`,
+  CUSTOM_AUTOMATION_SKILLBASE: (id) => `/api/custom/automations/${id}/skillbase`,
+  CUSTOM_AUTOMATION_SKILLBASE_GENERATE: (id) => `/api/custom/automations/${id}/skillbase/generate`,
+  CUSTOM_AUTOMATION_SKILLBASE_FILES: (id) => `/api/custom/automations/${id}/skillbase/files`,
+  CUSTOM_AUTOMATION_SKILLBASE_NEUROBLOG: (id) => `/api/custom/automations/${id}/skillbase/neuroblog`,
+  CUSTOM_AUTOMATION_SKILLBASE_NEUROBLOG_REVISE: (id) => `/api/custom/automations/${id}/skillbase/neuroblog/revise`,
   CUSTOM_AUTOMATION_CHAT_NEUROCOMMENTING_CONFIG: (id, chatId) =>
     `/api/custom/automations/${id}/chats/${chatId}/neurocommenting-config`,
   CUSTOM_AUTOMATION_CHAT_NEUROCOMMENTING_RUN: (id) => `/api/custom/automations/${id}/chats/neurocommenting`,

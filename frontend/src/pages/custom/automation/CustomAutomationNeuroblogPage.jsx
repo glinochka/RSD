@@ -17,7 +17,7 @@ const EMPTY = {
   account_ids: [],
   channel_title: 'Заметки',
   channel_about: 'Личные заметки о работе.',
-  style: 'живой разговорный, от первого лица, без канцелярита',
+  style: 'живая проза от первого лица: злость, чёрный юмор и сатира по делу, мат если звучит как речь',
   posts_per_day: 2,
   themes: ['expert', 'case', 'blog', 'reflection', 'infographic'],
   product_name: '',
@@ -556,7 +556,7 @@ const CustomAutomationNeuroblogPage = () => {
         </div>
         <label>
           Промпт
-          <textarea className="nc-area" rows={5} value={settings.prompt || ''} onChange={(event) => patch({ prompt: event.target.value })} placeholder="Что важно держать в голове автору: тон, табу, факты" />
+          <textarea className="nc-area" rows={5} value={settings.prompt || ''} onChange={(event) => patch({ prompt: event.target.value })} placeholder="Ниша, какие новости обыгрывать, чего не обещать. Тон и повод система уже требует сама." />
         </label>
       </div>
 

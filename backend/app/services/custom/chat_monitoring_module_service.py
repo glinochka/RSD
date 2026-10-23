@@ -46,6 +46,7 @@ DEFAULT_CM_SETTINGS: dict[str, Any] = {
     "prompt_id": None,
     "require_proxy": False,
     "hide_in_work": False,
+    "include_joined": False,
     "presets": [],
 }
 
@@ -89,6 +90,7 @@ def normalize_cm_settings(raw: Any) -> dict[str, Any]:
         data["prompt_id"] = None
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
+    data["include_joined"] = bool(incoming.get("include_joined"))
     presets = []
     for item in incoming.get("presets") or []:
         if not isinstance(item, dict):
@@ -325,6 +327,9 @@ async def save_chat_monitoring_module(
             chat.mode = "monitoring"
             chat.is_active = True
             chat.updated_at = _utc_now()
+    from .job_service import mirror_include_joined
+
+    await mirror_include_joined(session, automation_id, "chat_monitoring", settings["include_joined"])
     await session.commit()
     return await get_chat_monitoring_module(session, automation_id)
 

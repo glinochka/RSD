@@ -164,7 +164,7 @@ def default_neuroblog_settings() -> dict[str, Any]:
         "account_ids": [],
         "channel_title": "Заметки",
         "channel_about": "Личные заметки о работе.",
-        "style": "живой разговорный, от первого лица, без канцелярита",
+        "style": "живая проза от первого лица: злость, чёрный юмор и сатира по делу, мат если звучит как речь",
         "posts_per_day": 2,
         "themes": list(THEMES),
         "product_name": "",
@@ -881,7 +881,7 @@ async def _complete_text(cfg: dict[str, Any], prompt: str) -> str:
                 },
                 json={
                     "model": model,
-                    "max_tokens": 900,
+                    "max_tokens": 1400,
                     "messages": [{"role": "user", "content": prompt}],
                 },
             )
@@ -896,8 +896,8 @@ async def _complete_text(cfg: dict[str, Any], prompt: str) -> str:
     result = await client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=900,
-        temperature=0.8,
+        max_tokens=1400,
+        temperature=0.9,
     )
     return result.choices[0].message.content or ""
 
@@ -967,31 +967,39 @@ async def _mirror_draft(cfg: dict[str, Any], account: SocialAccount, automation_
     return {"theme": "mirror", "text": text, "needs_image": False, "image_prompt": "", "image_path": image_path}
 
 
-async def _generate_draft(cfg: dict[str, Any]) -> dict[str, Any]:
+def draft_instructions(cfg: dict[str, Any]) -> str:
+    from .creative_voice import LIVING_VOICE, NEWS_PEG, SATIRE_SHOT
+
     previous = [
         f"{index + 1}. [{item.get('theme')}] {item.get('text')}"
         for index, item in enumerate((cfg.get("posts") or [])[-6:])
     ]
     themes = ", ".join(THEME_LABELS.get(item, item) for item in cfg.get("themes") or THEMES)
-    instructions = f"""
-Сгенерируй один пост для личного Telegram-канала.
-Стилистика: {cfg.get("style") or "живой текст"}.
-Допустимые темы: {themes}. Выбери одну.
-Продукт упоминай нативно и редко, только если уместно: {cfg.get("product_name") or "не задан"}.
-Ссылка на продукт, если упоминаешь: {cfg.get("product_url") or "нет"}. В тексте ссылку не пиши голым URL, если можно обойтись словами.
+    return f"""
+Напиши один пост для личного Telegram-канала. Это не карточка услуги и не экспертный обзор из вакуума.
+Стилистика автора: {cfg.get("style") or "живая проза"}.
+{LIVING_VOICE}
+{NEWS_PEG}
+Допустимые темы: {themes}. Выбери одну и повесь её на повод.
+Продукт называй редко и только если он естественно встаёт в рассуждение: {cfg.get("product_name") or "не задан"}.
+Ссылка, если упоминаешь: {cfg.get("product_url") or "нет"}. Голый URL не вставляй.
 Дополнительные указания: {cfg.get("prompt") or "нет"}.
-Предыдущие посты, можно сослаться если уместно:
+Предыдущие посты, не повторяй повод и первую строку:
 {chr(10).join(previous) or "пока нет"}
-Как писать: это сообщение в Telegram, его читают с телефона.
-- 2–5 коротких абзацев, между ними пустая строка.
-- Один абзац — одна мысль, до 2–3 предложений.
-- Можно короткий список, каждый пункт с новой строки.
-- Без канцелярита, без полотна на весь экран, без markdown-звёздочек.
-- Первая строка цепляет, последняя закрывает мысль. Подпись в конце не добавляй — её поставит система.
-Картинка нужна только для кейса или инфографики (график, схема, цифры). Для блога и размышлений needs_image=false.
-Ответ строго JSON. В поле text сохрани переносы строк как \\n.
+Форма: сообщение в Telegram, читают с телефона.
+- 2–5 абзацев, между ними пустая строка. Один абзац — одна мысль.
+- Первая строка — уже про повод, не про «сегодня поговорим».
+- Последняя закрывает мысль. Подпись не добавляй.
+- Без markdown.
+Картинка только для кейса или инфографики. Для блога и размышления needs_image=false.
+Если картинка нужна, image_prompt — один кадр на английском. {SATIRE_SHOT}
+Ответ строго JSON. В text переносы как \\n.
 {{"theme":"expert|case|blog|reflection|infographic","text":"...","needs_image":false,"image_prompt":""}}
 """.strip()
+
+
+async def _generate_draft(cfg: dict[str, Any]) -> dict[str, Any]:
+    instructions = draft_instructions(cfg)
     draft = parse_post_draft(await _complete_text(cfg, instructions))
     allowed = [item for item in (cfg.get("themes") or []) if item in THEMES]
     if len(allowed) == 1:
@@ -1000,7 +1008,10 @@ async def _generate_draft(cfg: dict[str, Any]) -> dict[str, Any]:
     if not draft["needs_image"]:
         draft["image_prompt"] = ""
     elif not draft.get("image_prompt"):
-        draft["image_prompt"] = f"Clean editorial illustration, no text, for a short post: {draft['text'][:240]}"
+        draft["image_prompt"] = (
+            "Photoreal single shot, no text and no logos: the ordinary object from this post "
+            f"doing the absurd version of the news. {draft['text'][:220]}"
+        )
     return draft
 
 

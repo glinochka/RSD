@@ -53,6 +53,7 @@ DEFAULT_SHILL_SETTINGS: dict[str, Any] = {
     "skip_fresh": True,
     "require_proxy": False,
     "hide_in_work": False,
+    "include_joined": False,
     "delay_min": int(REPLY_DELAY_MIN_SECONDS),
     "delay_max": int(REPLY_DELAY_MAX_SECONDS),
     "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
@@ -110,6 +111,7 @@ def normalize_shill_settings(raw: Any) -> dict[str, Any]:
     data["skip_fresh"] = bool(incoming.get("skip_fresh", True))
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
+    data["include_joined"] = bool(incoming.get("include_joined"))
     data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else int(REPLY_DELAY_MIN_SECONDS), int(REPLY_DELAY_MIN_SECONDS), lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_max"] = max(data["delay_min"], _clamp_int(incoming.get("delay_max") if incoming.get("delay_max") is not None else int(REPLY_DELAY_MAX_SECONDS), int(REPLY_DELAY_MAX_SECONDS), lo=0, hi=DELAY_MAX_SECONDS))
     data["join_delay_min"], data["join_delay_max"] = clamp_join_delay_pair(incoming)
@@ -335,6 +337,9 @@ async def save_neuroshilling_module(session: AsyncSession, automation_id: int, p
     blob["neuroshilling"] = settings
     automation.module_settings = blob
     automation.updated_at = _utc_now()
+    from .job_service import mirror_include_joined
+
+    await mirror_include_joined(session, automation_id, "shilling", settings["include_joined"])
     await session.commit()
     return await get_neuroshilling_module(session, automation_id)
 

@@ -66,6 +66,7 @@ DEFAULT_BC_SETTINGS: dict[str, Any] = {
     "end_at": "",
     "require_proxy": False,
     "hide_in_work": False,
+    "include_joined": False,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
     "reserve_chat_ids": [],
@@ -162,6 +163,7 @@ def normalize_bc_settings(raw: Any) -> dict[str, Any]:
     data["end_at"] = str(incoming.get("end_at") or "").strip()[:32]
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
+    data["include_joined"] = bool(incoming.get("include_joined"))
     presets = []
     for item in incoming.get("presets") or []:
         if not isinstance(item, dict):
@@ -319,6 +321,9 @@ async def save_chat_broadcast_module(session: AsyncSession, automation_id: int, 
     blob["chat_broadcasts"] = settings
     automation.module_settings = blob
     automation.updated_at = _utc_now()
+    from .job_service import mirror_include_joined
+
+    await mirror_include_joined(session, automation_id, "chat_broadcast", settings["include_joined"])
     await session.commit()
     return await get_chat_broadcast_module(session, automation_id)
 

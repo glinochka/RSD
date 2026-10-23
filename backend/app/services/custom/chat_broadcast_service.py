@@ -282,9 +282,10 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
 
 
 async def _target_chats(session: AsyncSession, automation_id: int, cfg: dict[str, Any], accounts: list[SocialAccount]) -> list[ChatTarget]:
-    from .task_targets import resolve_task_chat_ids
+    from .task_targets import load_work_pool
 
-    pool_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="chat_broadcasts"))
+    work_pool = await load_work_pool(session, automation_id, cfg, task_key="chat_broadcasts")
+    pool_ids = work_pool.chat_ids if work_pool.active else set()
     if not accounts:
         return []
     joined_ids = set(

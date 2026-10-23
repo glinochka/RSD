@@ -334,9 +334,10 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
         if bool(cfg.get("respect_night_hours", True)) and not farm_overlap_active_hours():
             return {"status": "skipped", "reason": "night", "views": 0}
         targets = normalize_story_targets(cfg.get("targets"))
-        from .task_targets import resolve_task_chat_ids
+        from .task_targets import load_work_pool
 
-        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="masslooking"))
+        work_pool = await load_work_pool(session, automation_id, cfg, task_key="masslooking")
+        chat_ids = work_pool.chat_ids if work_pool.active else set()
         if chat_ids:
             chats = (
                 await session.execute(

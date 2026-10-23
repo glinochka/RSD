@@ -1112,9 +1112,10 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
             dialogues_sent += flushed
         if cfg.get("chat_shilling") is False:
             return {"status": "skipped", "reason": "chat_shilling_off", "chats_processed": 0, "dialogues_sent": 0}
-        from .task_targets import resolve_task_chat_ids
+        from .task_targets import load_work_pool
 
-        allowed_chats = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neuroshilling"))
+        work_pool = await load_work_pool(session, automation_id, cfg, task_key="neuroshilling")
+        allowed_chats = work_pool.chat_ids if work_pool.active else set()
 
         chats = [
             chat
@@ -1143,7 +1144,7 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
             automation,
             "neuroshilling",
             _as_int_list(cfg.get("account_ids")),
-            [chat.id for chat in chats],
+            list(work_pool.assigned) or [chat.id for chat in chats],
         )
         await session.commit()
         for chat_target in chats:

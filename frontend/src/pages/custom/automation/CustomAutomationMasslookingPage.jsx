@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtCurrentChats from '../../../components/custom/UbtCurrentChats';
 import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
@@ -450,6 +451,9 @@ const CustomAutomationMasslookingPage = () => {
             <span>Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) просмотры не идут.</span>
           </div>
           <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <UbtCurrentChats checked={settings.include_joined} onChange={(value) => persistFlag({ include_joined: value })} />
         </div>
       </div>
 

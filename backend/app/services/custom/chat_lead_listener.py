@@ -121,13 +121,13 @@ async def handle_listened_group_message(
             return None
         from .chat_monitoring_module_service import runtime_monitor_cfg
         from .chat_scope import is_group_chat, is_paused
-        from .task_targets import resolve_task_chat_ids
+        from .task_targets import load_work_pool
 
         if is_paused(chat) or not is_group_chat(chat):
             return None
         cfg = runtime_monitor_cfg(automation)
-        pool = await resolve_task_chat_ids(session, automation_id, cfg, task_key="chat_monitoring")
-        if pool and chat.id not in set(pool):
+        pool = await load_work_pool(session, automation_id, cfg, task_key="chat_monitoring")
+        if pool.active and chat.id not in pool.chat_ids:
             return None
         saved = await _persist_and_maybe_process(
             session,

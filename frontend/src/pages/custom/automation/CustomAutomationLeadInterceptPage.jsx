@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtCurrentChats from '../../../components/custom/UbtCurrentChats';
 import CustomSelect from '../../../components/CustomSelect';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
@@ -309,9 +310,12 @@ const CustomAutomationLeadInterceptPage = () => {
         />
         <div style={{ marginTop: 12 }}>
           <FeatureToggle compact title="Ночной простой" description="Ночью по Москве в ЛС не пишем." checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
+          <div style={{ marginTop: 8 }}>
+            <UbtCurrentChats checked={settings.include_joined} onChange={(value) => persistFlag({ include_joined: value })} />
+          </div>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>
-          Промпты триггера и первого ЛС — в <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}>Промптах</Link>.
+          Навыки триггера и первого ЛС — в <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}>скиллбейзе</Link>.
           Переписка после первого касания — прогрев лида, не продажа.
         </p>
       </div>

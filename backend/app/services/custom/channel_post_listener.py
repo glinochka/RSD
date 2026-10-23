@@ -201,8 +201,7 @@ async def queue_listened_comment(
         pending_comment_count,
     )
     from .post_engagement import post_target_id
-    from .task_dedup import account_owns_chat
-    from .task_targets import resolve_task_chat_ids
+    from .task_targets import load_work_pool
     from ...alembic.models import CustomAutomation
 
     if not farm_overlap_active_hours():
@@ -228,11 +227,9 @@ async def queue_listened_comment(
     allowed = set(_as_int_list(cfg.get("account_ids")))
     if allowed and account_id not in allowed:
         return {"status": "skipped", "reason": "not_assigned"}
-    if not account_owns_chat(automation, "neurocommenting", account_id, chat.id):
+    work_pool = await load_work_pool(session, automation_id, cfg, task_key="neurocommenting")
+    if work_pool.active and not work_pool.allows(automation, "neurocommenting", account_id, chat.id):
         return {"status": "skipped", "reason": "not_owner"}
-    task_chats = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurocommenting"))
-    if task_chats and chat.id not in task_chats:
-        return {"status": "skipped", "reason": "not_task_chat"}
     joined = await session.scalar(
         select(AccountChatMembership.id).where(
             AccountChatMembership.chat_target_id == chat.id,

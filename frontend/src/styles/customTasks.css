@@ -230,9 +230,33 @@
 
 .tsk-edit-row {
   display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: minmax(180px, 240px) 1fr;
   gap: 10px;
   align-items: center;
+}
+
+.tsk-edit-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tsk-edit-control .custom-select,
+.tsk-edit-control input,
+.tsk-edit-control textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.tsk-edit-control .custom-select-trigger {
+  width: 100%;
+}
+
+.tsk-unit {
+  color: #6b7280;
+  font-size: 0.8125rem;
+  flex: 0 0 auto;
 }
 
 .tsk-edit-row label {

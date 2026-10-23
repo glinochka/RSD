@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtCurrentChats from '../../../components/custom/UbtCurrentChats';
 import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
@@ -343,6 +344,9 @@ const CustomAutomationChatBroadcastsPage = () => {
               checked={Boolean(settings.only_joined)}
               onChange={(value) => persistFlag({ only_joined: value })}
             />
+            <div style={{ marginTop: 8 }}>
+              <UbtCurrentChats checked={settings.include_joined} onChange={(value) => persistFlag({ include_joined: value })} />
+            </div>
           </div>
           <div className="nc-row">
             <button type="button" className={`nc-chip ${chatTab === 'links' ? 'is-on' : ''}`} onClick={() => setChatTab('links')}>@username / t.me</button>

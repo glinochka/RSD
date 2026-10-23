@@ -38,10 +38,11 @@ export const CF_STYLES = [
 ];
 
 export const CF_TONES = [
-  { value: 'expert_friendly', label: 'Эксперт, по-человечески' },
-  { value: 'bold', label: 'Дерзкий' },
-  { value: 'calm', label: 'Спокойный' },
-  { value: 'sales', label: 'Продающий' },
+  { value: 'expert_friendly', label: 'Свой из ниши' },
+  { value: 'bold', label: 'Жёсткий, можно мат' },
+  { value: 'satire', label: 'Сатира на новость' },
+  { value: 'calm', label: 'Сухо по фактам' },
+  { value: 'sales', label: 'Продажа через наблюдение' },
 ];
 
 export const CF_ASPECTS = [

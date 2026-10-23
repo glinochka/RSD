@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtCurrentChats from '../../../components/custom/UbtCurrentChats';
 import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
@@ -12,7 +13,6 @@ import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { humanizeUbtLog } from './ubtLogText';
-import { ACTION_DELAY_MAX_SECONDS } from './delayLimits';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
@@ -401,13 +401,16 @@ const CustomAutomationNeurochattingPage = () => {
         />
         <div style={{ marginTop: 12 }}>
           <FeatureToggle compact title="Не вступать — писать только туда, где аккаунт уже состоит" description="Новые вступления не ставим в очередь. Группы без членства пропускаются." checked={Boolean(settings.only_joined)} onChange={(value) => persistFlag({ only_joined: value })} />
+          <div style={{ marginTop: 8 }}>
+            <UbtCurrentChats checked={settings.include_joined} onChange={(value) => persistFlag({ include_joined: value })} />
+          </div>
         </div>
       </div>
 
       <div className="nc-card">
         <div className="nc-card-head">
           <h2>Настройки сообщений</h2>
-          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}>Все промпты</Link>
+          <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}>Скиллбейз</Link>
         </div>
         <div className="nc-prompts">
           {(data.prompts || []).map((prompt) => (
@@ -443,11 +446,11 @@ const CustomAutomationNeurochattingPage = () => {
           </div>
         </div>
         <div className="nc-row">
-          <span className="nc-muted">Задержка перед отправкой</span>
-          <Stepper value={settings.delay_before_min} min={0} max={ACTION_DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_min: value, delay_before_max: Math.max(value, settings.delay_before_max) })} />
+          <span className="nc-muted">Пауза после поста</span>
+          <Stepper value={Math.max(0, Math.round(Number(settings.delay_before_min || 0) / 60))} min={0} max={15} onChange={(value) => patch({ delay_before_min: value * 60, delay_before_max: Math.max(value * 60, Number(settings.delay_before_max) || 0) })} />
           <span className="nc-muted">до</span>
-          <Stepper value={settings.delay_before_max} min={settings.delay_before_min} max={ACTION_DELAY_MAX_SECONDS} onChange={(value) => patch({ delay_before_max: value })} />
-          <span className="nc-muted">сек</span>
+          <Stepper value={Math.max(Math.round(Number(settings.delay_before_min || 0) / 60), Math.round(Number(settings.delay_before_max || 0) / 60))} min={Math.max(0, Math.round(Number(settings.delay_before_min || 0) / 60))} max={15} onChange={(value) => patch({ delay_before_max: value * 60 })} />
+          <span className="nc-muted">мин</span>
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Не отвечаем на слишком свежие сообщения — антибот-пауза. FloodWait Telegram обрабатывается сам.</p>
         <UbtJoinDelay settings={settings} onPatch={patch} />

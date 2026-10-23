@@ -912,6 +912,61 @@ class CustomPromptTestResponse(BaseModel):
     missing_variables: list[str]
 
 
+class SkillbaseBriefUpdate(BaseModel):
+    business: str = ""
+    processes: str = ""
+    funnel: str = ""
+    product: str = ""
+    terms: str = ""
+    notes: str = ""
+
+
+class SkillbaseFileInfo(BaseModel):
+    name: str
+    chars: int
+
+
+class SkillbaseBriefResponse(BaseModel):
+    business: str
+    processes: str
+    funnel: str
+    product: str
+    terms: str
+    notes: str
+    files: list[SkillbaseFileInfo]
+    knowledge_chars: int
+    updated_at: Optional[str] = None
+    generated_at: Optional[str] = None
+
+
+class SkillbaseActivityResponse(BaseModel):
+    key: str
+    title: str
+    where: str
+    variables: list[str]
+    storage: str
+    module_text: str = ""
+
+
+class SkillbaseResponse(BaseModel):
+    brief: SkillbaseBriefResponse
+    activities: list[SkillbaseActivityResponse]
+
+
+class SkillbaseGenerateResponse(BaseModel):
+    brief: SkillbaseBriefResponse
+    updated: list[str]
+    errors: list[str]
+
+
+class SkillbaseComplaint(BaseModel):
+    complaint: str = ""
+
+
+class SkillbaseModuleSave(BaseModel):
+    content: str = ""
+
+
 class ChatTargetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1251,6 +1306,7 @@ class NeurocommentingSettings(BaseModel):
     prompt_id: Optional[int] = None
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
     warmup_enabled: Optional[bool] = None
@@ -1315,6 +1371,7 @@ class NeurochattingSettings(BaseModel):
     prompt_id: Optional[int] = None
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     context_depth: int = 5
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
@@ -1369,6 +1426,7 @@ class ChatMonitoringSettings(BaseModel):
     prompt_id: Optional[int] = None
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
@@ -1428,6 +1486,7 @@ class MasslookingSettings(BaseModel):
     limit_rate: bool = True
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
@@ -1470,6 +1529,7 @@ class MassprimingSettings(BaseModel):
     skip_quarantine: bool = True
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
@@ -1521,6 +1581,7 @@ class ParserSettings(BaseModel):
     limit_rate: bool = True
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
@@ -1585,6 +1646,7 @@ class ChatBroadcastsSettings(BaseModel):
     end_at: str = ""
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
@@ -1639,6 +1701,7 @@ class DmBroadcastsSettings(BaseModel):
     end_at: str = ""
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None
@@ -1681,6 +1744,7 @@ class NeuroshillingSettings(BaseModel):
     skip_fresh: bool = True
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     delay_min: int = 8
     delay_max: int = 25
     max_per_account: int = 15
@@ -1753,6 +1817,7 @@ class WarmupSettings(BaseModel):
     session_minutes: int = 0
     require_proxy: bool = False
     hide_in_work: bool = False
+    include_joined: bool = False
     blacklisted_account_ids: list[int] = Field(default_factory=list)
     presets: list[dict[str, Any]] = Field(default_factory=list)
     enabled: Optional[bool] = None

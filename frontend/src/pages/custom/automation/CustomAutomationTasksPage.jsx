@@ -4,7 +4,8 @@ import customService from '../../../services/customService';
 import FeatureToggle from '../../../components/FeatureToggle';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
-import { paramLabel, resultLabel } from './jobParamLabels';
+import CustomSelect from '../../../components/CustomSelect';
+import { choiceOptions, commitParam, displayParam, editParam, fieldKind, paramLabel, resultLabel } from './jobParamLabels';
 import { humanizeUbtLog } from './ubtLogText';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
@@ -24,7 +25,6 @@ const STATUS_LABELS = {
   skipped: 'Пропущено',
 };
 
-const SKIP_EDIT_KEYS = new Set(['presets', 'enabled', 'joins_complete', 'chat_assignments', 'reserve_chat_ids']);
 const HIDE_PARAM_KEYS = new Set([
   'presets',
   'chat_assignments',
@@ -40,30 +40,66 @@ const HIDE_PARAM_KEYS = new Set([
   'joins_complete',
   'enabled',
 ]);
-const MINUTE_PARAM_KEYS = new Set([
-  'join_delay_min',
-  'join_delay_max',
-  'comment_delay_min',
-  'comment_delay_max',
-  'delay_before_min',
-  'delay_before_max',
-]);
 const PARAM_ORDER = [
   'max_per_account',
+  'max_per_chat',
+  'max_per_hour',
+  'max_replies_per_run',
+  'max_messages',
+  'stories_limit',
+  'member_limit',
+  'context_depth',
+  'probability',
+  'min_words',
+  'posts_per_day',
   'comment_delay_min',
   'comment_delay_max',
-  'max_per_chat',
-  'max_replies_per_run',
   'join_delay_min',
   'join_delay_max',
   'delay_before_min',
   'delay_before_max',
-  'probability',
+  'delay_group_min',
+  'delay_group_max',
+  'delay_peer_min',
+  'delay_peer_max',
+  'delay_msg_min',
+  'delay_msg_max',
+  'delay_min',
+  'delay_max',
+  'delay_chat',
+  'delay_user',
   'post_filter',
-  'min_words',
+  'reply_mode',
+  'work_mode',
+  'first_mode',
+  'source',
+  'mode',
+  'intensity',
+  'scenario',
+  'content_mode',
+  'ttl_mode',
   'respect_night_hours',
   'require_proxy',
   'hide_in_work',
+  'include_joined',
+  'only_joined',
+  'work_always',
+  'do_join',
+  'do_joins',
+  'view_feed',
+  'skip_seen',
+  'skip_fresh',
+  'skip_errors',
+  'skip_sent',
+  'limit_rate',
+  'imitate_typing',
+  'unique_messages',
+  'chat_shilling',
+  'post_shilling',
+  'require_approval',
+  'posts_per_day',
+  'signature_enabled',
+  'avatar_from_profile',
 ];
 const JOB_TASK_KEY = {
   neurocommenting: 'neurocommenting',
@@ -76,88 +112,29 @@ const JOB_TASK_KEY = {
   warmup: 'warmup',
 };
 const EXTRA_EDIT_FIELDS = {
-  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, max_per_account: 15 },
-  chat_monitoring: { join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, respect_night_hours: true },
-  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 30, max_per_chat: 1, max_per_account: 15 },
-  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
-  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
+  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, max_per_account: 15, include_joined: false },
+  chat_monitoring: { join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, respect_night_hours: true, include_joined: false },
+  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 30, max_per_chat: 1, max_per_account: 15, include_joined: false },
+  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, include_joined: false },
+  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, include_joined: false },
   dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
-  masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 1200, join_delay_max: 2400, max_per_account: 50 },
+  masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 1200, join_delay_max: 2400, max_per_account: 50, include_joined: false },
   masspriming: { delay_min: 8, delay_max: 25, max_per_account: 20 },
-  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 1200, join_delay_max: 2400, member_limit: 1000 },
+  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 1200, join_delay_max: 2400, member_limit: 1000, include_joined: false },
   warmup: { join_delay_min: 1200, join_delay_max: 2400 },
 };
 
-const formatParamValue = (value) => {
-  if (typeof value === 'boolean') {
-    return value ? 'Да' : 'Нет';
-  }
-  if (Array.isArray(value) || (value && typeof value === 'object')) {
-    return JSON.stringify(value);
-  }
-  if (value === null || value === undefined) {
-    return '';
-  }
-  return String(value);
-};
-
-const formatShownParam = (key, value) => {
-  if (typeof value === 'boolean') {
-    return value ? 'Да' : 'Нет';
-  }
-  if (MINUTE_PARAM_KEYS.has(key) && Number.isFinite(Number(value))) {
-    const mins = Math.max(1, Math.round(Number(value) / 60));
-    return `${mins} мин`;
-  }
-  if (Array.isArray(value) || (value && typeof value === 'object')) {
-    return JSON.stringify(value);
-  }
-  return String(value);
-};
+const formatShownParam = displayParam;
 
 const shownParams = (job) => ({
   ...(EXTRA_EDIT_FIELDS[job?.job_type] || {}),
   ...(job?.params || {}),
 });
 
-const parseParamValue = (raw, original) => {
-  if (typeof original === 'boolean') {
-    return raw === true || raw === 'true' || raw === '1' || raw === 'Да';
-  }
-  if (typeof original === 'number') {
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : original;
-  }
-  if (Array.isArray(original) || (original && typeof original === 'object')) {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return original;
-    }
-  }
-  const trimmed = String(raw ?? '').trim();
-  if (trimmed === '') {
-    return '';
-  }
-  const asNumber = Number(trimmed);
-  if (Number.isFinite(asNumber) && String(asNumber) === trimmed) {
-    return asNumber;
-  }
-  if (trimmed === 'true' || trimmed === 'false') {
-    return trimmed === 'true';
-  }
-  return raw;
-};
-
 const buildEditForm = (job) => {
-  const extras = EXTRA_EDIT_FIELDS[job?.job_type] || {};
-  const params = { ...extras, ...(job?.params || {}) };
   const form = {};
-  Object.entries(params).forEach(([key, value]) => {
-    if (SKIP_EDIT_KEYS.has(key)) {
-      return;
-    }
-    form[key] = formatParamValue(value);
+  paramEntries(shownParams(job)).forEach(([key, value]) => {
+    form[key] = editParam(key, value);
   });
   return form;
 };
@@ -208,7 +185,7 @@ const paramEntries = (params) => {
     if (HIDE_PARAM_KEYS.has(key) || value === undefined || value === null || value === '') {
       return false;
     }
-    if (Array.isArray(value) && value.length === 0) {
+    if (Array.isArray(value) || typeof value === 'object') {
       return false;
     }
     return true;
@@ -445,19 +422,50 @@ const CustomAutomationTasksPage = () => {
 
               {editing && selected.can_edit ? (
                 <div>
-                  <div className="tsk-section-label">Параметры</div>
+                  <div className="tsk-section-label">Параметры запуска</div>
                   <div className="tsk-edit">
-                    {Object.keys(editForm).length === 0 ? <p>Нет редактируемых полей</p> : null}
-                    {Object.entries(editForm).map(([key, value]) => (
-                      <div key={key} className="tsk-edit-row">
-                        <label htmlFor={`tsk-edit-${key}`}>{paramLabel(key)}</label>
-                        {String(value).length > 80 ? (
-                          <textarea id={`tsk-edit-${key}`} rows={3} value={value} onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))} />
-                        ) : (
-                          <input id={`tsk-edit-${key}`} value={value} onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))} />
-                        )}
-                      </div>
-                    ))}
+                    {paramEntries(shownParams(selected)).length === 0 ? <p>Нет редактируемых полей</p> : null}
+                    {paramEntries(shownParams(selected)).map(([key, original]) => {
+                      const kind = fieldKind(key, original);
+                      const value = editForm[key] ?? '';
+                      const options = kind === 'bool' || kind === 'choice' ? choiceOptions(key, original) : null;
+                      const setValue = (next) => setEditForm((prev) => ({ ...prev, [key]: next }));
+                      return (
+                        <div key={key} className="tsk-edit-row">
+                          <label htmlFor={`tsk-edit-${key}`}>{paramLabel(key)}</label>
+                          <div className="tsk-edit-control">
+                            {kind === 'bool' ? (
+                              <FeatureToggle
+                                compact
+                                title=""
+                                label={paramLabel(key)}
+                                checked={value === 'Да'}
+                                onChange={(on) => setValue(on ? 'Да' : 'Нет')}
+                              />
+                            ) : options ? (
+                              <CustomSelect
+                                id={`tsk-edit-${key}`}
+                                value={value}
+                                options={options}
+                                onChange={(event) => setValue(event.target.value)}
+                              />
+                            ) : kind === 'long' ? (
+                              <textarea id={`tsk-edit-${key}`} rows={4} value={value} onChange={(event) => setValue(event.target.value)} />
+                            ) : (
+                              <input
+                                id={`tsk-edit-${key}`}
+                                type={kind === 'text' ? 'text' : 'number'}
+                                min={0}
+                                value={value}
+                                onChange={(event) => setValue(event.target.value)}
+                              />
+                            )}
+                            {kind === 'minutes' ? <span className="tsk-unit">мин</span> : null}
+                            {kind === 'seconds' ? <span className="tsk-unit">сек</span> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ) : paramEntries(shownParams(selected)).length ? (
@@ -522,10 +530,10 @@ const CustomAutomationTasksPage = () => {
                       className="acc-btn acc-btn--primary"
                       disabled={busy}
                       onClick={() => {
-                        const original = { ...(EXTRA_EDIT_FIELDS[selected.job_type] || {}), ...(selected.params || {}) };
+                        const source = shownParams(selected);
                         const params = {};
-                        Object.entries(editForm).forEach(([key, value]) => {
-                          params[key] = parseParamValue(value, original[key]);
+                        paramEntries(source).forEach(([key, original]) => {
+                          params[key] = commitParam(key, editForm[key], original);
                         });
                         runAction(async () => {
                           await customService.patchAutomationJob(id, selected.id, { params });

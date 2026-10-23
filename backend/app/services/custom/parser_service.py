@@ -491,11 +491,23 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         folder_ids = set(_as_int_list(cfg.get("folder_ids")))
         chat_ids = set(_as_int_list(cfg.get("chat_ids")))
         chats_q = select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id, ChatTarget.is_active.is_(True))
-        chats = (await session.execute(chats_q)).scalars().all()
+        chats = list((await session.execute(chats_q)).scalars().all())
         if folder_ids:
             chats = [chat for chat in chats if chat.folder_id in folder_ids or chat.id in chat_ids]
         elif chat_ids:
             chats = [chat for chat in chats if chat.id in chat_ids]
+        join_chats = list(chats)
+        from .task_targets import load_work_pool
+
+        work_pool = await load_work_pool(session, automation_id, cfg, task_key="parser")
+        if work_pool.extra_owner:
+            known = {chat.id for chat in chats}
+            extra_rows = (
+                await session.execute(
+                    select(ChatTarget).where(ChatTarget.id.in_(list(work_pool.extra_owner)))
+                )
+            ).scalars().all()
+            chats.extend(chat for chat in extra_rows if chat.id not in known)
         extra_targets = normalize_parser_targets(cfg.get("targets"))
         if not chats and not extra_targets:
             return {"status": "skipped", "reason": "no_targets", "users": 0}
@@ -523,12 +535,12 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
             accounts.append((account, pool))
         if not accounts:
             return {"status": "skipped", "reason": "no_accounts", "users": 0}
-        if bool(cfg.get("do_join", True)) and chats:
+        if bool(cfg.get("do_join", True)) and join_chats:
             await join_loaded_chats_for_accounts(
                 session,
                 automation_id,
                 [account.id for account, _pool in accounts],
-                chat_ids=[chat.id for chat in chats],
+                chat_ids=[chat.id for chat in join_chats],
             )
         await session.execute(delete(ParserUser).where(ParserUser.custom_automation_id == automation_id))
         await session.commit()

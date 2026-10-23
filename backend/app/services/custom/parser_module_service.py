@@ -55,6 +55,7 @@ DEFAULT_PARSER_SETTINGS: dict[str, Any] = {
     "limit_rate": True,
     "require_proxy": False,
     "hide_in_work": False,
+    "include_joined": False,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
     "reserve_chat_ids": [],
@@ -119,6 +120,7 @@ def normalize_parser_settings(raw: Any) -> dict[str, Any]:
     data["limit_rate"] = bool(incoming.get("limit_rate", True))
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
+    data["include_joined"] = bool(incoming.get("include_joined"))
     presets = []
     for item in incoming.get("presets") or []:
         if not isinstance(item, dict):
@@ -299,6 +301,9 @@ async def save_parser_module(session: AsyncSession, automation_id: int, payload:
     blob["parser"] = settings
     automation.module_settings = blob
     automation.updated_at = _utc_now()
+    from .job_service import mirror_include_joined
+
+    await mirror_include_joined(session, automation_id, "parser", settings["include_joined"])
     await session.commit()
     return await get_parser_module(session, automation_id)
 

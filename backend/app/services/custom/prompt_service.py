@@ -472,6 +472,7 @@ async def update_prompt(
     temperature: float | None = None,
     max_tokens: int | None = None,
     is_active: bool | None = None,
+    commit: bool = True,
 ) -> CustomPrompt:
     prompt = await get_prompt(session, automation_id, prompt_id)
     if not prompt:
@@ -494,8 +495,11 @@ async def update_prompt(
     prompt.is_active = False
     prompt.updated_at = _utc_now()
     session.add(new_prompt)
-    await session.commit()
-    await session.refresh(new_prompt)
+    if commit:
+        await session.commit()
+        await session.refresh(new_prompt)
+    else:
+        await session.flush()
     return new_prompt
 
 

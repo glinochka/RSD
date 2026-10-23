@@ -2250,6 +2250,93 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getSkillbase(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE(automationId)}`,
+      { method: 'GET', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async saveSkillbase(automationId, brief) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE(automationId)}`,
+      {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(brief),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async generateSkillbase(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE_GENERATE(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async uploadSkillbaseFile(automationId, file) {
+    const body = new FormData();
+    body.append('file', file);
+    const token = getCustomToken();
+    const headers = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE_FILES(automationId)}`,
+      { method: 'POST', headers, body },
+    );
+    return handleResponse(response);
+  },
+
+  async deleteSkillbaseFile(automationId, name) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE_FILES(automationId)}?name=${encodeURIComponent(name)}`,
+      { method: 'DELETE', headers: getAuthHeaders() },
+    );
+    return handleResponse(response);
+  },
+
+  async saveNeuroblogSkill(automationId, content) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE_NEUROBLOG(automationId)}`,
+      {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ content }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async reviseNeuroblogSkill(automationId, complaint) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SKILLBASE_NEUROBLOG_REVISE(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ complaint }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async revisePrompt(automationId, promptId, complaint) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PROMPT_REVISE(automationId, promptId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ complaint }),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async testPrompt(automationId, promptId, variables) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PROMPT_TEST(automationId, promptId)}`,

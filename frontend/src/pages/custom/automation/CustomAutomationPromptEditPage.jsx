@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { parseShillingContent, PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
@@ -9,6 +9,7 @@ import '../../../styles/customSolutionNav.css';
 
 const CustomAutomationPromptEditPage = () => {
   const { id, promptId } = useParams();
+  const navigate = useNavigate();
   const [prompt, setPrompt] = useState(null);
   const [form, setForm] = useState({});
   const [testVariables, setTestVariables] = useState({});
@@ -18,6 +19,8 @@ const CustomAutomationPromptEditPage = () => {
   const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const [complaint, setComplaint] = useState('');
+  const [isRevising, setIsRevising] = useState(false);
 
   const loadPrompt = useCallback(async () => {
     setIsLoading(true);
@@ -131,13 +134,13 @@ const CustomAutomationPromptEditPage = () => {
     <div className="project-settings-page">
       <div className="settings-header">
         <div>
-          <h1 className="settings-title">Редактирование промпта</h1>
+          <h1 className="settings-title">Навык</h1>
           <p className="settings-subtitle">
             {PROMPT_TYPE_LABELS[prompt.prompt_type] || prompt.prompt_type} · v{prompt.version}
           </p>
         </div>
         <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)} className="btn btn-outline">
-          К списку
+          К скиллбейзу
         </Link>
       </div>
 
@@ -208,6 +211,47 @@ const CustomAutomationPromptEditPage = () => {
           </div>
         </div>
       </form>
+
+      <div className="settings-section">
+        <h3 className="settings-section-title">Поправить моделью</h3>
+        <p className="form-hint">Опишите, что не так в активности, где работает этот навык. Модель перепишет инструкцию и оставит переменные.</p>
+        <div className="form-group">
+          <textarea
+            rows={4}
+            value={complaint}
+            onChange={(event) => setComplaint(event.target.value)}
+            placeholder="Слишком продаёт, называет цену, которой нет, звучит канцелярски"
+          />
+        </div>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="btn btn-outline"
+            disabled={isRevising}
+            onClick={async () => {
+              setIsRevising(true);
+              setError(null);
+              setMessage(null);
+              try {
+                const saved = await customService.revisePrompt(id, promptId, complaint);
+                setComplaint('');
+                if (saved?.id && String(saved.id) !== String(promptId)) {
+                  navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPT_EDIT(id, saved.id), { replace: true });
+                  return;
+                }
+                setMessage('Модель внесла правку.');
+                await loadPrompt();
+              } catch (err) {
+                setError(err.message || 'Не удалось поправить навык');
+              } finally {
+                setIsRevising(false);
+              }
+            }}
+          >
+            {isRevising ? 'Правим...' : 'Поправить моделью'}
+          </button>
+        </div>
+      </div>
 
       {prompt.prompt_type === 'shilling' ? null : (
       <div className="settings-section">

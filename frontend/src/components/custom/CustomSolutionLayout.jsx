@@ -553,7 +553,7 @@ const CustomSolutionLayout = () => {
                 {isDmpBot ? null : (
                   <NavLink
                     to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}
-                    label="Промпты"
+                    label="Скиллбейз"
                     icon={PromptIcon}
                     nested
                     active={isActive(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id))}

@@ -381,6 +381,7 @@ async def process_chat_target(
     *,
     max_replies_per_run: int = 1,
     run_config: dict[str, Any] | None = None,
+    work_pool: Any = None,
 ) -> dict[str, Any]:
     cfg = run_config if isinstance(run_config, dict) else {}
     only_joined = bool(cfg.get("only_joined"))
@@ -453,7 +454,10 @@ async def process_chat_target(
             continue
         from .task_dedup import account_owns_chat
 
-        if automation and not account_owns_chat(automation, "neurochatting", reader.id, chat_target.id):
+        if work_pool is not None:
+            if automation and not work_pool.allows(automation, "neurochatting", reader.id, chat_target.id):
+                continue
+        elif automation and not account_owns_chat(automation, "neurochatting", reader.id, chat_target.id):
             continue
         pool = await session.scalar(
             select(PoolAccount).where(
@@ -602,9 +606,10 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
         cap = daily_account_cap(cfg, cap_default=15)
         farm = int(automation.max_daily_messages_per_account or 0)
         max_daily = min(farm, cap) if farm > 0 else cap
-        from .task_targets import resolve_task_chat_ids
+        from .task_targets import load_work_pool
 
-        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurochatting"))
+        work_pool = await load_work_pool(session, automation_id, cfg, task_key="neurochatting")
+        chat_ids = work_pool.chat_ids if work_pool.active else set()
         chats = [
             chat
             for chat in await list_joined_task_chats(
@@ -632,12 +637,14 @@ async def run_discussion_pass(automation_id: int, run_config: dict[str, Any] | N
             automation,
             "neurochatting",
             _as_int_list(cfg.get("account_ids")),
-            [chat.id for chat in chats],
+            list(work_pool.assigned) or [chat.id for chat in chats],
         )
         await session.commit()
         for chat_target in chats:
             try:
-                res = await process_chat_target(session, automation_id, chat_target, max_daily, run_config=cfg)
+                res = await process_chat_target(
+                    session, automation_id, chat_target, max_daily, run_config=cfg, work_pool=work_pool
+                )
                 chat_count += 1
                 if res.get("sent"):
                     total_sent += int(res["sent"])

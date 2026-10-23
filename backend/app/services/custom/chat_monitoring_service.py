@@ -219,14 +219,13 @@ async def _get_account_for_chat(session: AsyncSession, chat_target: ChatTarget) 
 async def list_monitor_chats(session: AsyncSession, automation_id: int) -> list[ChatTarget]:
     """Target groups that already have a live JOINED member."""
     from .chat_monitoring_module_service import runtime_monitor_cfg
-    from .task_targets import resolve_task_chat_ids
+    from .task_targets import load_work_pool
 
     automation = await session.get(CustomAutomation, automation_id)
     cfg = runtime_monitor_cfg(automation)
     joined_ids = live_joined_chat_ids(automation_id)
-    pool_ids = await resolve_task_chat_ids(
-        session, automation_id, cfg, task_key="chat_monitoring"
-    )
+    work_pool = await load_work_pool(session, automation_id, cfg, task_key="chat_monitoring")
+    pool_ids = work_pool.chat_ids if work_pool.active else set()
     filters = [
         ChatTarget.custom_automation_id == automation_id,
         ChatTarget.is_active.is_(True),
@@ -511,7 +510,7 @@ async def process_unprocessed_messages(
     own_keys = await load_own_sender_keys(session, automation_id)
     shill_ids_by_chat: dict[int, set[str]] = {}
     from .chat_monitoring_module_service import runtime_monitor_cfg
-    from .task_targets import resolve_task_chat_ids
+    from .task_targets import load_work_pool
 
     automation = await session.get(CustomAutomation, automation_id)
     cfg = runtime_monitor_cfg(automation)
@@ -519,8 +518,8 @@ async def process_unprocessed_messages(
         getattr(automation, "lead_keywords", None) if automation else None
     )
     offer = _offer_context(automation, keywords)
-    resolved = await resolve_task_chat_ids(session, automation_id, cfg, task_key="chat_monitoring")
-    pool_ids = set(resolved)
+    work_pool = await load_work_pool(session, automation_id, cfg, task_key="chat_monitoring")
+    pool_ids = work_pool.chat_ids if work_pool.active else set()
 
     leads_created = 0
     errors = 0

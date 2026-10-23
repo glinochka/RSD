@@ -145,6 +145,13 @@ from .schemas import (
     CustomPromptTestRequest,
     CustomPromptTestResponse,
     CustomPromptUpdate,
+    SkillbaseActivityResponse,
+    SkillbaseBriefResponse,
+    SkillbaseBriefUpdate,
+    SkillbaseComplaint,
+    SkillbaseGenerateResponse,
+    SkillbaseModuleSave,
+    SkillbaseResponse,
     DmpOneImportCreate,
     DmpOneImportListResponse,
     DmpOneImportResponse,
@@ -385,6 +392,16 @@ from ..services.custom.prompt_service import (
     test_prompt,
     toggle_prompt,
     update_prompt,
+)
+from ..services.custom.skillbase_service import (
+    add_knowledge_file,
+    generate_skillbase,
+    get_skillbase,
+    remove_knowledge_file,
+    revise_neuroblog,
+    revise_prompt,
+    save_neuroblog_skill,
+    save_skillbase_brief,
 )
 from ..services.custom.account_warmup_service import (
     normalize_warmup_messages,
@@ -4336,6 +4353,117 @@ async def run_amocrm_sync(
     return {"status": "started"}
 
 
+@router.get("/automations/{automation_id}/skillbase", response_model=SkillbaseResponse)
+async def get_automation_skillbase(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            payload = await get_skillbase(session, automation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        return SkillbaseResponse(**payload)
+
+
+@router.put("/automations/{automation_id}/skillbase", response_model=SkillbaseBriefResponse)
+async def save_automation_skillbase(
+    automation_id: int,
+    payload: SkillbaseBriefUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            brief = await save_skillbase_brief(session, automation_id, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        return SkillbaseBriefResponse(**brief)
+
+
+@router.post("/automations/{automation_id}/skillbase/generate", response_model=SkillbaseGenerateResponse)
+async def generate_automation_skillbase(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            payload = await generate_skillbase(session, automation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return SkillbaseGenerateResponse(**payload)
+
+
+@router.post("/automations/{automation_id}/skillbase/files", response_model=SkillbaseBriefResponse)
+async def upload_skillbase_file(
+    automation_id: int,
+    file: UploadFile = File(...),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    raw = await file.read()
+    async with async_session_maker() as session:
+        try:
+            brief = await add_knowledge_file(session, automation_id, file.filename or "file.txt", raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return SkillbaseBriefResponse(**brief)
+
+
+@router.delete("/automations/{automation_id}/skillbase/files", response_model=SkillbaseBriefResponse)
+async def delete_skillbase_file(
+    automation_id: int,
+    name: str = Query(...),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            brief = await remove_knowledge_file(session, automation_id, name)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        return SkillbaseBriefResponse(**brief)
+
+
+@router.put("/automations/{automation_id}/skillbase/neuroblog", response_model=SkillbaseActivityResponse)
+async def save_skillbase_neuroblog(
+    automation_id: int,
+    payload: SkillbaseModuleSave,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            text = await save_neuroblog_skill(session, automation_id, payload.content)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return SkillbaseActivityResponse(
+            key="neuroblog",
+            title="Нейроблог",
+            where="Памятка автору постов",
+            variables=[],
+            storage="neuroblog",
+            module_text=text,
+        )
+
+
+@router.post("/automations/{automation_id}/skillbase/neuroblog/revise", response_model=SkillbaseActivityResponse)
+async def revise_skillbase_neuroblog(
+    automation_id: int,
+    payload: SkillbaseComplaint,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            text = await revise_neuroblog(session, automation_id, payload.complaint)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return SkillbaseActivityResponse(
+            key="neuroblog",
+            title="Нейроблог",
+            where="Памятка автору постов",
+            variables=[],
+            storage="neuroblog",
+            module_text=text,
+        )
+
+
 @router.get("/automations/{automation_id}/prompts", response_model=CustomPromptListResponse)
 async def list_automation_prompts(
     automation_id: int,
@@ -4403,6 +4531,22 @@ async def toggle_automation_prompt(
             return _prompt_response(prompt)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/automations/{automation_id}/prompts/{prompt_id}/revise", response_model=CustomPromptResponse)
+async def revise_automation_prompt(
+    automation_id: int,
+    prompt_id: int,
+    payload: SkillbaseComplaint,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            prompt = await revise_prompt(session, automation_id, prompt_id, payload.complaint)
+            return _prompt_response(prompt)
+        except ValueError as exc:
+            code = status.HTTP_404_NOT_FOUND if "not found" in str(exc).lower() else status.HTTP_400_BAD_REQUEST
+            raise HTTPException(status_code=code, detail=str(exc))
 
 
 @router.post("/automations/{automation_id}/prompts/{prompt_id}/test", response_model=CustomPromptTestResponse)

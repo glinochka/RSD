@@ -61,6 +61,7 @@ DEFAULT_CHAT_SETTINGS: dict[str, Any] = {
     "prompt_id": None,
     "require_proxy": False,
     "hide_in_work": False,
+    "include_joined": False,
     "context_depth": 5,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
@@ -133,6 +134,7 @@ def normalize_chat_settings(raw: Any) -> dict[str, Any]:
         data["prompt_id"] = None
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
+    data["include_joined"] = bool(incoming.get("include_joined"))
     data["context_depth"] = _clamp_int(
         incoming.get("context_depth") if incoming.get("context_depth") is not None else 5,
         5,
@@ -335,6 +337,9 @@ async def save_neurochatting_module(
             config["reply_probability"] = settings["probability"] / 100.0
             chat.discussion_config = config
             chat.updated_at = _utc_now()
+    from .job_service import mirror_include_joined
+
+    await mirror_include_joined(session, automation_id, "discussion", settings["include_joined"])
     await session.commit()
     return await get_neurochatting_module(session, automation_id)
 

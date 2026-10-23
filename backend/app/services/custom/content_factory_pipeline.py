@@ -318,11 +318,7 @@ async def _generate_pack(
     carousel = str((video.extra or {}).get("media_kind") or "") == "carousel"
     completion = await _llm_json(
         settings,
-        system_prompt=(
-            "Ты автор фото-каруселей для TikTok, Pinterest и Instagram. Верни только JSON."
-            if carousel
-            else "Ты сценарист коротких вертикальных роликов 30-60 секунд. Верни только JSON."
-        ),
+        system_prompt=_creative_system(carousel),
         user_prompt=prompt,
         model=settings.script_model or settings.idea_model,
     )
@@ -340,23 +336,43 @@ async def _generate_pack(
     return merged
 
 
+def _creative_system(carousel: bool) -> str:
+    from .creative_voice import LIVING_VOICE, NEWS_PEG, SATIRE_SHOT
+
+    kind = "фото-карусели, которую листают в TikTok, Pinterest и Instagram" if carousel else "вертикального ролика 30–60 секунд"
+    return (
+        f"Ты автор {kind}. Креатив обыгрывает новость ниши, а не рассказывает о продукте из вакуума.\n"
+        f"{LIVING_VOICE}\n{NEWS_PEG}\n{SATIRE_SHOT}\n"
+        "Верни только JSON."
+    )
+
+
 def _authoring_prompt(settings: CustomContentFactorySettings, video: CustomContentFactoryVideo, used_hooks: list[str]) -> str:
+    from .creative_voice import tone_line
+
+    voice = (
+        f"Продукт: {settings.product_name or 'сервис'}\n"
+        f"Описание: {settings.product_description}\n"
+        f"Аудитория: {settings.audience}\n"
+        f"Ниша: {settings.niche}\n"
+        f"Формат: {video.content_format}; картинка: {video.visual_style}; язык: {settings.language}\n"
+        f"Тон: {tone_line(settings.tone)}\n"
+        f"Голос: {settings.brand_voice or 'как человек из ниши, не как бренд'}\n"
+        f"Нельзя: {settings.forbidden_topics or 'гарантии дохода, фейковые отзывы, выдуманные цифры'}\n"
+        "Сначала выбери один новостной повод ниши. idea — в чём шутка или мысль. "
+        "hook — первая фраза уже про этот повод. script и voiceover рассуждают о нём, продукт всплывает побочно.\n"
+        "visual каждой сцены — английский промпт одного кадра: та же физика новости, другой нелепый объект. "
+        "Без текста на изображении и без логотипов.\n"
+        f"Не повторяй хуки: {used_hooks[:8]}\n"
+    )
     if str((video.extra or {}).get("media_kind") or "") == "carousel":
         return (
-            f"Продукт: {settings.product_name or 'сервис'}\n"
-            f"Описание: {settings.product_description}\n"
-            f"Аудитория: {settings.audience}\n"
-            f"Ниша: {settings.niche}\n"
-            f"Формат: {video.content_format}; стиль: {video.visual_style}; язык: {settings.language}\n"
-            f"Тон: {settings.tone}. Голос бренда: {settings.brand_voice}\n"
-            f"Нельзя: {settings.forbidden_topics or 'кликбейт про гарантии дохода'}\n"
-            "Это фото-карусель на 5 кадров 9:16. Человек листает сам в TikTok, Pinterest и Instagram. "
-            "YouTube получит те же кадры как короткое видео, где кадры сменяются сами.\n"
-            "Каждый кадр — одна мысль, крупный объект, без мелкого текста на картинке.\n"
-            f"Не повторяй хуки: {used_hooks[:8]}\n"
-            "JSON поля: idea, hook, script, caption, hashtags (массив), storyboard "
+            voice
+            + "Пять кадров 9:16. Человек листает сам. YouTube получит те же кадры как слайд-шоу.\n"
+            "Кадр 1 — объект новости. Кадр 2–4 — подмена и сравнение. Кадр 5 — панч, не призыв купить.\n"
+            "JSON: idea, hook, script, caption, hashtags (массив), storyboard "
             "(ровно 5 объектов {visual, voiceover}), content_format, visual_style. "
-            "visual — промпт картинки на английском. voiceover — короткая подпись кадра."
+            "voiceover — короткая живая подпись кадра, можно разговорный мат."
         )
     durations = plan_clip_durations(int(video.duration_seconds or 30))
     starts = []
@@ -365,20 +381,13 @@ def _authoring_prompt(settings: CustomContentFactorySettings, video: CustomConte
         starts.append(cursor)
         cursor += length
     return (
-        f"Продукт: {settings.product_name or 'сервис'}\n"
-        f"Описание: {settings.product_description}\n"
-        f"Аудитория: {settings.audience}\n"
-        f"Ниша: {settings.niche}\n"
-        f"Формат: {video.content_format}; стиль: {video.visual_style}; язык: {settings.language}\n"
-        f"Тон: {settings.tone}. Голос бренда: {settings.brand_voice}\n"
-        f"Нельзя: {settings.forbidden_topics or 'кликбейт про гарантии дохода, фейковые отзывы'}\n"
-        f"Длительность: {sum(durations)}с, кадр {video.aspect_ratio}.\n"
-        f"Клипы Kling по 5–8с, будет склейка: {durations}. Старт сцен: {starts}.\n"
-        f"Не повторяй хуки: {used_hooks[:8]}\n"
-        "Нужен сильный хук в первую секунду (вопрос, стоп-кадр, конкретная цифра).\n"
-        f"storyboard — ровно {len(durations)} сцен, каждая под свой клип, единый персонаж и свет.\n"
-        "JSON поля: idea, hook, script, caption, hashtags (массив), storyboard "
-        "(массив {t, duration, visual, voiceover}), content_format, visual_style."
+        voice
+        + f"Длительность: {sum(durations)}с, кадр {video.aspect_ratio}.\n"
+        + f"Клипы по 5–8с, склейка: {durations}. Старт сцен: {starts}.\n"
+        + "Первая секунда — уже событие, не вопрос в пустоту.\n"
+        + f"storyboard — ровно {len(durations)} сцен под клипы, один и тот же объект и свет.\n"
+        + "JSON: idea, hook, script, caption, hashtags (массив), storyboard "
+        + "(массив {t, duration, visual, voiceover}), content_format, visual_style."
     )
 
 

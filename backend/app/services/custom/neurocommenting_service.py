@@ -503,6 +503,7 @@ async def process_chat_target(
     include_lab: bool = False,
     lab_mode: bool = False,
     run_config: dict[str, Any] | None = None,
+    work_pool: Any = None,
 ) -> dict[str, Any]:
     if is_lab_chat(chat_target) and not (include_lab or lab_mode):
         return await _skip_chat(session, chat_target, "lab")
@@ -571,7 +572,11 @@ async def process_chat_target(
             continue
         from .task_dedup import account_owns_chat
 
-        if not account_owns_chat(automation, "neurocommenting", account.id, chat_target.id):
+        if work_pool is not None:
+            if not work_pool.allows(automation, "neurocommenting", account.id, chat_target.id):
+                tried.add(account.id)
+                continue
+        elif not account_owns_chat(automation, "neurocommenting", account.id, chat_target.id):
             tried.add(account.id)
             continue
         pool = await session.scalar(
@@ -922,10 +927,11 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                 f"Отправил {flushed} отложенных комментариев по уже вступившим каналам",
             )
             total_sent += flushed
-        from .task_targets import resolve_task_chat_ids
+        from .task_targets import load_work_pool
 
         scan_limit = _comment_scan_limit()
-        chat_ids = set(await resolve_task_chat_ids(session, automation_id, cfg, task_key="neurocommenting"))
+        work_pool = await load_work_pool(session, automation_id, cfg, task_key="neurocommenting")
+        chat_ids = work_pool.chat_ids if work_pool.active else set()
         chats = [
             chat
             for chat in await list_joined_task_chats(
@@ -949,7 +955,12 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
             ]
         from .task_dedup import persist_unique_chats
 
-        persist_unique_chats(automation, "neurocommenting", _as_int_list(cfg.get("account_ids")), [chat.id for chat in chats])
+        persist_unique_chats(
+            automation,
+            "neurocommenting",
+            _as_int_list(cfg.get("account_ids")),
+            list(work_pool.assigned) or [chat.id for chat in chats],
+        )
         await session.commit()
         for chat_target in chats:
             try:
@@ -959,6 +970,7 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                     chat_target,
                     max_comments_per_run=random.randint(1, 2),
                     run_config=cfg,
+                    work_pool=work_pool,
                 )
                 chat_count += 1
                 sent_now = int(res.get("sent") or 0)

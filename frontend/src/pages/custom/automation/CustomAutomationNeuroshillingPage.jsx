@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
+import UbtCurrentChats from '../../../components/custom/UbtCurrentChats';
 import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
@@ -388,7 +389,7 @@ const CustomAutomationNeuroshillingPage = () => {
               <div className="nc-muted">{prompt.is_system ? 'Системный' : 'Мой промпт'}</div>
             </button>
           ))}
-          <Link className="nc-prompt" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}>Все промпты</Link>
+          <Link className="nc-prompt" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}>Скиллбейз</Link>
         </div>
       </div>
 
@@ -404,6 +405,9 @@ const CustomAutomationNeuroshillingPage = () => {
         <div className="nc-split">
           <FeatureToggle compact title="Уникальные сообщения" description="Каждый запуск слегка варьирует вопрос и ответ, чтобы пары не копировали друг друга." checked={Boolean(settings.unique_messages)} onChange={(value) => persistFlag({ unique_messages: value })} />
           <FeatureToggle compact title="Пропускать свежие аккаунты" description="Новые аккаунты в осторожной стадии не идут в шиллинг, пока не прогреются." checked={Boolean(settings.skip_fresh)} onChange={(value) => persistFlag({ skip_fresh: value })} />
+          <div style={{ marginTop: 8 }}>
+            <UbtCurrentChats checked={settings.include_joined} onChange={(value) => persistFlag({ include_joined: value })} />
+          </div>
         </div>
         <div className="nc-row" style={{ marginTop: 12 }}>
           <span className="nc-muted">Пауза между репликами</span>
