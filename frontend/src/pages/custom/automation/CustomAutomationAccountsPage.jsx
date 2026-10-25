@@ -145,6 +145,17 @@ const formatUploadAge = (value) => {
   return date.toLocaleDateString('ru-RU');
 };
 
+const formatDateTime = (value) => {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleString('ru-RU');
+};
+
 const accountTitle = (account) =>
   account.display_name || (account.username ? `@${account.username}` : null) || account.phone_number || `ID ${account.id}`;
 
@@ -310,7 +321,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     const silent = Boolean(opts && typeof opts === 'object' && opts.silent);
     try {
       if (!silent) {
-        setIsLoading(true);
+      setIsLoading(true);
       }
       const data = await customService.getAutomationAccounts(id, {
         status: filters.status || undefined,
@@ -326,8 +337,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
       setError(err.message || 'Не удалось загрузить аккаунты');
     } finally {
       if (!silent) {
-        setIsLoading(false);
-      }
+      setIsLoading(false);
+    }
     }
   }, [id, filters.status, filters.search, filters.limit, filters.offset, pool]);
 
@@ -413,6 +424,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   const drawerStage = accounts.find((item) => item.id === drawerId)?.intercept_stage;
 
   useEffect(() => {
+    setSpamblockMessage(null);
     if (!drawerId) {
       setSessionItems([]);
       setSessionsError(null);
@@ -547,8 +559,13 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     setError(null);
     try {
       const result = await customService.checkAccountSpamblock(id, account.id);
-      setSpamblockMessage(result.detail || (result.spamblocked ? 'СПАМБЛОК' : 'Ограничений нет'));
-      await loadAccounts();
+      const detail = result.detail || (result.spamblocked ? 'Ограничение ЛС/инвайтов активно' : 'Ограничений нет');
+      setSpamblockMessage(detail);
+      if (result.account) {
+        setAccounts((prev) => prev.map((row) => (row.id === result.account.id ? { ...row, ...result.account } : row)));
+      } else {
+        await loadAccounts();
+      }
       await loadBanStats();
     } catch (err) {
       setError(err.message || 'Не удалось проверить спамблок');
@@ -1082,7 +1099,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
             </button>
             {filterOpen ? (
               <div className="acc-filter-pop">
-                <div>
+        <div>
                   <label htmlFor="acc-filter-status">Статус</label>
                   <CustomSelect
                     id="acc-filter-status"
@@ -1090,14 +1107,14 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     options={STATUS_FILTERS}
                     onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value, offset: 0 }))}
                   />
-                </div>
+        </div>
                 {isIntercept ? null : (
                   <>
                     <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
                     {isAdmin && !warmupEnabled ? (
                       <button type="button" className="acc-btn acc-btn--ghost" onClick={handleStartWarmup} disabled={isStartingWarmup}>
                         {isStartingWarmup ? 'Включаем...' : 'Включить для новых заливов'}
-                      </button>
+          </button>
                     ) : null}
                   </>
                 )}
@@ -1223,7 +1240,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                                 ))}
                               </span>
                             ) : null}
-                          </div>
+        </div>
                         </td>
                         <td><span className={`acc-chip acc-chip--${status.chip}`}>{status.label}</span></td>
                         <td>
@@ -1257,7 +1274,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 )}
               </tbody>
             </table>
-          </div>
+      </div>
         )}
 
         <div className="acc-pager">
@@ -1303,24 +1320,24 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
             <div className="acc-drawer-body">
               {panel === 'import' ? (
                 <>
-                  <CustomAccountProxyFields
-                    proxies={poolProxies}
-                    proxyId={uploadProxyId}
-                    proxyLine={uploadProxyLine}
-                    onProxyIdChange={setUploadProxyId}
-                    onProxyLineChange={setUploadProxyLine}
-                    disabled={isUploading}
+        <CustomAccountProxyFields
+          proxies={poolProxies}
+          proxyId={uploadProxyId}
+          proxyLine={uploadProxyLine}
+          onProxyIdChange={setUploadProxyId}
+          onProxyLineChange={setUploadProxyLine}
+          disabled={isUploading}
                   />
-                  <button
-                    type="button"
+            <button
+              type="button"
                     className="acc-btn acc-btn--primary"
                     onClick={() => importInputRef.current?.click()}
                     disabled={isUploading}
                   >
                     {isUploading ? 'Загрузка...' : 'Выбрать файл'}
-                  </button>
+            </button>
                 </>
-              ) : null}
+      ) : null}
               {panel === 'add' ? (
                 <CustomAccountConnectForm
                   automationId={id}
@@ -1330,10 +1347,10 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     await loadBanStats();
                   }}
                 />
-              ) : null}
+          ) : null}
               {panel === 'proxy' ? (
                 <>
-                  <p className="form-hint">
+            <p className="form-hint">
                     В пуле сейчас: {poolProxies.length || 'пусто'}. Можно socks5/http, IPv4/IPv6.
                     Если поставщик пишет HTTP-порт 1xxxx для SOCKS5 — первую цифру поднимаем сами, когда без этого порт мёртвый.
                     Новому аккаунту берём живой прокси с наименьшей загрузкой и ближайшим гео (для РФ — Финляндия, а не Индия).
@@ -1382,7 +1399,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   </CustomFileButton>
                   <button type="button" className="acc-btn acc-btn--dark" onClick={handleSaveProxies} disabled={proxySaving}>
                     {proxySaving ? 'Сохранение...' : 'Сохранить пул'}
-                  </button>
+            </button>
                 </>
               ) : null}
               {panel === 'profiles' ? (
@@ -1392,7 +1409,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   onSuccess={loadAccounts}
                 />
               ) : null}
-            </div>
+          </div>
           </aside>
         </div>
       ) : null}
@@ -1406,8 +1423,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 <p>
                   {drawerAccount.username ? `@${drawerAccount.username}` : ''}
                   {drawerAccount.phone_number ? ` ${drawerAccount.phone_number}` : ''}
-                </p>
-              </div>
+          </p>
+        </div>
               <button type="button" className="acc-icon-btn" onClick={() => setDrawerId(null)}>×</button>
             </div>
             <div className="acc-drawer-body">
@@ -1417,36 +1434,67 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   <span className={`acc-chip acc-chip--${restrictionMeta(drawerAccount).chip}`}>
                     {restrictionMeta(drawerAccount).label}
                   </span>
-                ) : null}
+      ) : null}
                 {constraintMeta(drawerAccount).label !== '—' ? (
                   <span className={`acc-chip acc-chip--${constraintMeta(drawerAccount).chip}`}>
                     {constraintMeta(drawerAccount).label}
                   </span>
-                ) : null}
+      ) : null}
                 {(drawerAccount.intercept_labels || []).map((label) => (
                   <span key={label} className={`acc-chip acc-chip--${interceptChip(label)}`}>{label}</span>
                 ))}
-              </div>
+          </div>
               {drawerAccount.intercept_reauth_error ? (
                 <p className="acc-flash acc-flash--error">{drawerAccount.intercept_reauth_error}</p>
-              ) : null}
-              <div className="form-group">
+      ) : null}
+              <div className="acc-spamblock">
+                <div className="acc-spamblock-copy">
+                  <strong>Спамблок (@SpamBot)</strong>
+                  <span>
+                    Отправим /start в @SpamBot, прочитаем ответ и обновим статус аккаунта в ферме.
+                    {drawerAccount.is_spamblocked
+                      ? ' Сейчас ЛС и инвайты отключены — если лимит снят, аккаунт снова попадёт в задачи.'
+                      : ' Если лимит есть, пометим только ЛС/инвайты; чаты и комменты обычно остаются.'}
+                  </span>
+                  {drawerAccount.spamblock_checked_at ? (
+                    <small className="form-hint">
+                      Последняя проверка: {formatDateTime(drawerAccount.spamblock_checked_at)}
+                    </small>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className={`acc-btn ${drawerAccount.is_spamblocked ? 'acc-btn--primary' : 'acc-btn--ghost'}`}
+                  onClick={() => handleCheckSpamblock(drawerAccount)}
+                  disabled={checkingSpamblockId === drawerAccount.id || interceptQuiet(drawerAccount) || !drawerAccount.session_file_path}
+                  title={interceptQuiet(drawerAccount) ? 'Пока холд intercept, SpamBot не трогаем' : undefined}
+                >
+                  {checkingSpamblockId === drawerAccount.id ? 'Проверяем @SpamBot...' : 'Проверить спамблок'}
+                </button>
+                {checkingSpamblockId === drawerAccount.id ? (
+                  <p className="form-hint">Ждём ответ @SpamBot, обычно до минуты.</p>
+                ) : null}
+                {spamblockMessage && drawerId === drawerAccount.id ? (
+                  <p className={`acc-flash${drawerAccount.is_spamblocked ? ' acc-flash--alert' : ''}`}>{spamblockMessage}</p>
+                ) : null}
+              </div>
+        <div className="form-group">
                 <label htmlFor="acc-name">Имя</label>
                 <input
                   id="acc-name"
                   value={nameDrafts[drawerAccount.id] ?? drawerAccount.display_name ?? ''}
                   onChange={(event) => setNameDrafts((prev) => ({ ...prev, [drawerAccount.id]: event.target.value }))}
-                />
-              </div>
-              <div className="form-group">
+          />
+        </div>
+        <div className="form-group">
                 <label htmlFor="acc-bio">Bio</label>
                 <textarea
                   id="acc-bio"
                   rows={3}
                   value={bioDrafts[drawerAccount.id] ?? drawerAccount.bio ?? ''}
                   onChange={(event) => setBioDrafts((prev) => ({ ...prev, [drawerAccount.id]: event.target.value }))}
-                />
-              </div>
+          />
+        </div>
               <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
                 <button
                   type="button"
@@ -1459,7 +1507,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 <CustomFileButton variant="ubt" accept="image/*" onFile={(file) => handleAccountAvatar(drawerAccount, file)}>
                   Аватар
                 </CustomFileButton>
-              </div>
+        </div>
               <div className="acc-sessions">
                 <div className="acc-sessions-head">
                   <h3>Сессии Telegram</h3>
@@ -1472,7 +1520,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   >
                     <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
                   </button>
-                </div>
+        </div>
                 <p className="form-hint">
                   {interceptQuiet(drawerAccount)
                     ? 'Пока стоит холд, сессию не открываем и устройства не трогаем. Через 24 часа выпустим свою сессию и оставим родительскую ещё на 7 дней.'
@@ -1498,7 +1546,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                           {item.place ? ` · ${item.place}` : ''}
                           {item.active_at ? ` · ${formatRelative(item.active_at)}` : ''}
                         </small>
-                      </div>
+        </div>
                       <button
                         type="button"
                         className="acc-icon-btn"
@@ -1511,7 +1559,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     </li>
                   ))}
                 </ul>
-              </div>
+                  </div>
               <div className="acc-sessions">
                 <div className="acc-sessions-head">
                   <h3>Все логи</h3>
@@ -1524,7 +1572,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   >
                     <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
                   </button>
-                </div>
+                  </div>
                 <p className="form-hint">
                   Действия аккаунта в Telegram: задачи, прогрев, вступления, чтение каналов. Служебные запросы клиента не показываем. Хранятся 3 суток.
                 </p>
@@ -1538,9 +1586,9 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     {telegramLogs.map((item) => (
                       <div key={item.id} className={item.result === 'error' ? 'acc-log-err' : ''}>
                         {formatLogWhen(item.created_at)} {humanizeUbtLog(item.message)}
-                      </div>
+                </div>
                     ))}
-                  </div>
+              </div>
                 ) : null}
               </div>
               <p className="form-hint">
@@ -1568,18 +1616,18 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     <>
                       <h3>Облачный пароль</h3>
                       <p className="form-hint">2FA меняется через родительскую сессию, пока она жива. Если пароль уже есть — укажите текущий. Почта нужна для восстановления, код из письма введёте следующим шагом.</p>
-                      <div className="form-group">
+              <div className="form-group">
                         <label htmlFor="acc-2fa-current">Текущий пароль</label>
-                        <input
+                <input
                           id="acc-2fa-current"
                           type="password"
                           autoComplete="off"
                           value={twoFaForm.current_password}
                           onChange={(event) => setTwoFaForm((prev) => ({ ...prev, current_password: event.target.value }))}
                           placeholder="Если 2FA уже включена"
-                        />
-                      </div>
-                      <div className="form-group">
+                />
+              </div>
+              <div className="form-group">
                         <label htmlFor="acc-2fa-new">Новый пароль</label>
                         <input
                           id="acc-2fa-new"
@@ -1587,9 +1635,9 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                           autoComplete="new-password"
                           value={twoFaForm.new_password}
                           onChange={(event) => setTwoFaForm((prev) => ({ ...prev, new_password: event.target.value }))}
-                        />
-                      </div>
-                      <div className="form-group">
+                />
+              </div>
+              <div className="form-group">
                         <label htmlFor="acc-2fa-hint">Подсказка</label>
                         <input
                           id="acc-2fa-hint"
@@ -1597,8 +1645,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                           onChange={(event) => setTwoFaForm((prev) => ({ ...prev, hint: event.target.value }))}
                           placeholder="Коротко, без самого пароля"
                         />
-                      </div>
-                      <div className="form-group">
+              </div>
+              <div className="form-group">
                         <label htmlFor="acc-2fa-email">Почта для подтверждения</label>
                         <input
                           id="acc-2fa-email"
@@ -1607,7 +1655,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                           onChange={(event) => setTwoFaForm((prev) => ({ ...prev, email: event.target.value }))}
                           placeholder="recovery@example.com"
                         />
-                      </div>
+              </div>
                       {twoFaNeedCode ? (
                         <div className="form-group">
                           <label htmlFor="acc-2fa-code">Код из почты{twoFaPattern ? ` (${twoFaPattern})` : ''}</label>
@@ -1623,23 +1671,23 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                       {twoFaMessage ? <p className="form-hint">{twoFaMessage}</p> : null}
                       <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
                         {twoFaNeedCode ? (
-                          <button
-                            type="button"
+                <button
+                  type="button"
                             className="acc-btn acc-btn--primary"
                             disabled={twoFaBusy || !twoFaForm.code.trim()}
                             onClick={() => handleTwoFaConfirm(drawerAccount)}
                           >
                             {twoFaBusy ? 'Проверка...' : 'Подтвердить код'}
-                          </button>
+                </button>
                         ) : (
-                          <button
-                            type="button"
+                <button
+                  type="button"
                             className="acc-btn acc-btn--primary"
                             disabled={twoFaBusy || !twoFaForm.new_password.trim()}
                             onClick={() => handleTwoFaSubmit(drawerAccount)}
                           >
                             {twoFaBusy ? 'Сохранение...' : 'Сохранить 2FA'}
-                          </button>
+                </button>
                         )}
                         <button type="button" className="acc-btn acc-btn--ghost" disabled={twoFaBusy} onClick={() => setTwoFaOpen(false)}>
                           Отмена
@@ -1669,25 +1717,17 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                       placeholder={drawerAccount.intercept_has_cloud_password ? 'Оставьте пустым, чтобы взять сохранённый' : 'Если 2FA включена'}
                     />
                   </div>
-                  <button
-                    type="button"
+                <button
+                  type="button"
                     className="acc-btn acc-btn--primary"
                     disabled={reauthBusy || drawerAccount.intercept_can_reauth === false}
                     onClick={() => handleReauthSession(drawerAccount)}
-                  >
+                >
                     {drawerAccount.intercept_stage === 'reauthorizing' || reauthBusy ? 'Переавторизация...' : 'Переавторизовать сессию'}
-                  </button>
-                </div>
+                </button>
+              </div>
               ) : null}
               <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
-                <button
-                  type="button"
-                  className="acc-btn acc-btn--ghost"
-                  onClick={() => handleCheckSpamblock(drawerAccount)}
-                  disabled={checkingSpamblockId === drawerAccount.id || interceptQuiet(drawerAccount)}
-                >
-                  {checkingSpamblockId === drawerAccount.id ? 'Проверка...' : 'Проверить спамблок'}
-                </button>
                 <button
                   type="button"
                   className="acc-btn acc-btn--ghost"
@@ -1717,10 +1757,10 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
               ) : null}
               {loginCodes[drawerAccount.id]?.error ? (
                 <p className="acc-flash acc-flash--error">{loginCodes[drawerAccount.id].error}</p>
-              ) : null}
-            </div>
+                ) : null}
+              </div>
           </aside>
-        </div>
+            </div>
       ) : null}
     </div>
   );

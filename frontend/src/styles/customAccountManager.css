@@ -638,6 +638,29 @@ a.acc-icon-btn {
   margin-bottom: 0;
 }
 
+.acc-spamblock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.acc-spamblock-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: #4b5563;
+}
+
+.acc-spamblock-copy strong {
+  color: #111827;
+  font-size: 0.95rem;
+}
+
 .account-connect-form {
   display: flex;
   flex-direction: column;
