@@ -561,9 +561,15 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         store_unique_assign(automation, "parser", chat_assignment)
         store_unique_assign(automation, "parser_targets", extra_assignment)
         await session.commit()
+        from .daily_quota import account_blocked_for_task
+
         for account_id, assigned_ids in chat_assignment.items():
             account, _pool = by_id[account_id]
             for chat_id in assigned_ids:
+                if await account_blocked_for_task(
+                    session, automation_id, account, "parser", cfg, default_max=100, hi=500
+                ):
+                    break
                 chat = chat_by_id.get(int(chat_id))
                 if not chat:
                     continue
@@ -618,6 +624,10 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         for account_id, assigned_targets in extra_assignment.items():
             account, _pool = by_id[account_id]
             for target in assigned_targets:
+                if await account_blocked_for_task(
+                    session, automation_id, account, "parser", cfg, default_max=100, hi=500
+                ):
+                    break
                 added = 0
                 try:
                     async with TelegramAccountClient.for_account(account) as client:

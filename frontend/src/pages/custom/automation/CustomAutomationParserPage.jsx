@@ -436,6 +436,17 @@ const CustomAutomationParserPage = () => {
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">
+              <strong>Чатов в день на аккаунт</strong>
+              <span>Каждый день число между минимумом и максимумом. Дальше аккаунт в этот день чаты не парсит.</span>
+            </div>
+            <div className="nc-row">
+              <Stepper value={settings.min_per_account ?? settings.max_per_account ?? 100} min={0} max={settings.max_per_account || 500} onChange={(value) => patch({ min_per_account: value })} />
+              <span className="nc-muted">до</span>
+              <Stepper value={settings.max_per_account ?? 100} min={1} max={500} onChange={(value) => patch({ max_per_account: value, min_per_account: Math.min(settings.min_per_account ?? value, value) })} />
+            </div>
+          </div>
+          <div className="nc-setting">
+            <div className="nc-setting-copy">
               <strong>Базовые фильтры</strong>
               <span>Отсекаем Telegram-ботов, юзерботов со ссылкой в био и мёртвые аккаунты</span>
             </div>

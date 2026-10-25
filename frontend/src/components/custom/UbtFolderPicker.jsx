@@ -1,7 +1,7 @@
 import React from 'react';
 
 const CHAT_HINT = 'Папка целиком становится пулом задачи. Дальше она делится между аккаунтами: addlist, вступление и работа.';
-const USER_HINT = 'Папка из парсера юзеров. Её можно поставить целью ЛС-рассылки или масспрайминга.';
+const USER_HINT = 'Папка из парсера юзеров. Её можно поставить целью лукинга, ЛС-рассылки или масспрайминга.';
 
 const UbtFolderPicker = ({ folders = [], selectedIds, onToggle, hint, emptyText, kind = 'chats', readOnly = false }) => {
   const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);

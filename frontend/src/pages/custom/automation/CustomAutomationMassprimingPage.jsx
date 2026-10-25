@@ -364,9 +364,13 @@ const CustomAutomationMassprimingPage = () => {
           <div className="nc-setting">
             <div className="nc-setting-copy">
               <strong>Лимит на аккаунт за сутки (0 = без лимита)</strong>
-              <span>{settings.max_per_account ? `${settings.max_per_account} контактов на аккаунт` : 'без лимита за сутки'}</span>
+              <span>Каждый день число от минимума до максимума. 0 в максимуме — без потолка.</span>
             </div>
-            <Stepper value={settings.max_per_account} min={0} max={200} onChange={(value) => patch({ max_per_account: value })} />
+            <div className="nc-row">
+              <Stepper value={settings.min_per_account ?? settings.max_per_account ?? 0} min={0} max={settings.max_per_account || 200} onChange={(value) => patch({ min_per_account: value })} />
+              <span className="nc-muted">до</span>
+              <Stepper value={settings.max_per_account} min={0} max={200} onChange={(value) => patch({ max_per_account: value, min_per_account: Math.min(settings.min_per_account ?? value, value) })} />
+            </div>
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">

@@ -282,13 +282,16 @@ async def _process_account(
         return 0
     if account_humanization_should_idle(account):
         return 0
-    try:
-        max_per_account = int(cfg.get("max_per_account") or 0)
-    except (TypeError, ValueError):
-        max_per_account = 0
-    already = await _counts_since(session, automation.id, account.id, _utc_now().replace(hour=0, minute=0, second=0, microsecond=0))
-    if max_per_account > 0 and already >= max_per_account:
+    from .daily_quota import account_blocked_for_task, quota_bounds, rolled_daily_actions, task_actions_today
+
+    if await account_blocked_for_task(session, automation.id, account, "masspriming", cfg, default_max=20):
         return 0
+    bounds = quota_bounds(cfg, default_max=20)
+    already = await task_actions_today(session, automation.id, account.id, ("masspriming",))
+    if bounds is None:
+        remaining = None
+    else:
+        remaining = max(0, rolled_daily_actions(account.id, "masspriming", bounds[0], bounds[1]) - already)
     try:
         max_per_hour = int(cfg.get("max_per_hour") or 0)
     except (TypeError, ValueError):
@@ -305,7 +308,6 @@ async def _process_account(
         delay_max = max(delay_min, min(DELAY_MAX_SECONDS, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 25)))
     except (TypeError, ValueError):
         delay_min, delay_max = 8, 25
-    remaining = None if max_per_account <= 0 else max(0, max_per_account - already)
     primed = 0
     async with TelegramAccountClient.for_account(account) as client:
         telethon = getattr(client, "client", client)

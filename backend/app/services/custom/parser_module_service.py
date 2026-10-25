@@ -56,6 +56,8 @@ DEFAULT_PARSER_SETTINGS: dict[str, Any] = {
     "require_proxy": False,
     "hide_in_work": False,
     "include_joined": False,
+    "min_per_account": 100,
+    "max_per_account": 100,
     "blacklisted_account_ids": [],
     "chat_assignments": {},
     "reserve_chat_ids": [],
@@ -121,6 +123,18 @@ def normalize_parser_settings(raw: Any) -> dict[str, Any]:
     data["require_proxy"] = bool(incoming.get("require_proxy"))
     data["hide_in_work"] = bool(incoming.get("hide_in_work"))
     data["include_joined"] = bool(incoming.get("include_joined"))
+    data["max_per_account"] = _clamp_int(
+        incoming.get("max_per_account") if incoming.get("max_per_account") is not None else 100,
+        100,
+        lo=1,
+        hi=500,
+    )
+    raw_min = incoming.get("min_per_account")
+    try:
+        low = int(raw_min) if raw_min not in (None, "") else data["max_per_account"]
+    except (TypeError, ValueError):
+        low = data["max_per_account"]
+    data["min_per_account"] = max(0, min(data["max_per_account"], low))
     presets = []
     for item in incoming.get("presets") or []:
         if not isinstance(item, dict):

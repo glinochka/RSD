@@ -80,6 +80,12 @@ def normalize_prime_settings(raw: Any) -> dict[str, Any]:
     data["skip_seen"] = bool(incoming.get("skip_seen", True))
     data["skip_hours"] = _clamp_int(incoming.get("skip_hours") if incoming.get("skip_hours") is not None else 72, 72, lo=1, hi=168)
     data["max_per_account"] = _clamp_int(incoming.get("max_per_account") if incoming.get("max_per_account") is not None else 20, 20, lo=0, hi=200)
+    raw_min = incoming.get("min_per_account")
+    try:
+        low = int(raw_min) if raw_min not in (None, "") else data["max_per_account"]
+    except (TypeError, ValueError):
+        low = data["max_per_account"]
+    data["min_per_account"] = 0 if data["max_per_account"] <= 0 else max(0, min(data["max_per_account"], low))
     data["max_per_hour"] = _clamp_int(incoming.get("max_per_hour") if incoming.get("max_per_hour") is not None else 8, 8, lo=0, hi=80)
     data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else 8, 8, lo=0, hi=DELAY_MAX_SECONDS)
     data["delay_max"] = max(

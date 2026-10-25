@@ -41,6 +41,7 @@ const HIDE_PARAM_KEYS = new Set([
   'enabled',
 ]);
 const PARAM_ORDER = [
+  'min_per_account',
   'max_per_account',
   'max_per_chat',
   'max_per_hour',
@@ -82,6 +83,7 @@ const PARAM_ORDER = [
   'require_proxy',
   'hide_in_work',
   'include_joined',
+  'like_probability',
   'only_joined',
   'work_always',
   'do_join',
@@ -112,15 +114,15 @@ const JOB_TASK_KEY = {
   warmup: 'warmup',
 };
 const EXTRA_EDIT_FIELDS = {
-  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, max_per_account: 15, include_joined: false },
-  chat_monitoring: { join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, respect_night_hours: true, include_joined: false },
-  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 30, max_per_chat: 1, max_per_account: 15, include_joined: false },
-  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, include_joined: false },
-  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15, include_joined: false },
-  dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8, comment_delay_min: 1200, comment_delay_max: 2400, max_per_account: 15 },
-  masslooking: { delay_min: 2, delay_max: 6, join_delay_min: 1200, join_delay_max: 2400, max_per_account: 50, include_joined: false },
-  masspriming: { delay_min: 8, delay_max: 25, max_per_account: 20 },
-  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 1200, join_delay_max: 2400, member_limit: 1000, include_joined: false },
+  neurocommenting: { delay_before_min: 180, delay_before_max: 240, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 100, max_per_chat: 10, min_per_account: 15, max_per_account: 15, include_joined: false },
+  chat_monitoring: { join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, min_per_account: 15, max_per_account: 15, respect_night_hours: true, include_joined: false },
+  discussion: { delay_before_min: 42, delay_before_max: 78, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, probability: 30, max_per_chat: 1, min_per_account: 15, max_per_account: 15, include_joined: false },
+  shilling: { delay_min: 8, delay_max: 25, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, min_per_account: 15, max_per_account: 15, include_joined: false },
+  chat_broadcast: { delay_group_min: 30, delay_group_max: 90, delay_msg_min: 3, delay_msg_max: 8, join_delay_min: 1200, join_delay_max: 2400, comment_delay_min: 1200, comment_delay_max: 2400, min_per_account: 15, max_per_account: 15, include_joined: false },
+  dm_broadcast: { delay_peer_min: 30, delay_peer_max: 90, delay_msg_min: 3, delay_msg_max: 8, comment_delay_min: 1200, comment_delay_max: 2400, min_per_account: 15, max_per_account: 15 },
+  masslooking: { delay_min: 8, delay_max: 20, join_delay_min: 1200, join_delay_max: 2400, min_per_account: 50, max_per_account: 50, like_probability: 30 },
+  masspriming: { delay_min: 8, delay_max: 25, min_per_account: 20, max_per_account: 20 },
+  parser: { delay_chat: 5, delay_user: 1, join_delay_min: 1200, join_delay_max: 2400, member_limit: 1000, min_per_account: 100, max_per_account: 100, include_joined: false },
   warmup: { join_delay_min: 1200, join_delay_max: 2400 },
 };
 

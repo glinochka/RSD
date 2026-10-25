@@ -508,6 +508,10 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
         action.next_attempt_at = None
         await session.commit()
         return True
+    if action.last_error == "daily_quota":
+        action.attempts = max(0, action.attempts - 1)
+        await session.commit()
+        return False
     if action.status != FAILED:
         action.last_error = action.last_error or "not_ready"
         if action.attempts >= 5:
@@ -537,6 +541,21 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
         return False
     payload = action.payload or {}
     account = await session.get(SocialAccount, action.social_account_id)
+    if account is not None and action.action_type == "neurocommenting":
+        from .daily_quota import account_blocked_for_task
+        from .job_service import load_active_job_params
+        from ...alembic.models import CustomAutomation
+
+        cfg = await load_active_job_params(session, action.custom_automation_id, "neurocommenting")
+        if cfg is None:
+            automation = await session.get(CustomAutomation, action.custom_automation_id)
+            cfg = ((automation.module_settings or {}).get("neurocommenting") or {}) if automation else {}
+        if await account_blocked_for_task(
+            session, action.custom_automation_id, account, "neurocommenting", cfg, default_max=15
+        ):
+            action.last_error = "daily_quota"
+            action.next_attempt_at = _utc_now() + timedelta(hours=6)
+            return False
     if account is not None:
         from .account_roles import account_matches_action
 

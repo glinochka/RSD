@@ -287,7 +287,11 @@ async def _assigned_account_for_thread(
         return None
     if account_should_idle(account):
         return None
-    if current_daily_messages_sent(account) >= max_daily:
+    from .daily_quota import account_blocked_for_task
+
+    if await account_blocked_for_task(
+        session, automation_id, account, "discussion", {"max_per_account": max_daily}, default_max=15
+    ):
         return None
     if not account.session_file_path:
         return None
@@ -502,7 +506,9 @@ async def process_chat_target(
         return await _skip_chat(session, chat_target, "no_account")
     if account_is_resting(account) or account_should_idle(account):
         return await _skip_chat(session, chat_target, "account_rest")
-    if current_daily_messages_sent(account) >= max_daily:
+    from .daily_quota import account_blocked_for_task
+
+    if await account_blocked_for_task(session, automation_id, account, "discussion", cfg, default_max=15):
         return await _skip_chat(session, chat_target, "account_cap")
     joined = await account_is_joined(session, chat_target.id, account.id)
     if not joined:
@@ -518,7 +524,7 @@ async def process_chat_target(
     for index, msg in enumerate(messages):
         if sent >= replies_this_run or sent_today + sent >= chat_limit:
             break
-        if current_daily_messages_sent(account) >= max_daily:
+        if await account_blocked_for_task(session, automation_id, account, "discussion", cfg, default_max=15):
             break
         sender = getattr(msg, "sender", None)
         sender_username = getattr(sender, "username", None)
@@ -547,7 +553,7 @@ async def process_chat_target(
             continue
 
         chosen = account
-        if not chosen or current_daily_messages_sent(chosen) >= max_daily or not chosen.session_file_path:
+        if not chosen or await account_blocked_for_task(session, automation_id, chosen, "discussion", cfg, default_max=15) or not chosen.session_file_path:
             continue
         if not await account_is_joined(session, chat_target.id, chosen.id) and (only_joined or not is_public_readable(chat_target)):
             continue

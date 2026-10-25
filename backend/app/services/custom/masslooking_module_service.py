@@ -18,6 +18,7 @@ from .chat_addlist_service import normalize_chat_assignments
 from .job_service import list_jobs
 from .module_delays import DELAY_MAX_SECONDS, JOIN_DELAY_MAX_DEFAULT, JOIN_DELAY_MIN_DEFAULT, clamp_join_delay_pair
 from .chat_folder_service import folder_payloads
+from .user_folder_service import list_user_folders
 from .masslooking_service import normalize_story_targets
 from .account_roles import account_is_task_ready
 from .proxy_service import proxy_label
@@ -29,13 +30,14 @@ DEFAULT_LOOK_SETTINGS: dict[str, Any] = {
     "chat_ids": [],
     "folder_ids": [],
     "targets": [],
-    "view_feed": True,
-    "stories_limit": 0,
+    "user_folder_ids": [],
+    "like_probability": 30,
     "max_per_account": 50,
+    "min_per_account": 50,
     "skip_seen": True,
     "skip_hours": 24,
-    "delay_min": 2,
-    "delay_max": 6,
+    "delay_min": 8,
+    "delay_max": 20,
     "join_delay_min": JOIN_DELAY_MIN_DEFAULT,
     "join_delay_max": JOIN_DELAY_MAX_DEFAULT,
     "max_per_hour": 30,
@@ -88,9 +90,20 @@ def normalize_look_settings(raw: Any) -> dict[str, Any]:
     data["chat_assignments"] = normalize_chat_assignments(incoming.get("chat_assignments"))
     data["reserve_chat_ids"] = _as_int_list(incoming.get("reserve_chat_ids"))
     data["targets"] = normalize_story_targets(incoming.get("targets"))
-    data["view_feed"] = bool(incoming.get("view_feed", True))
-    data["stories_limit"] = _clamp_int(incoming.get("stories_limit") if incoming.get("stories_limit") is not None else 0, 0, lo=0, hi=500)
+    data["user_folder_ids"] = _as_int_list(incoming.get("user_folder_ids"))
+    data["like_probability"] = _clamp_int(
+        incoming.get("like_probability") if incoming.get("like_probability") is not None else 30,
+        30,
+        lo=0,
+        hi=100,
+    )
     data["max_per_account"] = _clamp_int(incoming.get("max_per_account") if incoming.get("max_per_account") is not None else 50, 50, lo=0, hi=500)
+    raw_min = incoming.get("min_per_account")
+    try:
+        low = int(raw_min) if raw_min not in (None, "") else data["max_per_account"]
+    except (TypeError, ValueError):
+        low = data["max_per_account"]
+    data["min_per_account"] = 0 if data["max_per_account"] <= 0 else max(0, min(data["max_per_account"], low))
     data["skip_seen"] = bool(incoming.get("skip_seen", True))
     data["skip_hours"] = _clamp_int(incoming.get("skip_hours") if incoming.get("skip_hours") is not None else 24, 24, lo=1, hi=168)
     data["delay_min"] = _clamp_int(incoming.get("delay_min") if incoming.get("delay_min") is not None else 2, 2, lo=0, hi=DELAY_MAX_SECONDS)
@@ -202,8 +215,8 @@ def _issues(settings: dict[str, Any]) -> list[str]:
         issues.append("Модуль масслукинга выключен")
     if not settings.get("account_ids"):
         issues.append("Выберите хотя бы один аккаунт")
-    if not settings.get("targets") and not settings.get("chat_ids") and not settings.get("folder_ids") and not settings.get("view_feed"):
-        issues.append("Добавьте хотя бы один канал, папку или @username")
+    if not settings.get("targets") and not settings.get("user_folder_ids"):
+        issues.append("Выберите папку юзеров из парсера или укажите @username")
     return issues
 
 
@@ -238,6 +251,7 @@ async def get_masslooking_module(session: AsyncSession, automation_id: int) -> d
         "accounts": [_account_row(account, pool) for account, pool in pairs],
         "chats": [_chat_row(chat) for chat in chats],
         "folders": folders,
+        "user_folders": await list_user_folders(session, automation_id),
         "jobs": look_jobs,
         "summary": await _log_summary(session, automation_id),
         "issues": _issues(settings),

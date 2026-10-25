@@ -1,29 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
-import UbtCurrentChats from '../../../components/custom/UbtCurrentChats';
-import CustomSelect from '../../../components/CustomSelect';
 import UbtCheck from '../../../components/custom/UbtCheck';
 import UbtFolderPicker from '../../../components/custom/UbtFolderPicker';
 import UbtUnsaved from '../../../components/custom/UbtUnsaved';
 import UbtJoinDelay from '../../../components/custom/UbtJoinDelay';
 import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
-import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
+import { matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
 import { humanizeUbtLog } from './ubtLogText';
 import { DELAY_MAX_SECONDS } from './delayLimits';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
-import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
 import { assertCanRun, LIVE_JOB_STATUSES, mergeSettings, useLiveRef } from './ubtPersist';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
 
 const DELAY_PRESETS = {
-  min: { delay_min: 1, delay_max: 3 },
-  rec: { delay_min: 2, delay_max: 6 },
-  max: { delay_min: 4, delay_max: 12 },
+  min: { delay_min: 5, delay_max: 10 },
+  rec: { delay_min: 8, delay_max: 20 },
+  max: { delay_min: 20, delay_max: 40 },
 };
 
 const STATUS_LABELS = {
@@ -57,8 +53,6 @@ const CustomAutomationMasslookingPage = () => {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
-  const [folderId, setFolderId] = useState('');
-  const [dbQuery, setDbQuery] = useState('');
   const [presetName, setPresetName] = useState('');
   const [targetDraft, setTargetDraft] = useState('');
   const [blackAccountQuery, setBlackAccountQuery] = useState('');
@@ -98,8 +92,7 @@ const CustomAutomationMasslookingPage = () => {
     setDirty(true);
   };
   const selectedAccounts = new Set(settings?.account_ids || []);
-  const selectedChats = new Set(settings?.chat_ids || []);
-  const selectedFolders = new Set(settings?.folder_ids || []);
+  const selectedUserFolders = new Set(settings?.user_folder_ids || []);
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
 
   const accounts = useMemo(() => {
@@ -125,26 +118,11 @@ const CustomAutomationMasslookingPage = () => {
     });
   }, [data, accountQuery, settings, blockedAccounts]);
 
-  const dbChats = useMemo(() => {
-    const items = data?.chats || [];
-    const needle = dbQuery.trim().toLowerCase();
-    return items.filter((item) => {
-      if (folderId && String(item.folder_id || '') !== String(folderId)) {
-        return false;
-      }
-      if (!needle) {
-        return true;
-      }
-      return `${item.title} ${item.invite_link || ''}`.toLowerCase().includes(needle);
-    });
-  }, [data, dbQuery, folderId]);
-
   const chosenAccounts = (data?.accounts || []).filter((item) => selectedAccounts.has(item.id));
-  const chosenChats = (data?.chats || []).filter((item) => selectedChats.has(item.id));
   const blockedAccountRows = (data?.accounts || []).filter((item) => blockedAccounts.has(item.id));
   const issues = data?.issues || [];
   const recent = data?.summary?.recent || [];
-  const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length + selectedChats.size + selectedFolders.size;
+  const targetCount = targetDraft.split('\n').filter((item) => item.trim()).length + selectedUserFolders.size;
   const settingsRef = useLiveRef(settings);
   const enabledRef = useLiveRef(enabled);
   const targetDraftRef = useLiveRef(targetDraft);
@@ -192,15 +170,8 @@ const CustomAutomationMasslookingPage = () => {
     patch({ account_ids: next });
   };
 
-  const toggleChat = (chatId) => {
-    const next = selectedChats.has(chatId)
-      ? settings.chat_ids.filter((item) => item !== chatId)
-      : [...settings.chat_ids, chatId];
-    patch({ chat_ids: next });
-  };
-
-  const toggleFolder = (folderId) => {
-    patch({ folder_ids: toggleNumericId(settings.folder_ids, folderId) });
+  const toggleUserFolder = (nextId) => {
+    patch({ user_folder_ids: toggleNumericId(settings.user_folder_ids, nextId) });
   };
 
   const blockAccount = (accountId) => {
@@ -318,55 +289,19 @@ const CustomAutomationMasslookingPage = () => {
       <div className="nc-split">
         <div className="nc-card">
           <div className="nc-card-head">
-            <h2>Пользователи и чаты</h2>
+            <h2>Юзеры из парсера</h2>
             <span className="nc-muted">Целей: {targetCount}</span>
           </div>
-          <textarea className="nc-area" value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@username\nhttps://t.me/channel\nhttps://t.me/chat'} />
-          <p className="nc-hint">Юзеры — цель; каналы/чаты с публичным @username. Приватные инвайты без username пропускаются: у них нет публичных историй.</p>
-          <div style={{ marginTop: 12 }}>
-            <FeatureToggle compact title="Смотреть ленту историй аккаунта" description="Как в живой сессии: открываем сторис из ленты подписок, даже если список целей пуст." checked={Boolean(settings.view_feed)} onChange={(value) => persistFlag({ view_feed: value })} />
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <UbtFolderPicker folders={data.folders} selectedIds={selectedFolders} onToggle={toggleFolder} />
-            <div className="nc-row" style={{ marginTop: 12 }}>
-              <CustomSelect
-                className="nc-select"
-                value={String(folderId || '')}
-                options={folderOptions(data.folders, 'Чаты внутри папки')}
-                onChange={(event) => setFolderId(event.target.value)}
-              />
-              <input className="nc-search" value={dbQuery} onChange={(event) => setDbQuery(event.target.value)} placeholder="Поиск канала" />
-              <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
-            </div>
-            <div className="nc-list" style={{ marginTop: 8 }}>
-              {dbChats.slice(0, 40).map((item) => (
-                <button key={item.id} type="button" className={`nc-item ${selectedChats.has(item.id) ? 'is-on' : ''}`} onClick={() => toggleChat(item.id)}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <span>{item.invite_link || item.chat_type || ''}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-            {chosenChats.length ? (
-              <p className="nc-muted" style={{ marginTop: 8 }}>Из папок: {chosenChats.map((item) => item.title).join(', ')}</p>
-            ) : null}
-            <UbtDistributeChats
-              automationId={id}
-              taskKey="masslooking"
-              accounts={data.accounts || []}
-              chats={data.chats || []}
-              folders={data.folders || []}
-              settings={settings}
-              onApplied={(partial) => persist(partial)}
-            />
-          </div>
-          <div className="nc-setting nc-setting--muted" style={{ marginTop: 8 }}>
-            <div className="nc-setting-copy">
-              <strong>Из групп брать по списку участников</strong>
-              <span>Не собираем аудиторию из участников. Смотрим только указанные цели и ленту.</span>
-            </div>
-          </div>
+          <p className="nc-hint">Сначала парсер собирает людей в папку. Здесь папка делится между выбранными аккаунтами: каждый добавляет своих в контакты и, если у контакта есть сторис, смотрит её и иногда ставит лайк.</p>
+          <UbtFolderPicker
+            kind="users"
+            folders={data.user_folders || []}
+            selectedIds={selectedUserFolders}
+            onToggle={toggleUserFolder}
+            hint="Папка из парсера. Люди из неё распределяются между аккаунтами и не пересекаются."
+          />
+          <textarea className="nc-area" style={{ marginTop: 12 }} value={targetDraft} onChange={(event) => { setTargetDraft(event.target.value); setDirty(true); }} placeholder={'@username'} />
+          <p className="nc-hint">Дополнительные @username, если их нет в папке. Каналы и чаты сюда не подходят: сторис смотрим у людей.</p>
           <div className="nc-setting">
             <div className="nc-setting-copy">
               <strong>Задержка между переходами</strong>
@@ -389,17 +324,21 @@ const CustomAutomationMasslookingPage = () => {
         <div className="nc-card">
           <div className="nc-setting">
             <div className="nc-setting-copy">
-              <strong>Сколько историй просматривать</strong>
-              <span>{settings.stories_limit ? `${settings.stories_limit} источников за проход` : 'без ограничений'}</span>
+              <strong>Действий в день на аккаунт</strong>
+              <span>Каждый день выпадает число от минимума до максимума. 0 в максимуме — без потолка. Одно действие: контакт и его сторис.</span>
             </div>
-            <Stepper value={settings.stories_limit} min={0} max={500} onChange={(value) => patch({ stories_limit: value })} />
+            <div className="nc-row">
+              <Stepper value={settings.min_per_account ?? settings.max_per_account ?? 0} min={0} max={settings.max_per_account || 500} onChange={(value) => patch({ min_per_account: value })} />
+              <span className="nc-muted">до</span>
+              <Stepper value={settings.max_per_account} min={0} max={500} onChange={(value) => patch({ max_per_account: value, min_per_account: Math.min(settings.min_per_account ?? value, value) })} />
+            </div>
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">
-              <strong>Лимит просмотров на аккаунт (0 = без лимита)</strong>
-              <span>{settings.max_per_account ? `${settings.max_per_account} просмотров на аккаунт` : 'без лимита за сутки'}</span>
+              <strong>Лайк сторис</strong>
+              <span>{settings.like_probability ? `С вероятностью ${settings.like_probability}% после просмотра` : 'Только смотрим, без лайка'}</span>
             </div>
-            <Stepper value={settings.max_per_account} min={0} max={500} onChange={(value) => patch({ max_per_account: value })} />
+            <Stepper value={settings.like_probability ?? 30} min={0} max={100} onChange={(value) => patch({ like_probability: value })} />
           </div>
           <div className="nc-setting">
             <div className="nc-setting-copy">
@@ -409,18 +348,6 @@ const CustomAutomationMasslookingPage = () => {
             <div className="nc-row">
               <Stepper value={settings.skip_hours} min={1} max={168} onChange={(value) => patch({ skip_hours: value, skip_seen: true })} />
               <FeatureToggle compact title="" label="Не повторять" checked={Boolean(settings.skip_seen)} onChange={(value) => persistFlag({ skip_seen: value })} />
-            </div>
-          </div>
-          <div className="nc-setting nc-setting--muted">
-            <div className="nc-setting-copy">
-              <strong>Лайк на истории</strong>
-              <span>Не ставим. Только просмотр — без сердечка и без ухода в личку.</span>
-            </div>
-          </div>
-          <div className="nc-setting nc-setting--muted">
-            <div className="nc-setting-copy">
-              <strong>Реакции на истории</strong>
-              <span>Случайные эмодзи не отправляем. Это уже другой жест, не масслукинг.</span>
             </div>
           </div>
         </div>
@@ -451,9 +378,6 @@ const CustomAutomationMasslookingPage = () => {
             <span>Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) просмотры не идут.</span>
           </div>
           <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(settings.respect_night_hours)} onChange={(value) => persistFlag({ respect_night_hours: value })} />
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <UbtCurrentChats checked={settings.include_joined} onChange={(value) => persistFlag({ include_joined: value })} />
         </div>
       </div>
 

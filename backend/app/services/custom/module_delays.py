@@ -84,6 +84,12 @@ def apply_account_pacing(data: dict[str, Any], incoming: Any, *, cap_default: in
         data["max_per_account"] = max(1, min(200, int(cap))) if cap not in (None, "") else int(cap_default)
     except (TypeError, ValueError):
         data["max_per_account"] = int(cap_default)
+    try:
+        floor = raw.get("min_per_account")
+        low = int(floor) if floor not in (None, "") else data["max_per_account"]
+    except (TypeError, ValueError):
+        low = data["max_per_account"]
+    data["min_per_account"] = max(0, min(data["max_per_account"], low))
     data["comment_delay_min"], data["comment_delay_max"] = clamp_comment_gap_pair(raw)
 
 

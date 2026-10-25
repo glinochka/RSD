@@ -301,7 +301,9 @@ async def _pick_speaker_pair(
             excluded.add(account.id)
         if skip_account_for_module(cfg, account, pool):
             excluded.add(account.id)
-        if current_daily_messages_sent(account) >= daily_account_cap(cfg, cap_default=15):
+        from .daily_quota import account_blocked_for_task
+
+        if await account_blocked_for_task(session, automation.id, account, "shilling", cfg, default_max=15):
             excluded.add(account.id)
         if bool(cfg.get("skip_fresh")) and account_humanization_stage(account) == STAGE_CAUTIOUS:
             excluded.add(account.id)

@@ -266,6 +266,19 @@ async def queue_listened_comment(
     per_chat = chat_comment_daily_limit({"max_per_day": cfg.get("max_per_chat")})
     if await _count_chat_comments_today(session, automation_id, chat.id) >= per_chat:
         return {"status": "skipped", "reason": "chat_daily_limit"}
+    from .daily_quota import account_blocked_for_task
+    from .pending_action_service import pending_comment_count
+
+    if await account_blocked_for_task(
+        session,
+        automation_id,
+        account,
+        "neurocommenting",
+        cfg,
+        default_max=15,
+        extra_done=await pending_comment_count(session, automation_id, account_id),
+    ):
+        return {"status": "skipped", "reason": "account_cap"}
     delay_min, delay_max = _delay_bounds(cfg)
     if delay_min <= 0:
         delay_min, delay_max = float(POST_COMMENT_DELAY_MIN_SECONDS), float(POST_COMMENT_DELAY_MAX_SECONDS)

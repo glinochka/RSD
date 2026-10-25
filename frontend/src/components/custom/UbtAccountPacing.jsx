@@ -10,13 +10,24 @@ const UbtAccountPacing = ({
   capDefault = 15,
 }) => {
   const cap = Number(settings?.max_per_account ?? capDefault) || capDefault;
+  const floor = Math.max(0, Math.min(cap, Number(settings?.min_per_account ?? cap) || 0));
   const loMin = toMin(settings?.comment_delay_min, COMMENT_GAP_MIN_DEFAULT);
   const hiMin = Math.max(loMin, toMin(settings?.comment_delay_max, COMMENT_GAP_MAX_DEFAULT));
   return (
     <div style={{ marginTop: 12 }}>
       <div className="nc-row">
-        <span className="nc-muted">Максимум {noun} в день на аккаунт</span>
-        <Stepper value={cap} min={1} max={200} onChange={(value) => onPatch({ max_per_account: value })} />
+        <span className="nc-muted">Минимум {noun} в день</span>
+        <Stepper value={floor} min={0} max={cap} onChange={(value) => onPatch({ min_per_account: value })} />
+        <span className="nc-muted">максимум</span>
+        <Stepper
+          value={cap}
+          min={1}
+          max={200}
+          onChange={(value) => onPatch({
+            max_per_account: value,
+            min_per_account: Math.min(floor, value),
+          })}
+        />
       </div>
       <div className="nc-row" style={{ marginTop: 10 }}>
         <span className="nc-muted">Пауза между {noun}</span>
@@ -39,7 +50,7 @@ const UbtAccountPacing = ({
         <span className="nc-muted">мин</span>
       </div>
       <p className="nc-muted" style={{ marginTop: 8 }}>
-        После отправки аккаунт молчит это время, затем берёт следующее действие. По умолчанию 15 в день и 20–40 минут.
+        Каждый день аккаунту выпадает своё число между минимумом и максимумом. Больше этого числа в этой задаче он не делает. Паузы, ночь и лимит фермы остаются.
       </p>
     </div>
   );

@@ -47,6 +47,41 @@ def _as_int_list(raw: Any) -> list[int]:
     return items
 
 
+def like_roll_hits(probability: int, roll: float) -> bool:
+    try:
+        chance = max(0, min(100, int(probability)))
+    except (TypeError, ValueError):
+        chance = 0
+    return float(roll) * 100 < chance
+
+
+def story_peer_keys(targets: Any, folder_peers: list[str] | None = None) -> list[str]:
+    """Usernames and numeric ids. One key per person, stable for distribution."""
+    keys: list[str] = []
+    seen: set[str] = set()
+    raw_items: list[str] = []
+    raw_items.extend(normalize_story_targets(targets))
+    raw_items.extend(folder_peers or [])
+    for raw in raw_items:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if text.lower().startswith("id:"):
+            key = text.lower()
+        elif text.lstrip("-").isdigit():
+            key = f"id:{int(text)}"
+        else:
+            named = normalize_story_targets([text])
+            if not named:
+                continue
+            key = named[0].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
 def normalize_story_targets(raw: Any) -> list[str]:
     if isinstance(raw, str):
         values = raw.splitlines()
@@ -138,6 +173,7 @@ async def _log_view(
     title: str,
     stories: int,
     source: str,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     session.add(
         AutomationActionLog(
@@ -147,11 +183,39 @@ async def _log_view(
             target_id=target_id,
             target_type="story_peer",
             result="success",
-            payload={"title": title, "stories": stories, "source": source},
+            payload={"title": title, "stories": stories, "source": source, **(extra or {})},
             created_at=_utc_now(),
         )
     )
     await session.commit()
+
+
+async def _resolve_peer(client: TelegramAccountClient, token: str) -> Any:
+    telethon = getattr(client, "client", client)
+    if token.startswith("id:"):
+        return await telethon.get_entity(int(token.split(":", 1)[1]))
+    return await telethon.get_entity(token)
+
+
+async def _react_to_story(client: Any, peer: Any, story_id: int) -> bool:
+    try:
+        from telethon.tl.functions.stories import SendReactionRequest
+        from telethon.tl.types import ReactionEmoji
+    except Exception:
+        return False
+    try:
+        await getattr(client, "client", client)(
+            SendReactionRequest(
+                peer=peer,
+                story_id=int(story_id),
+                reaction=ReactionEmoji(emoticon="❤"),
+                add_to_recent=True,
+            )
+        )
+        return True
+    except Exception as exc:
+        logger.debug("Story reaction skipped: %s", exc)
+        return False
 
 
 async def _view_entity(
@@ -201,13 +265,17 @@ async def _process_account(
         return 0
     if account_humanization_should_idle(account):
         return 0
-    try:
-        max_per_account = int(cfg.get("max_per_account") or 0)
-    except (TypeError, ValueError):
-        max_per_account = 0
-    already = await _views_today(session, automation.id, account.id)
-    if max_per_account > 0 and already >= max_per_account:
+    from .daily_quota import account_blocked_for_task, quota_bounds, rolled_daily_actions, task_actions_today
+    from .masspriming_service import add_contact, is_primeable_user
+
+    if await account_blocked_for_task(session, automation.id, account, "masslooking", cfg, default_max=50, hi=500):
         return 0
+    bounds = quota_bounds(cfg, default_max=50, hi=500)
+    already = await task_actions_today(session, automation.id, account.id, ("masslooking",))
+    if bounds is None:
+        remaining = None
+    else:
+        remaining = max(0, rolled_daily_actions(account.id, "masslooking", bounds[0], bounds[1]) - already)
     try:
         max_per_hour = int(cfg.get("max_per_hour") or 0)
     except (TypeError, ValueError):
@@ -216,99 +284,75 @@ async def _process_account(
     if max_per_hour > 0 and hourly >= max_per_hour:
         return 0
     try:
-        stories_limit = int(cfg.get("stories_limit") or 0)
-    except (TypeError, ValueError):
-        stories_limit = 0
-    try:
         skip_hours = int(cfg.get("skip_hours") or 0) if cfg.get("skip_seen", True) else 0
     except (TypeError, ValueError):
         skip_hours = 24 if cfg.get("skip_seen", True) else 0
     try:
-        delay_min = max(0, min(DELAY_MAX_SECONDS, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 2)))
-        delay_max = max(delay_min, min(DELAY_MAX_SECONDS, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 6)))
+        delay_min = max(0, min(DELAY_MAX_SECONDS, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 8)))
+        delay_max = max(delay_min, min(DELAY_MAX_SECONDS, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 20)))
     except (TypeError, ValueError):
-        delay_min, delay_max = 2, 6
-    remaining = None if max_per_account <= 0 else max(0, max_per_account - already)
+        delay_min, delay_max = 8, 20
     if max_per_hour > 0:
         hour_left = max(0, max_per_hour - hourly)
         remaining = hour_left if remaining is None else min(remaining, hour_left)
-    peer_budget = stories_limit if stories_limit > 0 else None
+    try:
+        like_probability = max(0, min(100, int(cfg.get("like_probability") if cfg.get("like_probability") is not None else 30)))
+    except (TypeError, ValueError):
+        like_probability = 30
     viewed = 0
 
     async with TelegramAccountClient.for_account(account) as client:
         telethon = getattr(client, "client", client)
-        if bool(cfg.get("view_feed", True)):
-            feed = await load_feed_peer_stories(client)
-            random.shuffle(feed)
-            for packed in feed:
-                if remaining is not None and viewed >= remaining:
-                    break
-                if peer_budget is not None and viewed >= peer_budget:
-                    break
-                stories = list(getattr(packed, "stories", None) or [])
-                peer = getattr(packed, "peer", None)
-                peer_key = f"feed:{getattr(peer, 'user_id', None) or getattr(peer, 'channel_id', None) or viewed}"
-                if await _seen_recently(
-                    session, automation.id, peer_key, hours=skip_hours, account_id=account.id
-                ):
-                    continue
-                await inspect_peer_profile(client, peer)
-                counted = await mark_peer_stories_read(client, peer, stories, lab_mode=False)
-                if not counted:
-                    continue
-                await _log_view(
-                    session,
-                    automation_id=automation.id,
-                    account=account,
-                    target_id=peer_key,
-                    title="Лента историй",
-                    stories=counted,
-                    source="feed",
-                )
-                viewed += 1
-                from .job_service import actor_label, log_active
-
-                await log_active(
-                    automation.id,
-                    "masslooking",
-                    f"{actor_label(account)} посмотрел сторис в ленте",
-                )
-                await asyncio.sleep(random.uniform(delay_min, delay_max))
-        for username in targets:
+        for token in targets:
             if remaining is not None and viewed >= remaining:
                 break
-            if peer_budget is not None and viewed >= peer_budget:
-                break
-            key = username.lower()
+            key = token.lower()
+            if await _seen_recently(session, automation.id, key, hours=skip_hours, account_id=account.id):
+                continue
             try:
-                entity = await telethon.get_entity(username)
+                entity = await _resolve_peer(client, token)
             except Exception as exc:
-                logger.debug("Masslooking resolve %s failed: %s", username, exc)
+                logger.debug("Masslooking resolve %s failed: %s", token, exc)
+                continue
+            if not is_primeable_user(entity):
                 continue
             from .task_dedup import entity_is_bot_or_userbot
 
             if bool(cfg.get("skip_bots", True)) and await entity_is_bot_or_userbot(client, entity):
                 continue
-            added = await _view_entity(
+            await inspect_peer_profile(client, entity)
+            contact = await add_contact(telethon, entity)
+            peer, stories = await load_peer_stories(client, entity)
+            counted = 0
+            liked = False
+            if stories:
+                counted = await mark_peer_stories_read(client, peer or entity, stories, lab_mode=False)
+                newest = max(stories, key=lambda item: int(getattr(item, "id", 0) or 0))
+                story_id = int(getattr(newest, "id", 0) or 0)
+                if counted and story_id and like_roll_hits(like_probability, random.random()):
+                    liked = await _react_to_story(client, peer or entity, story_id)
+            title = _peer_label(entity, token)
+            await _log_view(
                 session,
-                client,
-                account,
-                automation.id,
-                entity,
+                automation_id=automation.id,
+                account=account,
                 target_id=key,
-                source="target",
-                skip_hours=skip_hours,
+                title=title,
+                stories=counted,
+                source="contact",
+                extra={"contact": contact, "liked": liked},
             )
-            if added:
-                viewed += 1
-                from .job_service import actor_label, log_active
+            viewed += 1
+            from .job_service import actor_label, log_active
 
-                await log_active(
-                    automation.id,
-                    "masslooking",
-                    f"{actor_label(account)} посмотрел сторис {username}",
-                )
-                await asyncio.sleep(random.uniform(delay_min, delay_max))
+            if counted and liked:
+                detail = f"посмотрел и лайкнул сторис {title}"
+            elif counted:
+                detail = f"посмотрел сторис {title}"
+            else:
+                detail = f"добавил {title} в контакты, сторис нет"
+            await log_active(automation.id, "masslooking", f"{actor_label(account)} {detail}")
+            await asyncio.sleep(random.uniform(delay_min, delay_max))
     if viewed:
         record_successful_humanization(account)
         if bool(cfg.get("limit_rate", True)):
@@ -333,24 +377,12 @@ async def run_masslooking_pass(automation_id: int, run_config: dict[str, Any] | 
             return {"status": "skipped", "reason": "no_accounts", "views": 0}
         if bool(cfg.get("respect_night_hours", True)) and not farm_overlap_active_hours():
             return {"status": "skipped", "reason": "night", "views": 0}
-        targets = normalize_story_targets(cfg.get("targets"))
-        from .task_targets import load_work_pool
+        from .task_targets import resolve_user_folder_peers
 
-        work_pool = await load_work_pool(session, automation_id, cfg, task_key="masslooking")
-        chat_ids = work_pool.chat_ids if work_pool.active else set()
-        if chat_ids:
-            chats = (
-                await session.execute(
-                    select(ChatTarget).where(
-                        ChatTarget.custom_automation_id == automation_id,
-                        ChatTarget.id.in_(chat_ids),
-                    )
-                )
-            ).scalars().all()
-            extra = []
-            for chat in chats:
-                extra.extend([chat.invite_link or "", chat.title or "", chat.external_chat_id or ""])
-            targets = normalize_story_targets([*targets, *extra])
+        folder_peers = await resolve_user_folder_peers(session, automation_id, cfg, usernames_only=False)
+        targets = story_peer_keys(cfg.get("targets"), folder_peers)
+        if not targets:
+            return {"status": "skipped", "reason": "no_targets", "views": 0}
         allowed = set(_as_int_list(cfg.get("account_ids")))
         blocked = set(_as_int_list(cfg.get("blacklisted_account_ids")))
         pairs = (

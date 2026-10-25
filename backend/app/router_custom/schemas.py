@@ -1472,8 +1472,11 @@ class MasslookingSettings(BaseModel):
     chat_assignments: dict[str, list[int]] = Field(default_factory=dict)
     reserve_chat_ids: list[int] = Field(default_factory=list)
     targets: list[str] = Field(default_factory=list)
+    user_folder_ids: list[int] = Field(default_factory=list)
+    like_probability: int = 30
     view_feed: bool = True
     stories_limit: int = 0
+    min_per_account: int = 50
     max_per_account: int = 50
     skip_seen: bool = True
     skip_hours: int = 24
@@ -1520,6 +1523,7 @@ class MassprimingSettings(BaseModel):
     ttl_period: int = 86400
     skip_seen: bool = True
     skip_hours: int = 72
+    min_per_account: int = 20
     max_per_account: int = 20
     max_per_hour: int = 8
     delay_min: int = 8
@@ -1575,6 +1579,8 @@ class ParserSettings(BaseModel):
     only_active_stories: bool = False
     delay_chat: int = 5
     delay_user: int = 1
+    min_per_account: int = 100
+    max_per_account: int = 100
     join_delay_min: int = 1200
     join_delay_max: int = 2400
     respect_night_hours: bool = True
@@ -1690,6 +1696,7 @@ class DmBroadcastsSettings(BaseModel):
     respect_night_hours: bool = True
     work_mode: str = "count"
     max_messages: int = 100
+    min_per_account: int = 15
     max_per_account: int = 15
     comment_delay_min: int = 1200
     comment_delay_max: int = 2400

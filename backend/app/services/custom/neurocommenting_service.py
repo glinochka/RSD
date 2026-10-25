@@ -716,11 +716,20 @@ async def process_chat_target(
             continue
         if claimed != NEUROCOMMENTING or not neuro_enabled:
             continue
-        if account_reached_daily_cap(
-            actor,
-            account_comment_daily_limit(actor, automation, lab_mode=lab_mode, run_config=cfg),
-        ):
-            continue
+        if not lab_mode:
+            from .daily_quota import account_blocked_for_task
+            from .pending_action_service import pending_comment_count
+
+            if await account_blocked_for_task(
+                session,
+                automation_id,
+                actor,
+                "neurocommenting",
+                cfg,
+                default_max=15,
+                extra_done=await pending_comment_count(session, automation_id, actor.id),
+            ):
+                continue
         if not lab_mode and account_is_resting(actor):
             from .pending_action_service import COMMENT_QUEUE_PER_ACCOUNT, pending_comment_count
 

@@ -376,6 +376,15 @@ async def _send_dm_and_create_lead(
     if not account:
         logger.warning("No trusted account to send DM for message %s", chat_message.id)
         return False
+    from .chat_monitoring_module_service import runtime_monitor_cfg
+    from .daily_quota import account_blocked_for_task
+
+    automation = await session.get(CustomAutomation, automation_id)
+    if await account_blocked_for_task(
+        session, automation_id, account, "chat_monitoring", runtime_monitor_cfg(automation), default_max=15
+    ):
+        logger.info("Lead DM skipped, account %s reached today's quota", account.id)
+        return False
 
     response_text = await _generate_response(session, automation_id, chat_message.text)
 

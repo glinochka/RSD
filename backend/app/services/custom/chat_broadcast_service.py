@@ -271,7 +271,9 @@ async def _eligible_accounts(session: AsyncSession, automation_id: int, cfg: dic
             continue
         if account_should_idle(account):
             continue
-        if current_daily_messages_sent(account) >= daily_account_cap(cfg, cap_default=15):
+        from .daily_quota import account_blocked_for_task
+
+        if await account_blocked_for_task(session, automation_id, account, "chat_broadcast", cfg, default_max=15):
             continue
         if not account.session_file_path:
             continue
@@ -386,7 +388,9 @@ async def run_chat_broadcast_pass(automation_id: int, run_config: dict[str, Any]
                     continue
                 if not await account_is_joined(session, chat.id, picked.id):
                     continue
-                if current_daily_messages_sent(picked) >= daily_account_cap(cfg, cap_default=15):
+                from .daily_quota import account_blocked_for_task
+
+                if await account_blocked_for_task(session, automation_id, picked, "chat_broadcast", cfg, default_max=15):
                     break
                 factor = activity_interval_scale(picked) if warmup_slow else 1
                 chain = list(messages)
