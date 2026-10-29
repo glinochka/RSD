@@ -2395,6 +2395,14 @@ const customService = {
     return handleResponse(response);
   },
 
+  async saveContentFactoryGrokBot(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_GROK_BOT(automationId)}`,
+      { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(data) },
+    );
+    return handleResponse(response);
+  },
+
   async updateContentFactorySettings(automationId, data) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS(automationId)}`,

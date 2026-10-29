@@ -395,12 +395,21 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
                 logger.warning("%s tick timed out for automation %s", name, automation_id)
                 results[name] = {"status": "timeout"}
         lifestyle_name = None
-        if lifestyle:
-            lifestyle_name, lifestyle_fn = lifestyle[hub.cursor % len(lifestyle)]
+        peer = next((item for item in lifestyle if item[0] == "peer_dialog"), None)
+        if peer is not None:
+            lifestyle_name = peer[0]
+            try:
+                results[peer[0]] = await asyncio.wait_for(peer[1](automation_id), timeout=120)
+            except TimeoutError:
+                logger.warning("%s tick timed out for automation %s", peer[0], automation_id)
+                results[peer[0]] = {"status": "timeout"}
+        others = [item for item in lifestyle if item[0] != "peer_dialog"]
+        if others:
+            lifestyle_name, lifestyle_fn = others[hub.cursor % len(others)]
             hub.cursor += 1
             try:
                 results[lifestyle_name] = await asyncio.wait_for(
-                    lifestyle_fn(automation_id), timeout=60
+                    lifestyle_fn(automation_id), timeout=75
                 )
             except TimeoutError:
                 logger.warning("%s tick timed out for automation %s", lifestyle_name, automation_id)

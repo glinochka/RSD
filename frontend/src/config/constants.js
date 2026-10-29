@@ -448,6 +448,7 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_TEST_DMP: (id) => `/api/custom/automations/${id}/test/dmp`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY: (id) => `/api/custom/automations/${id}/content-factory`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS: (id) => `/api/custom/automations/${id}/content-factory/settings`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_GROK_BOT: (id) => `/api/custom/automations/${id}/content-factory/grok-bot`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS: (id) => `/api/custom/automations/${id}/content-factory/accounts`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNT: (id, accountId) =>
     `/api/custom/automations/${id}/content-factory/accounts/${accountId}`,

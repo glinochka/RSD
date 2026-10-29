@@ -18,6 +18,7 @@ const emptyForm = {
   refresh_token: '',
   ig_user_id: '',
   board_id: '',
+  group_id: '',
 };
 
 const CustomAutomationContentFactoryAccountsPage = () => {
@@ -56,6 +57,7 @@ const CustomAutomationContentFactoryAccountsPage = () => {
     if (form.refresh_token.trim()) credentials.refresh_token = form.refresh_token.trim();
     if (form.ig_user_id.trim()) credentials.ig_user_id = form.ig_user_id.trim();
     if (form.board_id.trim()) credentials.board_id = form.board_id.trim();
+    if (form.group_id.trim()) credentials.group_id = form.group_id.trim();
     return credentials;
   };
 
@@ -78,6 +80,10 @@ const CustomAutomationContentFactoryAccountsPage = () => {
       setError('Pinterest: нужны access token и board_id');
       return;
     }
+    if (form.platform === 'vk' && (!credentials.access_token || !credentials.group_id)) {
+      setError('VK Клипы: нужен пользовательский токен и id сообщества');
+      return;
+    }
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -86,7 +92,7 @@ const CustomAutomationContentFactoryAccountsPage = () => {
         platform: form.platform,
         display_name: form.display_name,
         handle: form.handle,
-        external_id: form.external_id || form.ig_user_id,
+        external_id: form.external_id || form.ig_user_id || form.group_id,
         credentials,
       });
       setForm({ ...emptyForm, platform: form.platform });
@@ -239,6 +245,17 @@ const CustomAutomationContentFactoryAccountsPage = () => {
                 id="cf-ig"
                 value={form.ig_user_id}
                 onChange={(event) => setForm((current) => ({ ...current, ig_user_id: event.target.value }))}
+              />
+            </div>
+          ) : null}
+          {form.platform === 'vk' ? (
+            <div className="form-group">
+              <label htmlFor="cf-group">ID сообщества</label>
+              <input
+                id="cf-group"
+                value={form.group_id}
+                onChange={(event) => setForm((current) => ({ ...current, group_id: event.target.value }))}
+                placeholder="123456789 или club123456789"
               />
             </div>
           ) : null}

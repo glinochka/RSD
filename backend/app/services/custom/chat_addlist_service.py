@@ -849,9 +849,12 @@ def _plans_blob(automation: CustomAutomation | None) -> dict[str, Any]:
 
 
 def _store_plans(automation: CustomAutomation, plans: dict[str, Any]) -> None:
+    from sqlalchemy.orm.attributes import flag_modified
+
     blob = dict(automation.module_settings or {})
     blob[TASK_JOINS_KEY] = plans
     automation.module_settings = blob
+    flag_modified(automation, "module_settings")
     automation.updated_at = _utc_now()
 
 
@@ -1608,17 +1611,155 @@ async def _export_and_join_batches(
     return rows
 
 
-async def _resolve_input_peers(client: Any, chats: list[ChatTarget]) -> list[Any]:
-    from .telegram_invite import chat_entity_key
+_FOLDER_TITLE_LIMIT = 12
 
+
+def _folder_title(title: str | None) -> str:
+    """Telegram folder names are 1–12 characters."""
+    text = " ".join(str(title or "").split())
+    if not text:
+        text = "UBT"
+    return text[:_FOLDER_TITLE_LIMIT]
+
+
+def _shareable_peer(peer: Any) -> bool:
+    name = type(peer).__name__
+    if "User" in name:
+        return False
+    return "Channel" in name or name.endswith("Chat")
+
+
+def _peer_lookup_keys(chat: Any) -> list[str]:
+    """Id forms and @username. An addlist URL is not a peer."""
+    from .channel_post_listener import peer_id_keys
+
+    keys: list[str] = []
+    ext = getattr(chat, "external_chat_id", None)
+    text = str(ext or "").strip()
+    if text.lstrip("-").isdigit():
+        try:
+            keys.extend(peer_id_keys(int(text)))
+        except (TypeError, ValueError):
+            pass
+    link = getattr(chat, "invite_link", None)
+    if link and not parse_addlist_slug(str(link)):
+        try:
+            parsed = parse_telegram_chat_ref(str(link))
+        except TelegramChatRefError:
+            parsed = None
+        if parsed is not None and parsed.kind == "username":
+            keys.append(str(parsed.lookup_value).lstrip("@"))
+        elif parsed is not None and parsed.kind == "channel_id":
+            try:
+                keys.extend(peer_id_keys(int(parsed.value)))
+            except (TypeError, ValueError):
+                pass
+    return list(dict.fromkeys(key for key in keys if key))
+
+
+def _direct_peer_queries(chat: Any) -> list[Any]:
+    queries: list[Any] = []
+    for key in _peer_lookup_keys(chat):
+        if key.lstrip("-").isdigit():
+            try:
+                queries.append(int(key))
+            except (TypeError, ValueError):
+                continue
+        else:
+            queries.append(key)
+    return queries
+
+
+def _match_indexed_peer(chat: Any, by_key: dict[str, Any], titles: dict[str, Any]) -> Any | None:
+    for key in _peer_lookup_keys(chat):
+        peer = by_key.get(key)
+        if peer is not None:
+            return peer
+    title = str(getattr(chat, "title", None) or "").strip().casefold()
+    if not title:
+        return None
+    return titles.get(title)
+
+
+async def _paired_peers(client: Any, chats: list[ChatTarget]) -> tuple[list[Any], list[ChatTarget]]:
+    """Input peers for chats this account can actually put in a folder.
+
+    Numeric ids miss when the session cache has no access_hash. Private
+    invites are not entities. The account's dialogs are the fallback: if it
+    already joined, the chat is there.
+    """
     telethon = getattr(client, "client", client)
     peers: list[Any] = []
+    missing: list[ChatTarget] = []
     for chat in chats:
-        try:
-            entity = await telethon.get_input_entity(chat_entity_key(chat))
-            peers.append(entity)
-        except Exception:
+        found = None
+        for query in _direct_peer_queries(chat):
+            try:
+                candidate = await telethon.get_input_entity(query)
+            except Exception:
+                continue
+            if _shareable_peer(candidate):
+                found = candidate
+                break
+        if found is not None:
+            peers.append(found)
+        else:
+            missing.append(chat)
+    if not missing:
+        return peers, []
+    by_key: dict[str, Any] = {}
+    titles: dict[str, Any] = {}
+    try:
+        from telethon.utils import get_peer_id
+
+        from .channel_post_listener import peer_id_keys
+
+        async for dialog in telethon.iter_dialogs():
+            entity = getattr(dialog, "entity", None)
+            if entity is None:
+                continue
+            try:
+                peer = await telethon.get_input_entity(entity)
+            except Exception:
+                continue
+            if not _shareable_peer(peer):
+                continue
+            raw_ids = [getattr(entity, "id", None)]
+            try:
+                raw_ids.append(get_peer_id(entity))
+            except Exception:
+                pass
+            for raw in raw_ids:
+                for key in peer_id_keys(raw if isinstance(raw, int) else None):
+                    by_key[key] = peer
+            title = str(getattr(dialog, "title", None) or getattr(dialog, "name", None) or "").strip().casefold()
+            if not title:
+                continue
+            if title in titles:
+                titles[title] = None
+            else:
+                titles[title] = peer
+    except Exception as exc:
+        logger.warning("Addlist dialog scan failed: %s", exc)
+    resolved: list[Any] = []
+    still_missing: list[ChatTarget] = []
+    missing_ids = {id(chat) for chat in missing}
+    peer_index = 0
+    for chat in chats:
+        if id(chat) not in missing_ids:
+            resolved.append(peers[peer_index])
+            peer_index += 1
             continue
+        peer = _match_indexed_peer(chat, by_key, titles)
+        if peer is None:
+            still_missing.append(chat)
+        else:
+            resolved.append(peer)
+    return resolved, still_missing
+
+
+async def _resolve_input_peers(client: Any, chats: list[ChatTarget]) -> list[Any]:
+    peers, _missing = await _paired_peers(client, chats)
     return peers
 
 
@@ -1629,6 +1770,7 @@ async def _upsert_shareable_folder(
     filter_id: int | None = None,
     slug: str | None = None,
     title: str | None = None,
+    peers: list[Any] | None = None,
 ) -> tuple[str | None, int | None]:
     """Create or grow a Telegram folder + addlist. Host must already be in `chats`."""
     from telethon.tl import types
@@ -1636,14 +1778,23 @@ async def _upsert_shareable_folder(
     from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
 
     telethon = getattr(client, "client", client)
-    peers = await _resolve_input_peers(client, chats)
+    if peers is None:
+        peers = await _resolve_input_peers(client, chats)
     if not peers:
-        return None, None
+        names = [
+            str(getattr(chat, "title", None) or getattr(chat, "invite_link", None) or f"#{chat.id}")
+            for chat in chats[:6]
+        ]
+        raise ValueError(
+            "Аккаунт не видит выбранные чаты в своих диалогах: "
+            + ", ".join(names)
+            + ". Addlist собирается только из чатов, где он уже состоит."
+        )
     filters = await telethon(GetDialogFiltersRequest())
     existing = list(getattr(filters, "filters", None) or [])
     used = {int(getattr(item, "id", 0) or 0) for item in existing}
     raw_title = str(title or "").strip() or f"UBT {chats[0].id}"
-    title = raw_title[:32]
+    title = _folder_title(raw_title)
     if filter_id and filter_id in used:
         chosen = int(filter_id)
     else:
@@ -1679,28 +1830,32 @@ async def _export_folder_for_chats(client: Any, chats: list[ChatTarget]) -> tupl
 
 
 def _build_dialog_filter(filter_id: int, title: str, peers: list[Any]) -> Any:
+    """Shareable folder. A plain string title serializes as a type error and Telegram never mints the link."""
     from telethon.tl import types
 
-    kwargs = {
-        "id": filter_id,
-        "title": title,
-        "pinned_peers": [],
-        "include_peers": peers,
-        "exclude_peers": [],
-        "contacts": False,
-        "non_contacts": False,
-        "groups": False,
-        "broadcasts": False,
-        "bots": False,
-        "exclude_muted": False,
-        "exclude_read": False,
-        "exclude_archived": False,
-    }
-    try:
-        return types.DialogFilter(**kwargs)
-    except TypeError:
-        kwargs["title"] = types.TextWithEntities(text=title, entities=[])
-        return types.DialogFilter(**kwargs)
+    titled = types.TextWithEntities(text=_folder_title(title), entities=[])
+    if hasattr(types, "DialogFilterChatlist"):
+        return types.DialogFilterChatlist(
+            id=filter_id,
+            title=titled,
+            pinned_peers=[],
+            include_peers=peers,
+        )
+    return types.DialogFilter(
+        id=filter_id,
+        title=titled,
+        pinned_peers=[],
+        include_peers=peers,
+        exclude_peers=[],
+        contacts=False,
+        non_contacts=False,
+        groups=False,
+        broadcasts=False,
+        bots=False,
+        exclude_muted=False,
+        exclude_read=False,
+        exclude_archived=False,
+    )
 
 
 async def _join_addlist(client: Any, slug: str, chats: list[ChatTarget] | None = None) -> None:
@@ -1837,10 +1992,34 @@ async def export_manual_addlist(
     label = str(title or "").strip() or f"UBT {actor_label(account)}"
     try:
         async with TelegramAccountClient.for_account(account) as client:
-            slug, filter_id = await _upsert_shareable_folder(client, joined, title=label)
+            _peers, unresolved = await _paired_peers(client, joined)
+            unresolved_ids = {id(chat) for chat in unresolved}
+            ready = [chat for chat in joined if id(chat) not in unresolved_ids]
+            if not ready:
+                names = [
+                    str(getattr(chat, "title", None) or f"#{chat.id}")
+                    for chat in (unresolved or joined)[:6]
+                ]
+                raise ValueError(
+                    "Аккаунт не видит выбранные чаты в своих диалогах: "
+                    + ", ".join(names)
+                    + ". Addlist собирается только из чатов, где он уже состоит."
+                )
+            slug, filter_id = await _upsert_shareable_folder(
+                client,
+                ready,
+                title=label,
+                peers=_peers if len(_peers) == len(ready) else None,
+            )
+            joined = ready
+            for chat in unresolved:
+                skipped.append(str(getattr(chat, "title", None) or f"#{chat.id}"))
+    except ValueError:
+        raise
     except Exception as exc:
         logger.warning("Manual addlist failed account=%s: %s", account.id, exc)
-        raise ValueError("Telegram не собрал папку. Проверьте сессию аккаунта.") from exc
+        detail = str(exc).strip() or type(exc).__name__
+        raise ValueError(f"Telegram не собрал папку: {detail[:220]}") from exc
     if not slug:
         raise ValueError("Telegram не вернул ссылку addlist")
     row = {

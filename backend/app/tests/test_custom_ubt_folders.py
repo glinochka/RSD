@@ -672,6 +672,39 @@ class TestJobLifecycle:
         assert chat_addlist_slug(chat) == "AbCdEfGhIj"
         assert "addlist/AbCdEfGhIj" in (chat.invite_link or "")
 
+    def test_shareable_folder_serializes_with_short_title(self):
+        from app.services.custom.chat_addlist_service import _build_dialog_filter, _folder_title
+
+        title = _folder_title("ROMAAAAN (917777800855)")
+        assert 1 <= len(title) <= 12
+        folder = _build_dialog_filter(2, "ROMAAAAN (917777800855)", [])
+        assert type(folder.title).__name__ == "TextWithEntities"
+        assert folder.title.text == title
+        assert bytes(folder)
+        assert type(folder).__name__ == "DialogFilterChatlist"
+
+    def test_addlist_peer_keys_skip_folder_link(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_addlist_service import _match_indexed_peer, _peer_lookup_keys
+
+        chat = SimpleNamespace(
+            invite_link="https://t.me/addlist/AbCdEfGhIj",
+            external_chat_id="-1001234567890",
+            title="Журнал «iQTiSAD»",
+        )
+        keys = _peer_lookup_keys(chat)
+        assert "-1001234567890" in keys
+        assert "1234567890" in keys
+        assert all("addlist" not in key.lower() for key in keys)
+        peer = object()
+        assert _match_indexed_peer(chat, {"1234567890": peer}, {}) is peer
+        assert _match_indexed_peer(
+            SimpleNamespace(invite_link=None, external_chat_id=None, title="Журнал «iQTiSAD»"),
+            {},
+            {"журнал «iqtisad»": peer},
+        ) is peer
+
     def test_finite_complete_rules(self):
         from app.services.custom.job_service import _finite_should_complete
 

@@ -275,6 +275,7 @@ const CustomAutomationContentFactoryResultsPage = () => {
                       <h3>{video.hook || video.idea || `Ролик #${video.id}`}</h3>
                       <p>
                         {(video.extra?.media_kind === 'carousel' ? 'Карусель' : 'Видео')}
+                        {video.extra?.soundtrack?.mode ? ` · звук: ${video.extra.soundtrack.mode}` : ''}
                         {' · '}{video.content_format} · {video.visual_style} · {video.duration_seconds}с · {video.aspect_ratio}
                       </p>
                     </div>

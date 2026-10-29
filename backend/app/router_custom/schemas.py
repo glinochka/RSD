@@ -2061,6 +2061,16 @@ class ContentFactorySettingsUpdate(BaseModel):
     script_model: Optional[str] = Field(None, max_length=128)
     video_model: Optional[str] = Field(None, max_length=128)
     tts_model: Optional[str] = Field(None, max_length=128)
+    tts_voice: Optional[str] = Field(None, max_length=64)
+    carousel_share: Optional[int] = Field(None, ge=0, le=100)
+    image_provider: Optional[str] = Field(None, max_length=32)
+    image_model: Optional[str] = Field(None, max_length=128)
+    xai_api_key: Optional[str] = None
+    clear_xai_api_key: Optional[bool] = None
+    music_mode: Optional[str] = Field(None, max_length=16)
+    music_volume: Optional[int] = Field(None, ge=0, le=100)
+    grok_bot_name: Optional[str] = Field(None, max_length=80)
+    grok_bot_brief: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     kling_api_key: Optional[str] = None
@@ -2101,6 +2111,12 @@ class ContentFactoryAccountUpdateRequest(BaseModel):
     credentials: Optional[dict[str, str]] = None
     pause: Optional[bool] = None
     resume: Optional[bool] = None
+
+
+class ContentFactoryGrokBotRequest(BaseModel):
+    grok_bot_name: Optional[str] = Field(None, max_length=80)
+    grok_bot_brief: Optional[str] = None
+    xai_api_key: Optional[str] = None
 
 
 class ContentFactoryYoutubeOauthStartRequest(BaseModel):

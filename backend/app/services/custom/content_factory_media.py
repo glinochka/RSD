@@ -254,33 +254,30 @@ def uniqualize_file(*, source: Path, dest: Path, recipe: dict[str, Any], aspect_
         filters.append("hflip")
     vf = ",".join(filters)
     atempo = max(0.5, min(2.0, speed))
-    args = ["-y"]
-    if shift_ms:
-        args.extend(["-ss", f"{shift_ms}ms"])
-    args.extend(
-        [
-            "-i",
-            str(source),
-            "-vf",
-            vf,
-            "-af",
-            f"atempo={atempo:.4f}",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(dest),
-        ]
+    cents = max(-200, min(200, int(recipe.get("audio_pitch_cents") or 0)))
+    ratio = 2 ** (cents / 1200.0)
+    pitch_fix = 1.0 / ratio if ratio else 1.0
+    combined = max(0.5, min(2.0, atempo * pitch_fix))
+    duck_db = max(0.0, min(6.0, float(recipe.get("audio_duck_db") or 0.0)))
+    loudness = 10 ** (-duck_db / 20.0)
+    audio_filter = (
+        f"asetrate={int(44100 * ratio)},aresample=44100,"
+        f"atempo={combined:.4f},volume={loudness:.3f}"
     )
+    base = ["-y"]
+    if shift_ms:
+        base.extend(["-ss", f"{shift_ms}ms"])
+    base.extend(["-i", str(source), "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"])
+    with_audio = [*base, "-af", audio_filter, "-c:a", "aac", str(dest)]
+    silent = [*base, "-an", str(dest)]
     try:
-        _run_ffmpeg(args, timeout=180)
+        _run_ffmpeg(with_audio, timeout=180)
     except Exception as exc:
-        logger.warning("Uniqualize ffmpeg failed, passthrough: %s", exc)
-        shutil.copyfile(source, dest)
+        try:
+            _run_ffmpeg(silent, timeout=180)
+        except Exception:
+            logger.warning("Uniqualize ffmpeg failed, passthrough: %s", exc)
+            shutil.copyfile(source, dest)
     return dest
 
 
@@ -322,6 +319,165 @@ def slides_to_mp4(slide_paths: list[Path], dest: Path, *, seconds: float = 2.4) 
     return dest
 
 
+DEFAULT_GROK_CAROUSEL_BRIEF = (
+    "Стиль как у живой фото-карусели Grok Bot: вертикальные кадры 9:16, "
+    "один герой и один свет на всю пачку, без текста, логотипов и водяных знаков."
+)
+GROK_CAROUSEL_MODEL = "grok-4.7"
+
+
+def factory_grok_bot_id(automation_id: int) -> str:
+    return f"cf-carousel-{int(automation_id)}"
+
+
+def grok_carousel_message(
+    *,
+    company: str,
+    description: str,
+    audience: str,
+    niche: str,
+    brief: str,
+    avoid: list[str] | None = None,
+    follow_up: bool = False,
+) -> str:
+    """One message. The agent picks the theme and calls Imagine itself."""
+    skipped = [str(item).strip() for item in (avoid or []) if str(item).strip()]
+    style = str(brief or "").strip() or DEFAULT_GROK_CAROUSEL_BRIEF
+    if follow_up:
+        text = (
+            "Сделай новую фото-карусель с другой тематикой и другим сценарием. "
+            "Снова 6 или 7 отдельных вертикальных кадров 9:16, в порядке свайпа. "
+            "Не повторяй прошлые темы. Без текста на фото. "
+            "Каждый кадр — отдельный вызов картинки, не коллаж."
+        )
+    else:
+        text = (
+            f"Стиль и дизайн:\n{style}\n\n"
+            f"Компания: {company or 'не указана'}.\n"
+            f"Что делаем: {description or 'не указано'}.\n"
+            f"Кому: {audience or 'не указано'}. Ниша: {niche or 'не указана'}.\n\n"
+            "Выбери тематику и сделай фото-карусель для контент-завода. "
+            "Сразу 6 или 7 хороших вертикальных кадров 9:16, которые уже можно заливать. "
+            "Порядок — порядок свайпа: первый кадр цепляет, последний закрывает мысль. "
+            "Без текста, логотипов и водяных знаков. "
+            "Каждый кадр рисуй отдельным вызовом картинки, не склеивай в один коллаж."
+        )
+    if skipped:
+        text += "\nНе повторяй: " + "; ".join(skipped[:8])
+    text += "\nВ тексте ответа коротко назови тему и дай подпись к посту. Картинки важнее текста."
+    return text
+
+
+def grok_agent_pack(payload: dict[str, Any]) -> dict[str, Any]:
+    """Images stay in the order the agent emitted them."""
+    import base64
+
+    images: list[dict[str, str]] = []
+    texts: list[str] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "image_generation_call" and str(item.get("status") or "completed") == "completed":
+            raw = str(item.get("result") or "").strip()
+            if raw.startswith("data:") and "," in raw:
+                raw = raw.split(",", 1)[1]
+            if raw:
+                images.append({"b64": raw, "prompt": str(item.get("prompt") or "")[:500]})
+        elif item.get("type") == "message":
+            content = item.get("content")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, str):
+                        texts.append(part)
+                    elif isinstance(part, dict):
+                        texts.append(str(part.get("text") or ""))
+    decoded: list[dict[str, Any]] = []
+    for image in images:
+        try:
+            blob = base64.b64decode(image["b64"])
+        except Exception:
+            continue
+        if blob:
+            decoded.append({"bytes": blob, "prompt": image["prompt"]})
+    return {
+        "images": decoded,
+        "text": "\n".join(part.strip() for part in texts if str(part).strip()).strip(),
+        "response_id": str(payload.get("id") or "").strip(),
+    }
+
+
+async def generate_grok_carousel_pack(
+    *,
+    api_key: str,
+    company: str,
+    description: str,
+    audience: str,
+    niche: str,
+    brief: str,
+    avoid: list[str] | None,
+    previous_response_id: str,
+    folder: Path,
+) -> dict[str, Any]:
+    """One Responses call. Grok writes the prompts and generates the pack."""
+    folder.mkdir(parents=True, exist_ok=True)
+    thread = str(previous_response_id or "").strip()
+
+    async def _ask(follow_up: bool, response_id: str) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": GROK_CAROUSEL_MODEL,
+            "input": grok_carousel_message(
+                company=company,
+                description=description,
+                audience=audience,
+                niche=niche,
+                brief=brief,
+                avoid=avoid,
+                follow_up=follow_up,
+            ),
+            "tools": [{"type": "image_generation", "action": "auto"}],
+        }
+        if follow_up and response_id:
+            body["previous_response_id"] = response_id
+        async with httpx.AsyncClient(timeout=360.0) as client:
+            response = await client.post(
+                "https://api.x.ai/v1/responses",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=body,
+            )
+        if response.status_code >= 400:
+            raise RuntimeError(f"Grok Bot: HTTP {response.status_code} {response.text[:240]}")
+        payload = response.json() if response.content else {}
+        if not isinstance(payload, dict):
+            raise RuntimeError("Grok Bot вернул пустой ответ")
+        return grok_agent_pack(payload)
+
+    try:
+        pack = await _ask(bool(thread), thread)
+    except RuntimeError:
+        if not thread:
+            raise
+        pack = await _ask(False, "")
+    images = pack["images"]
+    if len(images) < 4:
+        raise RuntimeError(f"Grok Bot вернул {len(images)} кадров, для карусели нужно 6–7")
+    paths: list[Path] = []
+    prompts: list[str] = []
+    for index, image in enumerate(images[:7]):
+        dest = folder / f"slide-{index:02d}.png"
+        dest.write_bytes(image["bytes"])
+        paths.append(dest)
+        prompts.append(image["prompt"])
+    return {
+        "paths": paths,
+        "prompts": prompts,
+        "text": pack["text"],
+        "response_id": pack["response_id"],
+        "continued": bool(thread),
+    }
+
+
 async def generate_slide_png(*, provider: str, model: str, api_key: str, prompt: str, dest: Path) -> Path:
     from openai import AsyncOpenAI
 
@@ -352,6 +508,128 @@ async def generate_slide_png(*, provider: str, model: str, api_key: str, prompt:
     if not url:
         raise RuntimeError("Модель картинок вернула пустой кадр")
     await download_to_file(url, dest)
+    return dest
+
+
+def voiceover_lines(video: Any) -> str:
+    parts: list[str] = []
+    hook = str(getattr(video, "hook", "") or "").strip()
+    if hook:
+        parts.append(hook)
+    for scene in getattr(video, "storyboard", None) or []:
+        if not isinstance(scene, dict):
+            continue
+        line = str(scene.get("voiceover") or "").strip()
+        if line and line not in parts:
+            parts.append(line)
+    return "\n".join(parts)[:2400]
+
+
+def write_music_bed(dest: Path, *, seconds: float = 8.0, seed: str = "bed") -> Path:
+    """Original instrumental loop. No third-party track, so it can ship with the slideshow."""
+    import hashlib
+    import math
+    import struct
+    import wave
+
+    rate = 22050
+    length = max(4.0, min(float(seconds), 16.0))
+    count = int(rate * length)
+    digest = hashlib.sha256(str(seed).encode("utf-8")).digest()
+    root = 196.0 * (2 ** ((digest[0] % 5) / 12.0))
+    scale = (0, 3, 5, 7, 10, 7, 5, 3)
+    frames = bytearray()
+    for index in range(count):
+        moment = index / rate
+        step = int(moment / 0.5) % len(scale)
+        freq = root * (2 ** (scale[step] / 12.0))
+        envelope = math.exp(-((moment % 0.5) * 5.5))
+        sample = 0.22 * envelope * math.sin(2 * math.pi * freq * moment)
+        sample += 0.07 * math.sin(2 * math.pi * (root / 2.0) * moment)
+        clipped = max(-1.0, min(1.0, sample))
+        frames += struct.pack("<h", int(clipped * 26000))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(dest), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(frames)
+    return dest
+
+
+def mix_soundtrack(
+    *,
+    video: Path,
+    dest: Path,
+    bed: Path | None = None,
+    voice: Path | None = None,
+    bed_volume: float = 0.32,
+    voice_volume: float = 1.0,
+) -> Path:
+    """Lay voice and a looping bed under a silent slideshow or an existing clip."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tracks: list[tuple[Path, float, bool]] = []
+    if voice and voice.exists() and voice.stat().st_size > 0:
+        tracks.append((voice, max(0.0, min(1.5, voice_volume)), False))
+    if bed and bed.exists() and bed.stat().st_size > 0:
+        tracks.append((bed, max(0.0, min(1.0, bed_volume)), True))
+    if not tracks:
+        if video.resolve() != dest.resolve():
+            shutil.copyfile(video, dest)
+        return dest
+    if not ffmpeg_bin():
+        raise RuntimeError("ffmpeg не найден — музыку не наложить")
+    args = ["-y", "-i", str(video)]
+    filters: list[str] = []
+    labels: list[str] = []
+    for index, (path, volume, loop) in enumerate(tracks, start=1):
+        if loop:
+            args.extend(["-stream_loop", "-1"])
+        args.extend(["-i", str(path)])
+        label = f"a{index}"
+        filters.append(f"[{index}:a]volume={volume:.3f}[{label}]")
+        labels.append(f"[{label}]")
+    if len(labels) == 1:
+        mixed = labels[0]
+    else:
+        filters.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[mix]")
+        mixed = "[mix]"
+    args.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "0:v",
+            "-map",
+            mixed,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(dest),
+        ]
+    )
+    _run_ffmpeg(args, timeout=180)
+    return dest
+
+
+async def synthesize_voiceover(*, api_key: str, voice_id: str, model_id: str, text: str, dest: Path) -> Path:
+    speech = str(text or "").strip()
+    if not api_key or not speech:
+        raise RuntimeError("Нет текста или ключа для озвучки")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        response = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": api_key, "accept": "audio/mpeg"},
+            json={"text": speech[:2400], "model_id": model_id or "eleven_multilingual_v2"},
+        )
+    if not response.is_success or not response.content:
+        raise RuntimeError(f"ElevenLabs: HTTP {response.status_code} {response.text[:180]}")
+    dest.write_bytes(response.content)
     return dest
 
 

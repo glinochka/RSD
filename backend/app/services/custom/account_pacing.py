@@ -979,12 +979,7 @@ def account_humanization_should_idle(
     if in_daily_idle_gap(getattr(account, "id", None), now=now):
         return True
     if account_humanization_is_resting(account, now=now):
-        wait = 0.0
-        nxt = getattr(account, "next_humanization_at", None)
-        if nxt is not None:
-            wait = (nxt - (now or _utc_now())).total_seconds()
-        if wait <= 8 * 60:
-            return True
+        return True
     if ignore_hours:
         return False
     if not in_configured_work_hours(now, account_id=getattr(account, "id", None)):

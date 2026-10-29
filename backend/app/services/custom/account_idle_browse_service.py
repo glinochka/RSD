@@ -157,6 +157,13 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
         farm_questions = await _recent_farm_questions(session, automation_id)
         for pool_account, social in sample:
             try:
+                # Reserve the 15–30 min slot before the Telegram burst. A tick
+                # timeout used to cancel the pass before this was saved, so the
+                # same accounts reconnected and repeated the same API calls.
+                await session.refresh(social)
+                schedule_account_humanization_rest(social)
+                await session.commit()
+                await session.refresh(social)
                 policy = await load_comment_contact_policy(session, social)
                 pending = [item for item in farm_questions if int(item.get("account_id") or 0) != social.id]
                 async with TelegramAccountClient.for_account(social) as client:
@@ -227,7 +234,6 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
                 browsed += 1
                 sessions.append({"account_id": social.id, **outcome})
                 record_successful_humanization(social)
-                schedule_account_humanization_rest(social)
                 await session.commit()
             except Exception as exc:
                 errors += 1

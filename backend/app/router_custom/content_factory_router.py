@@ -11,6 +11,7 @@ from .dependencies import get_current_custom_automation
 from .schemas import (
     ContentFactoryAccountConnectRequest,
     ContentFactoryAccountUpdateRequest,
+    ContentFactoryGrokBotRequest,
     ContentFactorySettingsUpdate,
     ContentFactoryYoutubeOauthStartRequest,
 )
@@ -90,6 +91,54 @@ async def update_content_factory_settings(
 
 
 @router.get("/automations/{automation_id}/content-factory/accounts")
+@router.post("/automations/{automation_id}/content-factory/grok-bot")
+async def save_grok_carousel_bot(
+    automation_id: int,
+    payload: ContentFactoryGrokBotRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    """Keep one carousel bot for the factory. xAI has no create-bot call, so the brief lives here."""
+    import httpx
+
+    async with async_session_maker() as session:
+        row = await get_or_create_settings(session, automation.id)
+        incoming = payload.model_dump(exclude_unset=True)
+        apply_settings_update(row, incoming)
+        await session.commit()
+        await session.refresh(row)
+        key = ""
+        raw = getattr(row, "xai_api_key_enc", None)
+        if raw:
+            try:
+                key = decrypt_token(raw)
+            except Exception:
+                key = ""
+        key = key or (app_settings.XAI_API_KEY or "").strip()
+        ready = False
+        detail = "Сохраните ключ xAI, затем бот сможет собирать пачки."
+        if key:
+            try:
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    response = await client.get(
+                        "https://api.x.ai/v1/models",
+                        headers={"Authorization": f"Bearer {key}"},
+                    )
+                if response.is_success:
+                    ready = True
+                    detail = "Бот сохранён. Ключ Grok отвечает, карусели пойдут через него."
+                else:
+                    detail = f"Ключ Grok не принят: HTTP {response.status_code}"
+            except Exception as exc:
+                detail = f"До Grok не достучались: {exc}"[:240]
+        return {
+            "bot_id": factory_grok_bot_id(automation.id),
+            "grok_bot_name": row.grok_bot_name,
+            "grok_bot_brief": row.grok_bot_brief,
+            "ready": ready,
+            "detail": detail,
+        }
+
+
 async def get_content_factory_accounts(
     automation_id: int,
     automation: CustomAutomation = Depends(get_current_custom_automation),

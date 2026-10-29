@@ -9,6 +9,7 @@ import httpx
 
 from ...config import settings
 from ...services.youtube_client import get_youtube_client
+from .content_factory_antifraud import PHOTO_CAROUSEL_PLATFORMS, vk_group_id
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ def youtube_oauth_url(*, state: str, redirect_uri: str | None = None) -> str:
 
 async def youtube_exchange_code(*, code: str, redirect_uri: str | None = None) -> dict[str, Any]:
     return await get_youtube_client().exchange_code_for_tokens(code=code, redirect_uri=redirect_uri)
+
+
+def publish_uses_slides(platform: str, media_kind: str) -> bool:
+    return str(media_kind or "") == "carousel" and str(platform or "") in PHOTO_CAROUSEL_PLATFORMS
 
 
 async def publish_to_platform(
@@ -73,6 +78,16 @@ async def publish_to_platform(
         if slides:
             return await _publish_pinterest_images(credentials=credentials, image_urls=slides, title=title, caption=caption)
         return await _publish_pinterest(credentials=credentials, video_url=video_url, title=title, caption=caption)
+    if platform == "vk":
+        if slides and not str(video_url or "").strip():
+            raise PublisherError("VK Клипы: слайд-шоу из кадров не собралось. На сервере нужен ffmpeg.")
+        return await _publish_vk(
+            credentials=credentials,
+            video_url=video_url,
+            title=title,
+            caption=caption,
+            publisher_state=publisher_state or {},
+        )
     raise PublisherError(f"Неизвестная площадка: {platform}")
 
 
@@ -88,6 +103,8 @@ async def fetch_post_analytics(*, platform: str, credentials: dict[str, Any], ex
             return await _tiktok_stats(credentials=credentials, video_id=external_id)
         if platform == "pinterest":
             return await _pinterest_stats(credentials=credentials, pin_id=external_id)
+        if platform == "vk":
+            return await _vk_stats(credentials=credentials, external_id=external_id)
     except Exception as exc:
         logger.warning("Content factory analytics failed platform=%s: %s", platform, exc)
     return None
@@ -517,6 +534,157 @@ async def _pinterest_stats(*, credentials: dict[str, Any], pin_id: str) -> dict[
         "comments": int(lifetime.get("comment") or 0),
         "shares": int(lifetime.get("outbound_click") or 0),
         "saves": int(lifetime.get("save") or 0),
+    }
+
+
+def vk_clip_url(owner_id: int | str, video_id: int | str) -> str:
+    return f"https://vk.com/clip{int(owner_id)}_{int(video_id)}"
+
+
+def _vk_error_text(payload: dict[str, Any]) -> str:
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return ""
+    return f"{error.get('error_code')} {error.get('error_msg') or ''}".strip()
+
+
+async def _vk_method(client: httpx.AsyncClient, method: str, token: str, **params: Any) -> dict[str, Any]:
+    response = await client.post(
+        f"https://api.vk.com/method/{method}",
+        data={"access_token": token, "v": "5.199", **params},
+    )
+    payload = response.json() if response.content else {}
+    if not isinstance(payload, dict):
+        raise PublisherError(f"VK {method}: пустой ответ")
+    error = _vk_error_text(payload)
+    if error:
+        raise PublisherError(f"VK {method}: {error}")
+    result = payload.get("response")
+    return result if isinstance(result, dict) else {}
+
+
+async def _publish_vk(
+    *,
+    credentials: dict[str, Any],
+    video_url: str | None,
+    title: str,
+    caption: str,
+    publisher_state: dict[str, Any],
+) -> dict[str, Any]:
+    """VK Клипы: shortVideo.create → upload → shortVideo.publish."""
+    from .content_factory_media import resolve_video_bytes
+
+    token = str(credentials.get("access_token") or "").strip()
+    group_id = vk_group_id(credentials.get("group_id") or credentials.get("external_id"))
+    if not token or not group_id:
+        raise PublisherError("VK Клипы: нужен access_token пользователя и id сообщества")
+    state = publisher_state or {}
+    video_id = str(state.get("vk_video_id") or "").strip()
+    owner_id = str(state.get("vk_owner_id") or "").strip()
+    description = (caption or title or "Клип")[:4000]
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        if not video_id or not owner_id:
+            if not str(video_url or "").strip():
+                raise PublisherError("VK Клипы: нет файла слайд-шоу. На сервере нужен ffmpeg.")
+            try:
+                media = await resolve_video_bytes(video_url)
+            except Exception as exc:
+                raise PublisherError(str(exc)) from exc
+            created = await _vk_method(
+                client,
+                "shortVideo.create",
+                token,
+                group_id=group_id,
+                file_size=len(media),
+                description=description,
+                wallpost=1,
+            )
+            upload_url = str(created.get("upload_url") or "").strip()
+            video_id = str(created.get("video_id") or "").strip()
+            owner_id = str(created.get("owner_id") or "").strip()
+            if not upload_url:
+                raise PublisherError("VK Клипы не вернули ссылку загрузки. Нужен пользовательский токен с правом на клипы.")
+            uploaded = await client.post(
+                upload_url,
+                files={"file": ("clip.mp4", media, "video/mp4")},
+            )
+            body: dict[str, Any] = {}
+            try:
+                parsed = uploaded.json() if uploaded.content else {}
+                if isinstance(parsed, dict):
+                    body = parsed
+            except Exception:
+                body = {}
+            video_id = str(body.get("video_id") or video_id).strip()
+            owner_id = str(body.get("owner_id") or owner_id).strip()
+            if not uploaded.is_success or not video_id or not owner_id:
+                raise PublisherError(f"VK Клипы: загрузка файла не прошла (HTTP {uploaded.status_code})")
+            return {
+                "status": "processing",
+                "external_id": f"{owner_id}_{video_id}",
+                "posted_url": "",
+                "publisher_state": {"vk_video_id": video_id, "vk_owner_id": owner_id, "vk_stage": "uploaded"},
+                "note": "Клип загружен в VK. Опубликуем после обработки файла.",
+            }
+        try:
+            await _vk_method(
+                client,
+                "shortVideo.edit",
+                token,
+                video_id=video_id,
+                owner_id=owner_id,
+                description=description,
+            )
+        except PublisherError as exc:
+            logger.info("VK clip edit skipped: %s", exc)
+        try:
+            await _vk_method(
+                client,
+                "shortVideo.publish",
+                token,
+                video_id=video_id,
+                owner_id=owner_id,
+                license_agree=1,
+                wallpost=1,
+            )
+        except PublisherError as exc:
+            text = str(exc)
+            if "3001" in text or "обраб" in text.lower() or "not ready" in text.lower():
+                return {
+                    "status": "processing",
+                    "external_id": f"{owner_id}_{video_id}",
+                    "posted_url": "",
+                    "publisher_state": {"vk_video_id": video_id, "vk_owner_id": owner_id, "vk_stage": "uploaded"},
+                    "note": "VK ещё обрабатывает клип.",
+                }
+            raise
+    return {
+        "status": "posted",
+        "external_id": f"{owner_id}_{video_id}",
+        "posted_url": vk_clip_url(owner_id, video_id),
+        "publisher_state": {"vk_video_id": video_id, "vk_owner_id": owner_id, "vk_stage": "published"},
+        "note": "Опубликован клип VK.",
+    }
+
+
+async def _vk_stats(*, credentials: dict[str, Any], external_id: str) -> dict[str, int] | None:
+    token = str(credentials.get("access_token") or "").strip()
+    raw = str(external_id or "").strip()
+    if not token or "_" not in raw:
+        return None
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        payload = await _vk_method(client, "video.get", token, videos=raw)
+    items = payload.get("items") if isinstance(payload, dict) else None
+    first = items[0] if isinstance(items, list) and items else {}
+    if not isinstance(first, dict) or not first:
+        return None
+    likes = first.get("likes") if isinstance(first.get("likes"), dict) else {}
+    return {
+        "views": int(first.get("views") or 0),
+        "likes": int((likes or {}).get("count") or 0),
+        "comments": int(first.get("comments") or 0),
+        "shares": int(first.get("reposts", {}).get("count") or 0) if isinstance(first.get("reposts"), dict) else 0,
+        "saves": 0,
     }
 
 

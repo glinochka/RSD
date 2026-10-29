@@ -115,6 +115,7 @@ const UbtDistributeChats = ({
   const [picker, setPicker] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [errorAccountId, setErrorAccountId] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [reserveDraft, setReserveDraft] = useState('');
   const [expanded, setExpanded] = useState({});
@@ -123,6 +124,7 @@ const UbtDistributeChats = ({
   const [pickedFolders, setPickedFolders] = useState([]);
   const [pickedChats, setPickedChats] = useState({});
   const [messageHint, setMessageHint] = useState(null);
+  const [madeLink, setMadeLink] = useState(null);
   const [addlistRefresh, setAddlistRefresh] = useState(0);
 
   const loadPool = useCallback(async () => {
@@ -313,6 +315,7 @@ const UbtDistributeChats = ({
     }
     setBusy(true);
     setError(null);
+    setErrorAccountId(account.id);
     try {
       const data = await customService.createTaskAddlist(automationId, {
         accountId: account.id,
@@ -322,7 +325,11 @@ const UbtDistributeChats = ({
       });
       setPickedChats((prev) => ({ ...prev, [account.id]: [] }));
       setAddlistRefresh((prev) => prev + 1);
-      setMessageHint(`Addlist готов: ${data.url} (${data.chat_count} чатов)`);
+      setMadeLink({ accountId: account.id, url: data.url, count: data.chat_count || 0 });
+      const skipped = (data.skipped || []).length;
+      setMessageHint(
+        `Addlist готов: ${data.url} (${data.chat_count || 0} чатов)${skipped ? `. Не вошли ${skipped}` : ''}`,
+      );
     } catch (err) {
       setError(err.message || 'Не удалось собрать addlist');
     } finally {
@@ -415,6 +422,10 @@ const UbtDistributeChats = ({
                     ) : (item.joined_count ? (
                       <span className="nc-muted">Отметьте вступившие — соберём addlist для повторного входа</span>
                     ) : null)}
+                    {madeLink?.accountId === item.id ? (
+                      <a className="nc-addlist-row" href={madeLink.url} target="_blank" rel="noreferrer">{madeLink.url}</a>
+                    ) : null}
+                    {error && errorAccountId === item.id ? <p className="acc-flash acc-flash--error">{error}</p> : null}
                   </div>
                 ) : null}
               </div>

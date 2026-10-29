@@ -9,7 +9,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 
-PLATFORMS = ("youtube", "instagram", "pinterest", "tiktok")
+PLATFORMS = ("youtube", "instagram", "pinterest", "tiktok", "vk")
+PHOTO_CAROUSEL_PLATFORMS = frozenset({"instagram", "tiktok", "pinterest"})
 
 CONTENT_FORMATS = (
     "educational",
@@ -226,6 +227,7 @@ def caption_variant(
         "instagram": "Сохрани, чтобы не потерять.",
         "tiktok": "Досмотри до хука — там суть.",
         "pinterest": "Идея, которую можно внедрить сегодня.",
+        "vk": "Клип для тех, кто листает ленту.",
     }
     extra = suffixes.get(platform, "")
     url = str(product_url or "").strip()
@@ -233,7 +235,7 @@ def caption_variant(
     if extra and extra.lower() not in text.lower():
         parts.append(extra)
     if url and url not in text:
-        if platform in {"youtube", "pinterest"}:
+        if platform in {"youtube", "pinterest", "vk"}:
             parts.append(url)
         else:
             parts.append("Ссылка в профиле.")
@@ -268,7 +270,7 @@ def uniqualize_recipe(*, platform: str, seed: str, enabled: bool) -> dict[str, A
         "audio_pitch_cents": pitch,
         "intro_frame_shift_ms": shift_ms,
         "grain": bool(digest[5] % 2),
-        "mirror_safe": platform != "youtube",
+        "mirror_safe": platform not in {"youtube", "vk"},
         "audio_duck_db": round(0.4 + (digest[6] / 255.0) * 1.4, 2),
     }
 
@@ -377,7 +379,18 @@ def validate_platform_credentials(
     elif name == "pinterest":
         if not cleaned.get("access_token") or not cleaned.get("board_id"):
             raise ValueError("Pinterest: нужны access_token и board_id")
+    elif name == "vk":
+        group_id = vk_group_id(cleaned.get("group_id") or external_id)
+        if not cleaned.get("access_token") or not group_id:
+            raise ValueError("VK: нужны access_token сообщества и id группы")
+        cleaned["group_id"] = group_id
     return cleaned
+
+
+def vk_group_id(raw: str | None) -> str:
+    text = str(raw or "").strip().lower().replace("club", "").replace("public", "")
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return digits.lstrip("0") or digits
 
 
 def factory_return_url(return_url: str | None, automation_id: int, *, base_url: str = "") -> str:

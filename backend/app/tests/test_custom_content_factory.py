@@ -414,3 +414,56 @@ def test_carousel_share_is_the_photo_slice():
     assert pick_media_kind(30, 30) == "carousel"
     assert pick_media_kind(30, 31) == "video"
     assert pick_media_kind(100, 100) == "carousel"
+
+
+def test_carousel_goes_to_photo_platforms_and_slideshow_elsewhere():
+    from app.services.custom.content_factory_publishers import publish_uses_slides, vk_clip_url
+
+    assert publish_uses_slides("instagram", "carousel") is True
+    assert publish_uses_slides("tiktok", "carousel") is True
+    assert publish_uses_slides("pinterest", "carousel") is True
+    assert publish_uses_slides("youtube", "carousel") is False
+    assert publish_uses_slides("vk", "carousel") is False
+    assert vk_clip_url(-123, 456) == "https://vk.com/clip-123_456"
+
+
+def test_one_grok_bot_returns_frames_in_swipe_order():
+    import base64
+
+    from app.services.custom.content_factory_media import factory_grok_bot_id, grok_agent_pack, grok_carousel_message
+
+    assert factory_grok_bot_id(4) == factory_grok_bot_id(4)
+    first = grok_carousel_message(company="Масштаб", description="ведём соцсети", audience="", niche="", brief="строгий стиль", avoid=["старая тема"], follow_up=False)
+    again = grok_carousel_message(company="Масштаб", description="", audience="", niche="", brief="", avoid=[], follow_up=True)
+    assert "Выбери тематику" in first
+    assert "другой тематикой" in again
+    assert "старая тема" in first
+    blob = base64.b64encode(b"png-a").decode()
+    blob_b = base64.b64encode(b"png-b").decode()
+    pack = grok_agent_pack({
+        "id": "resp_1",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "Тема: очередь в кофейне"}]},
+            {"type": "image_generation_call", "status": "completed", "prompt": "кадр 1", "result": blob},
+            {"type": "image_generation_call", "status": "completed", "prompt": "кадр 2", "result": blob_b},
+        ],
+    })
+    assert pack["response_id"] == "resp_1"
+    assert [item["bytes"] for item in pack["images"]] == [b"png-a", b"png-b"]
+    assert "очередь" in pack["text"]
+
+
+def test_music_bed_is_an_original_wav(tmp_path):
+    from app.services.custom.content_factory_media import voiceover_lines, write_music_bed
+
+    bed = write_music_bed(tmp_path / "bed.wav", seconds=4, seed="clip-1")
+    assert bed.read_bytes()[:4] == b"RIFF"
+    assert bed.stat().st_size > 1000
+
+    class _Video:
+        hook = "Стоп. Это тот самый ролик."
+        storyboard = [{"voiceover": "Кадр про новость"}, {"voiceover": "Кадр про новость"}]
+
+    text = voiceover_lines(_Video())
+    assert text.startswith("Стоп")
+    assert text.count("Кадр про новость") == 1

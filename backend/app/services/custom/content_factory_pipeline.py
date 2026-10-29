@@ -50,13 +50,19 @@ from .content_factory_media import (
     clip_prompt,
     concat_clips,
     download_to_file,
+    generate_grok_carousel_pack,
     generate_slide_png,
+    factory_grok_bot_id,
     local_path_from_url,
+    mix_soundtrack,
     plan_clip_durations,
     public_media_url,
     slides_to_mp4,
+    synthesize_voiceover,
     uniqualize_file,
     video_dir,
+    voiceover_lines,
+    write_music_bed,
     write_thumbnail,
 )
 from .content_factory_publishers import PublisherError, fetch_post_analytics, publish_to_platform
@@ -172,7 +178,10 @@ async def _enqueue_if_due(
     formats = list(settings.content_formats or ["educational"])
     styles = list(settings.visual_styles or ["realism"])
     duration = random.randint(int(settings.duration_min or 30), max(int(settings.duration_min or 30), int(settings.duration_max or 45)))
-    media_kind = pick_media_kind(int(getattr(settings, "carousel_share", 0) or 0), random.randint(1, 100))
+    share = int(getattr(settings, "carousel_share", 0) or 0)
+    if share and not _carousel_key(settings)[2]:
+        share = 0
+    media_kind = pick_media_kind(share, random.randint(1, 100))
     video = CustomContentFactoryVideo(
         custom_automation_id=automation_id,
         status="queued",
@@ -230,7 +239,14 @@ async def _advance_video(
         elif video.status in {"ideating", "scripting"}:
             await _write_idea_and_script(session, video, settings)
         elif video.status == "rendering":
-            if str((video.extra or {}).get("media_kind") or "") == "carousel":
+            kind = str((video.extra or {}).get("media_kind") or "")
+            if kind == "carousel" and not _carousel_key(settings)[2]:
+                extra = dict(video.extra or {})
+                extra["media_kind"] = "video"
+                extra["carousel_skipped"] = "no_image_key"
+                video.extra = extra
+                kind = "video"
+            if kind == "carousel":
                 await _render_carousel(session, video, settings)
             else:
                 await _render_video(session, video, settings)
@@ -339,7 +355,7 @@ async def _generate_pack(
 def _creative_system(carousel: bool) -> str:
     from .creative_voice import LIVING_VOICE, NEWS_PEG, SATIRE_SHOT
 
-    kind = "фото-карусели, которую листают в TikTok, Pinterest и Instagram" if carousel else "вертикального ролика 30–60 секунд"
+    kind = "фото-карусели для Instagram, TikTok и Pinterest" if carousel else "вертикального ролика 30–60 секунд"
     return (
         f"Ты автор {kind}. Креатив обыгрывает новость ниши, а не рассказывает о продукте из вакуума.\n"
         f"{LIVING_VOICE}\n{NEWS_PEG}\n{SATIRE_SHOT}\n"
@@ -368,7 +384,7 @@ def _authoring_prompt(settings: CustomContentFactorySettings, video: CustomConte
     if str((video.extra or {}).get("media_kind") or "") == "carousel":
         return (
             voice
-            + "Пять кадров 9:16. Человек листает сам. YouTube получит те же кадры как слайд-шоу.\n"
+            + "Пять кадров 9:16. Instagram, TikTok и Pinterest получают фото-карусель. YouTube и VK Клипы — то же как слайд-шоу с музыкой.\n"
             "Кадр 1 — объект новости. Кадр 2–4 — подмена и сравнение. Кадр 5 — панч, не призыв купить.\n"
             "JSON: idea, hook, script, caption, hashtags (массив), storyboard "
             "(ровно 5 объектов {visual, voiceover}), content_format, visual_style. "
@@ -606,19 +622,55 @@ async def _render_carousel(
     folder = video_dir(video.custom_automation_id, video.id)
     paths: list[Path] = []
     urls: list[str] = []
-    for index, slide in enumerate(slides):
-        prompt = str(slide.get("visual") or slide.get("voiceover") or settings.product_name or "editorial photo")
-        dest = folder / f"slide-{index:02d}.png"
-        await generate_slide_png(provider=provider, model=model, api_key=api_key, prompt=prompt, dest=dest)
-        paths.append(dest)
-        urls.append(public_media_url(dest))
+    bot_id = ""
+    if provider == "grok":
+        used = await recent_hooks(session, video.custom_automation_id)
+        bot_id = factory_grok_bot_id(video.custom_automation_id)
+        pack = await generate_grok_carousel_pack(
+            api_key=api_key,
+            company=settings.product_name or "",
+            description=settings.product_description or "",
+            audience=settings.audience or "",
+            niche=settings.niche or "",
+            brief=str(getattr(settings, "grok_bot_brief", "") or ""),
+            avoid=used,
+            previous_response_id=str(getattr(settings, "grok_bot_response_id", "") or ""),
+            folder=folder,
+        )
+        paths = list(pack["paths"])
+        urls = [public_media_url(path) for path in paths]
+        note_text = str(pack.get("text") or "").strip()
+        if note_text:
+            first = next((line.strip() for line in note_text.splitlines() if line.strip()), "")
+            video.idea = (first or note_text)[:2000]
+            video.caption = note_text[:2000]
+            if first and hook_is_strong(first):
+                video.hook = first[:300]
+        video.storyboard = [
+            {"visual": prompt, "voiceover": ""}
+            for prompt in (pack.get("prompts") or [])
+            if prompt
+        ] or video.storyboard
+        if pack.get("response_id"):
+            settings.grok_bot_response_id = str(pack["response_id"])[:2000]
+            settings.updated_at = now_utc()
+    else:
+        for index, slide in enumerate(slides):
+            prompt = str(slide.get("visual") or slide.get("voiceover") or settings.product_name or "editorial photo")
+            dest = folder / f"slide-{index:02d}.png"
+            await generate_slide_png(provider=provider, model=model, api_key=api_key, prompt=prompt, dest=dest)
+            paths.append(dest)
+            urls.append(public_media_url(dest))
     extra = dict(video.extra or {})
     extra["media_kind"] = "carousel"
     extra["slide_urls"] = urls
     extra["slides_done"] = len(urls)
+    if bot_id:
+        extra["grok_bot_id"] = bot_id
     extra["note"] = (
-        f"Карусель из {len(urls)} кадров ({provider}). "
-        "TikTok, Pinterest и Instagram листаются руками. YouTube получает автоматическое слайд-шоу."
+        f"Карусель из {len(urls)} кадров"
+        + (f", бот {bot_id}" if bot_id else f" ({provider})")
+        + ". Instagram, TikTok и Pinterest публикуют кадры в этом порядке. YouTube и VK Клипы получают слайд-шоу."
     )
     extra["awaiting_kling"] = False
     show = folder / "slideshow.mp4"
@@ -763,11 +815,87 @@ async def _render_video(
     )
 
 
+_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM"
+
+
+async def _attach_soundtrack(
+    video: CustomContentFactoryVideo,
+    settings: CustomContentFactorySettings,
+) -> None:
+    mode = str(getattr(settings, "music_mode", "") or "voice_bed").strip().lower()
+    if mode not in {"bed", "voice", "voice_bed"}:
+        return
+    extra = dict(video.extra or {})
+    if extra.get("soundtrack_applied"):
+        return
+    master = local_path_from_url(video.video_url)
+    if not master or not master.exists() or master.stat().st_size <= 0:
+        return
+    folder = video_dir(video.custom_automation_id, video.id)
+    want_voice = mode in {"voice", "voice_bed"}
+    want_bed = mode in {"bed", "voice_bed"} or mode == "voice"
+    bed_path = None
+    voice_path = None
+    note = ""
+    if want_bed or mode == "voice":
+        bed_path = write_music_bed(folder / "bed.wav", seed=f"{video.id}:{video.hook}")
+    if want_voice:
+        speech = voiceover_lines(video)
+        api_key = decrypted_secret(settings, "elevenlabs_api_key")
+        voice_id = str(getattr(settings, "tts_voice", "") or "").strip() or _DEFAULT_VOICE
+        model_id = str(settings.tts_model or "").strip() or "eleven_multilingual_v2"
+        if api_key and speech:
+            try:
+                voice_path = await synthesize_voiceover(
+                    api_key=api_key,
+                    voice_id=voice_id,
+                    model_id=model_id,
+                    text=speech,
+                    dest=folder / "voice.mp3",
+                )
+            except Exception as exc:
+                note = f"Озвучка не собралась: {exc}"[:240]
+                logger.warning("Content factory voiceover skipped for %s: %s", video.id, exc)
+        else:
+            note = "Озвучки нет: нужен ключ ElevenLabs. На слайд-шоу остаётся своя подложка."
+    if mode == "voice" and voice_path is None and bed_path is None:
+        extra["soundtrack_error"] = note or "Нет дорожки"
+        video.extra = extra
+        return
+    if mode == "voice" and voice_path is not None:
+        bed_path = None
+    dest = folder / "with-audio.mp4"
+    volume = max(0, min(100, int(getattr(settings, "music_volume", 32) or 32))) / 100.0
+    try:
+        mix_soundtrack(
+            video=master,
+            dest=dest,
+            bed=bed_path,
+            voice=voice_path,
+            bed_volume=volume,
+        )
+    except Exception as exc:
+        extra["soundtrack_error"] = str(exc)[:240]
+        video.extra = extra
+        return
+    video.video_url = public_media_url(dest)
+    extra["soundtrack_applied"] = True
+    extra["soundtrack"] = {
+        "mode": "voice_bed" if voice_path and bed_path else ("voice" if voice_path else "bed"),
+        "voice": bool(voice_path),
+        "bed": bool(bed_path),
+    }
+    if note and not voice_path:
+        extra["soundtrack_note"] = note
+    video.extra = extra
+
+
 async def _uniqualize(
     session: AsyncSession,
     video: CustomContentFactoryVideo,
     settings: CustomContentFactorySettings,
 ) -> None:
+    await _attach_soundtrack(video, settings)
     accounts = list(
         (
             await session.execute(
@@ -908,7 +1036,7 @@ async def _post_video(
             existing[account.id] = post
         if post.status in {"posted", "sandbox"}:
             continue
-        if not allowed:
+        if not allowed and post.status != "processing":
             post.status = "held"
             post.hold_reason = reason
             continue
@@ -921,7 +1049,7 @@ async def _post_video(
         publisher_state = {
             key: value
             for key, value in (post.uniqualization_applied or {}).items()
-            if key.startswith("ig_") or key.startswith("tiktok_")
+            if key.startswith(("ig_", "tiktok_", "vk_"))
         }
         variant = caption_variant(
             video.caption,

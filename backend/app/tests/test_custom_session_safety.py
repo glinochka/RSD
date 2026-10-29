@@ -660,6 +660,14 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week(monkeypatch):
     assert account_should_idle(day_one, now=now, ignore_hours=True) is True
     assert account_humanization_should_idle(settling, now=now, ignore_hours=True) is True
     assert account_humanization_should_idle(day_one, now=now, ignore_hours=True) is False
+    resting = SimpleNamespace(
+        id=7,
+        created_at=now - timedelta(days=40),
+        flood_quarantined_until=None,
+        next_action_at=None,
+        next_humanization_at=now + timedelta(minutes=20),
+    )
+    assert account_humanization_should_idle(resting, now=now, ignore_hours=True) is True
     assert join_daily_cap(day_one, now=now) in {2, 3}
     assert account_in_first_week(fresh, now=now) is True
     assert account_in_first_week(aged, now=now) is False
@@ -723,6 +731,33 @@ def test_peer_opener_is_always_the_veteran(monkeypatch):
     assert pacing.account_may_first_write_dm(young, now=now) is False
     assert pacing.account_may_first_write_dm(veteran, now=now) is True
     assert _peer_opener(young, SimpleNamespace(id=3, created_at=now - timedelta(hours=52), username="also_new")) is None
+
+
+def test_stuck_peer_dialog_releases_both_accounts():
+    from types import SimpleNamespace
+
+    from app.services.custom.account_peer_dialog_service import release_unavailable_peer
+
+    dialog = SimpleNamespace(
+        status="active",
+        next_sender_id=11,
+        next_send_at="due",
+        account_low_id=11,
+        account_high_id=22,
+        updated_at=None,
+    )
+    assert release_unavailable_peer(dialog, {22: SimpleNamespace(id=22)}) is True
+    assert dialog.status == "idle"
+    assert dialog.next_sender_id is None
+    assert dialog.next_send_at is None
+    live = {
+        11: SimpleNamespace(id=11),
+        22: SimpleNamespace(id=22),
+    }
+    dialog.status = "active"
+    dialog.next_sender_id = 11
+    assert release_unavailable_peer(dialog, live) is False
+    assert dialog.status == "active"
 
 
 def test_peer_dialog_does_not_park_public_writes():

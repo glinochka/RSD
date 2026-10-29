@@ -17,7 +17,12 @@ export const CF_PLATFORMS = [
   {
     id: 'pinterest',
     title: 'Pinterest',
-    hint: 'access token и board_id для Idea Pin / видеопина.',
+    hint: 'access token и board_id. Фото-карусель уходит пином из нескольких кадров.',
+  },
+  {
+    id: 'vk',
+    title: 'VK Клипы',
+    hint: 'Короткое вертикальное видео. Карусель сюда не встаёт: те же кадры собираются в слайд-шоу с музыкой.',
   },
 ];
 
@@ -46,7 +51,7 @@ export const CF_TONES = [
 ];
 
 export const CF_ASPECTS = [
-  { value: '9:16', label: '9:16 — Shorts / Reels / TikTok' },
+  { value: '9:16', label: '9:16 — Shorts / Reels / TikTok / VK Клипы' },
   { value: '16:9', label: '16:9 — горизонталь YouTube' },
   { value: '1:1', label: '1:1 — квадрат' },
 ];
@@ -131,6 +136,14 @@ export const CF_CREDENTIAL_FIELDS = {
   instagram: 'access token и Instagram User ID',
   tiktok: 'access token Content Posting API',
   pinterest: 'access token и board_id',
+  vk: 'пользовательский токен с правом на клипы и id сообщества',
 };
+
+export const CF_MUSIC_MODES = [
+  { value: 'voice_bed', label: 'Голос и подложка' },
+  { value: 'voice', label: 'Только голос' },
+  { value: 'bed', label: 'Только подложка' },
+  { value: 'off', label: 'Без музыки' },
+];
 
 export const IN_FLIGHT_STATUSES = ['queued', 'ideating', 'scripting', 'rendering', 'uniqualizing', 'ready', 'posting'];

@@ -10,6 +10,7 @@ import {
   CF_FORMATS,
   CF_STYLES,
   CF_TONES,
+  CF_MUSIC_MODES,
   CF_VIDEO_MODELS,
   toggleChip,
 } from './contentFactoryLabels';
@@ -51,6 +52,11 @@ const EMPTY = {
   xai_api_key: '',
   openai_api_key: '',
   kling_api_key: '',
+  grok_bot_name: 'Карусели завода',
+  grok_bot_brief: '',
+  xai_api_key: '',
+  openai_api_key: '',
+  kling_api_key: '',
   runway_api_key: '',
   luma_api_key: '',
   elevenlabs_api_key: '',
@@ -75,9 +81,7 @@ const CustomAutomationContentFactorySettingsPage = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [snapshot, setSnapshot] = useState('');
-
-  const fingerprint = (value) => JSON.stringify({
-    ...value,
+  const [botBusy, setBotBusy] = useState(false);
     openai_api_key: '',
     kling_api_key: '',
     runway_api_key: '',
@@ -350,20 +354,47 @@ const CustomAutomationContentFactorySettingsPage = () => {
             <label htmlFor="cf-mix">Видео / фото-карусели: {100 - Number(form.carousel_share || 0)}% видео · {Number(form.carousel_share || 0)}% карусели</label>
             <input
               id="cf-mix"
+            <label htmlFor="cf-mix">Фото-карусели {Number(form.carousel_share ?? 100)}% · обычное видео {100 - Number(form.carousel_share ?? 100)}%</label>
+            <input
+              id="cf-mix"
               type="range"
               min="0"
               max="100"
-              value={form.carousel_share || 0}
+              value={form.carousel_share ?? 100}
               onChange={(e) => setField('carousel_share', Number(e.target.value))}
             />
             <p className="form-hint">
-              Карусель листается руками в TikTok, Pinterest и ленте Instagram. В Reels такого формата нет — туда уходит только видео.
-              YouTube получает те же кадры как ролик, где слайды сменяются сами. Нужен ffmpeg на сервере.
+              Основной формат — фото-карусель. Instagram, TikTok и Pinterest публикуют кадры.
+              YouTube Shorts и VK Клипы карусель не принимают: туда уходит тот же набор как вертикальное слайд-шоу.
             </p>
           </div>
           <div className="cf-form-grid">
             <div className="form-group">
-              <label htmlFor="cf-imodel2">Модель картинок</label>
+              <label htmlFor="cf-music">Музыка</label>
+              <CustomSelect id="cf-music" value={form.music_mode || 'voice_bed'} options={CF_MUSIC_MODES} onChange={(e) => setField('music_mode', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-mvol">Громкость подложки, %</label>
+              <input id="cf-mvol" type="number" min="0" max="100" value={form.music_volume ?? 32} onChange={(e) => setField('music_volume', Number(e.target.value))} />
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-voice">Голос ElevenLabs</label>
+              <input id="cf-voice" value={form.tts_voice || ''} onChange={(e) => setField('tts_voice', e.target.value)} placeholder="пусто — Rachel" />
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-tts">Модель озвучки</label>
+              <input id="cf-tts" value={form.tts_model || ''} onChange={(e) => setField('tts_model', e.target.value)} placeholder="eleven_multilingual_v2" />
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-ekey">ElevenLabs {meta.elevenlabs_api_key_set ? '(сохранён)' : ''}</label>
+              <input id="cf-ekey" type="password" value={form.elevenlabs_api_key || ''} onChange={(e) => setField('elevenlabs_api_key', e.target.value)} autoComplete="off" placeholder="для голоса за кадром" />
+            </div>
+          </div>
+          <p className="form-hint">
+            Дорожка кладётся на слайд-шоу и на склеенный ролик до уникализации.
+            Фото-карусели Instagram, TikTok и Pinterest публикуются без нашего звука: у этих форматов музыка площадки.
+            Без ключа ElevenLabs остаётся своя инструментальная подложка, не чужой трек.
+          </p>
               <CustomSelect
                 id="cf-imodel2"
                 value={form.image_provider || 'chatgpt'}
@@ -372,9 +403,18 @@ const CustomAutomationContentFactorySettingsPage = () => {
                   { value: 'grok', label: 'Grok' },
                 ]}
                 onChange={(e) => setField('image_provider', e.target.value)}
-              />
-            </div>
-            <div className="form-group">
+                  { value: 'grok', label: 'Grok Bot — пачка кадров' },
+                ]}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setForm((current) => ({
+                    ...current,
+                    image_provider: value,
+                    image_model: value === 'grok' && !String(current.image_model || '').includes('grok')
+                      ? 'grok-imagine-image-2.0'
+                      : current.image_model,
+                  }));
+                }}
               <label htmlFor="cf-islug">Имя модели</label>
               <input id="cf-islug" value={form.image_model || ''} onChange={(e) => setField('image_model', e.target.value)} placeholder="gpt-image-2.5-flare или grok-imagine-image-2.0" />
             </div>
@@ -386,6 +426,62 @@ const CustomAutomationContentFactorySettingsPage = () => {
         </div>
 
         <div className="ubt-panel">
+          <div className="ubt-panel" style={{ marginTop: 16 }}>
+            <div className="ubt-panel-header">
+              <div>
+                <h2>Бот каруселей Grok</h2>
+                <p>
+                  Один бот на завод{meta.grok_bot_id ? `, ${meta.grok_bot_id}` : ''}.
+                  {meta.grok_bot_has_thread ? ' Он уже помнит прошлую карусель и в следующий раз возьмёт другую тему.' : ' Первый пост — это первое сообщение: стиль, компания, «выбери тему и сделай карусель».'}
+                  Кадры он рисует сам, отдельный запрос на каждую картинку мы не шлём.
+                </p>
+              </div>
+            </div>
+            <div className="cf-form-grid">
+              <div className="form-group">
+                <label htmlFor="cf-bot-name">Имя бота</label>
+                <input id="cf-bot-name" value={form.grok_bot_name || ''} onChange={(e) => setField('grok_bot_name', e.target.value)} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label htmlFor="cf-bot-brief">Постоянный бриф</label>
+              <textarea
+                id="cf-bot-brief"
+                rows={4}
+                value={form.grok_bot_brief || ''}
+                onChange={(e) => setField('grok_bot_brief', e.target.value)}
+                placeholder="Сюда стиль и дизайн компании. Пусто — живая вертикальная карусель без текста на кадрах."
+              />
+            </div>
+            <p className="form-hint">
+              Как в ручном тесте: одно сообщение боту, он сам выбирает тематику и сценарий и возвращает 6–7 кадров в порядке свайпа.
+              Следующий пост — «сделай новую карусель с другой темой», тот же бот. В модели картинок выберите Grok Bot.
+            </p>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={botBusy}
+              onClick={async () => {
+                setBotBusy(true);
+                setError(null);
+                try {
+                  const result = await customService.saveContentFactoryGrokBot(id, {
+                    grok_bot_name: form.grok_bot_name,
+                    grok_bot_brief: form.grok_bot_brief,
+                    ...(form.xai_api_key ? { xai_api_key: form.xai_api_key } : {}),
+                  });
+                  setSuccess(result.detail || 'Бот сохранён');
+                  setMeta((current) => ({ ...current, grok_bot_id: result.bot_id, grok_bot_name: result.grok_bot_name }));
+                } catch (err) {
+                  setError(err.message || 'Не удалось сохранить бота');
+                } finally {
+                  setBotBusy(false);
+                }
+              }}
+            >
+              {botBusy ? 'Проверяем Grok...' : 'Сохранить бота и проверить ключ'}
+            </button>
+          </div>
           <div className="ubt-panel-header">
             <div>
               <h2>Антифрод и прогрев</h2>

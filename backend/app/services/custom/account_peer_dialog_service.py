@@ -340,6 +340,30 @@ async def _get_or_create_dialog(
     return dialog
 
 
+async def _remember_peer_contact(client: Any, entity: Any, recipient: SocialAccount) -> None:
+    """Put the other farm account in contacts so a contacts-only privacy setting still accepts the DM."""
+    from telethon.tl.functions.contacts import AddContactRequest
+
+    telethon = getattr(client, "client", client)
+    name = (
+        str(getattr(recipient, "display_name", None) or "").strip()
+        or str(getattr(recipient, "username", None) or "").strip().lstrip("@")
+        or "Friend"
+    )
+    try:
+        await telethon(
+            AddContactRequest(
+                id=entity,
+                first_name=name[:64],
+                last_name="",
+                phone="",
+                add_phone_privacy_exception=False,
+            )
+        )
+    except Exception as exc:
+        logger.debug("Peer AddContact skipped %s: %s", getattr(recipient, "id", None), exc)
+
+
 async def _send_peer_message(
     session: AsyncSession,
     automation: CustomAutomation,
@@ -360,10 +384,13 @@ async def _send_peer_message(
                 await guard_live_client(session, sender, client, force=True)
             except Exception:
                 pass
+            entity = await client.resolve_peer(peer)
+            if first:
+                await _remember_peer_contact(client, entity, recipient)
             await execute_with_telegram_retry(
                 session,
                 sender,
-                lambda: client.human_reply(peer, text, skip_read=first),
+                lambda: client.human_reply(entity, text, skip_read=first),
                 action_type="peer_dialog",
                 target_id=str(recipient.id),
                 target_type="account",
@@ -379,6 +406,23 @@ async def _send_peer_message(
 def _other_account(dialog: CustomAccountPeerDialog, sender_id: int, by_id: dict[int, SocialAccount]) -> SocialAccount | None:
     other_id = dialog.account_high_id if sender_id == dialog.account_low_id else dialog.account_low_id
     return by_id.get(other_id)
+
+
+def release_unavailable_peer(dialog: CustomAccountPeerDialog, by_id: dict[int, SocialAccount]) -> bool:
+    """Drop a pair whose next sender or recipient is no longer in the live pool.
+
+    Otherwise status stays active, both accounts look busy, and nobody else
+    gets a private dialog for the rest of the day.
+    """
+    sender = by_id.get(int(dialog.next_sender_id or 0))
+    recipient = _other_account(dialog, sender.id, by_id) if sender is not None else None
+    if sender is not None and recipient is not None:
+        return False
+    dialog.status = "idle"
+    dialog.next_sender_id = None
+    dialog.next_send_at = None
+    dialog.updated_at = _utc_now()
+    return True
 
 
 async def _advance_dialog(
@@ -469,20 +513,26 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
 
         now = _utc_now()
         for dialog in rows:
+            if dialog.status == "active" and release_unavailable_peer(dialog, by_id):
+                await session.commit()
+        for dialog in rows:
             if sent >= MAX_PEER_SENDS_PER_PASS:
                 break
             if dialog.status != "active" or not dialog.next_send_at or dialog.next_send_at > now:
                 continue
             if int(dialog.messages_today or 0) >= int(dialog.daily_target or DAILY_MIN_MESSAGES):
                 dialog.status = "idle"
+                dialog.next_sender_id = None
                 dialog.next_send_at = None
+                dialog.updated_at = _utc_now()
+                await session.commit()
+                continue
+            if release_unavailable_peer(dialog, by_id):
+                await session.commit()
                 continue
             sender = by_id.get(int(dialog.next_sender_id or 0))
-            if sender is None:
-                dialog.status = "idle"
-                continue
-            recipient = _other_account(dialog, sender.id, by_id)
-            if recipient is None:
+            recipient = _other_account(dialog, sender.id, by_id) if sender is not None else None
+            if sender is None or recipient is None:
                 continue
             opener = int(dialog.messages_today or 0) == 0
             if await _advance_dialog(session, automation, dialog, sender, recipient, opener=opener):
