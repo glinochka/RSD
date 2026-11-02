@@ -446,6 +446,11 @@ async def update_account(
         account.credentials_enc = encrypt_json(merged)
     if payload.get("pause"):
         account.status = "paused"
+    if payload.get("mark_warmed"):
+        account.warmup_started_at = account.warmup_started_at or now_utc()
+        account.warmup_completed_at = now_utc()
+        if account.status in {"warming", "connected", "shadow_risk"}:
+            account.status = "ready"
     if payload.get("resume") and account.status == "paused":
         account.status = "ready" if account.warmup_completed_at else "warming"
     account.updated_at = now_utc()
@@ -664,6 +669,21 @@ def build_readiness(
             "level": "warn",
             "text": "Для Instagram / TikTok / Pinterest нужен публичный BASE_URL, чтобы площадка скачала файл. YouTube заберёт локальный ролик сам.",
         })
+    share = int(getattr(settings, "carousel_share", 0) or 0)
+    if share and str(getattr(settings, "image_provider", "") or "") == "grok":
+        grok_key = decrypted_secret(settings, "xai_api_key") or (app_settings.XAI_API_KEY or "").strip()
+        if not grok_key:
+            items.append({
+                "code": "grok_key",
+                "level": "warn",
+                "text": "Карусели стоят на Grok Bot, но ключа xAI нет — такие ролики уйдут в обычное видео.",
+            })
+        else:
+            items.append({
+                "code": "grok_bot",
+                "level": "info",
+                "text": "Карусель собирает Grok Bot одним запросом: тема, подпись и кадры. Отдельный сценарий для неё не пишется.",
+            })
     if (settings.video_model or "") in {"runway", "luma"}:
         items.append({
             "code": "renderer",

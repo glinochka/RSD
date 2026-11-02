@@ -20,6 +20,8 @@ import '../../../styles/customSolutionNav.css';
 import '../../../styles/customNeuro.css';
 import '../../../styles/customContentFactory.css';
 
+const fingerprint = (value) => JSON.stringify(value);
+
 const EMPTY = {
   enabled: false,
   sandbox_mode: true,
@@ -46,14 +48,14 @@ const EMPTY = {
   script_model: 'deepseek-chat',
   video_model: 'kling',
   tts_model: '',
-  carousel_share: 0,
+  carousel_share: 100,
   image_provider: 'chatgpt',
   image_model: 'gpt-image-2.5-flare',
-  xai_api_key: '',
-  openai_api_key: '',
-  kling_api_key: '',
   grok_bot_name: 'Карусели завода',
   grok_bot_brief: '',
+  music_mode: 'voice_bed',
+  music_volume: 32,
+  tts_voice: '',
   xai_api_key: '',
   openai_api_key: '',
   kling_api_key: '',
@@ -82,13 +84,6 @@ const CustomAutomationContentFactorySettingsPage = () => {
   const [success, setSuccess] = useState(null);
   const [snapshot, setSnapshot] = useState('');
   const [botBusy, setBotBusy] = useState(false);
-    openai_api_key: '',
-    kling_api_key: '',
-    runway_api_key: '',
-    luma_api_key: '',
-    elevenlabs_api_key: '',
-    xai_api_key: '',
-  });
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
@@ -332,6 +327,9 @@ const CustomAutomationContentFactorySettingsPage = () => {
             <div className="form-group">
               <label htmlFor="cf-vmodel">Видеомодель</label>
               <CustomSelect id="cf-vmodel" value={form.video_model} options={CF_VIDEO_MODELS} onChange={(e) => setField('video_model', e.target.value)} />
+              {form.video_model === 'runway' || form.video_model === 'luma' ? (
+                <p className="form-hint">Этот провайдер ещё не рендерит. Завод соберёт раскадровку, файл ролика не появится.</p>
+              ) : null}
             </div>
             <div className="form-group">
               <label htmlFor="cf-okey">OpenAI / совместимый ключ {meta.openai_api_key_set ? '(сохранён)' : ''}</label>
@@ -342,18 +340,15 @@ const CustomAutomationContentFactorySettingsPage = () => {
               <input id="cf-kkey" type="password" value={form.kling_api_key} onChange={(e) => setField('kling_api_key', e.target.value)} autoComplete="off" />
             </div>
             <div className="form-group">
-              <label htmlFor="cf-rkey">Runway {meta.runway_api_key_set ? '(сохранён)' : ''}</label>
+              <label htmlFor="cf-rkey">Runway — рендер не подключён {meta.runway_api_key_set ? '(ключ сохранён)' : ''}</label>
               <input id="cf-rkey" type="password" value={form.runway_api_key} onChange={(e) => setField('runway_api_key', e.target.value)} autoComplete="off" />
             </div>
             <div className="form-group">
-              <label htmlFor="cf-lkey">Luma {meta.luma_api_key_set ? '(сохранён)' : ''}</label>
+              <label htmlFor="cf-lkey">Luma — рендер не подключён {meta.luma_api_key_set ? '(ключ сохранён)' : ''}</label>
               <input id="cf-lkey" type="password" value={form.luma_api_key} onChange={(e) => setField('luma_api_key', e.target.value)} autoComplete="off" />
             </div>
           </div>
           <div className="form-group" style={{ marginTop: 16 }}>
-            <label htmlFor="cf-mix">Видео / фото-карусели: {100 - Number(form.carousel_share || 0)}% видео · {Number(form.carousel_share || 0)}% карусели</label>
-            <input
-              id="cf-mix"
             <label htmlFor="cf-mix">Фото-карусели {Number(form.carousel_share ?? 100)}% · обычное видео {100 - Number(form.carousel_share ?? 100)}%</label>
             <input
               id="cf-mix"
@@ -395,14 +390,14 @@ const CustomAutomationContentFactorySettingsPage = () => {
             Фото-карусели Instagram, TikTok и Pinterest публикуются без нашего звука: у этих форматов музыка площадки.
             Без ключа ElevenLabs остаётся своя инструментальная подложка, не чужой трек.
           </p>
+          <div className="cf-form-grid">
+            <div className="form-group">
+              <label htmlFor="cf-iprovider">Модель картинок</label>
               <CustomSelect
-                id="cf-imodel2"
+                id="cf-iprovider"
                 value={form.image_provider || 'chatgpt'}
                 options={[
                   { value: 'chatgpt', label: 'ChatGPT' },
-                  { value: 'grok', label: 'Grok' },
-                ]}
-                onChange={(e) => setField('image_provider', e.target.value)}
                   { value: 'grok', label: 'Grok Bot — пачка кадров' },
                 ]}
                 onChange={(e) => {
@@ -415,6 +410,9 @@ const CustomAutomationContentFactorySettingsPage = () => {
                       : current.image_model,
                   }));
                 }}
+              />
+            </div>
+            <div className="form-group">
               <label htmlFor="cf-islug">Имя модели</label>
               <input id="cf-islug" value={form.image_model || ''} onChange={(e) => setField('image_model', e.target.value)} placeholder="gpt-image-2.5-flare или grok-imagine-image-2.0" />
             </div>
@@ -454,7 +452,7 @@ const CustomAutomationContentFactorySettingsPage = () => {
               />
             </div>
             <p className="form-hint">
-              Как в ручном тесте: одно сообщение боту, он сам выбирает тематику и сценарий и возвращает 6–7 кадров в порядке свайпа.
+              Для такой карусели сценарий DeepSeek не пишется. Одно сообщение боту: он сам выбирает тему, подпись и 6–7 кадров в порядке свайпа, завод собирает слайд-шоу и ставит в очередь.
               Следующий пост — «сделай новую карусель с другой темой», тот же бот. В модели картинок выберите Grok Bot.
             </p>
             <button

@@ -72,8 +72,18 @@ async def publish_to_platform(
         )
     if platform == "tiktok":
         if slides:
-            return await _publish_tiktok_photos(credentials=credentials, image_urls=slides, caption=caption)
-        return await _publish_tiktok(credentials=credentials, video_url=video_url, caption=caption)
+            return await _publish_tiktok_photos(
+                credentials=credentials,
+                image_urls=slides,
+                caption=caption,
+                publisher_state=publisher_state or {},
+            )
+        return await _publish_tiktok(
+            credentials=credentials,
+            video_url=video_url,
+            caption=caption,
+            publisher_state=publisher_state or {},
+        )
     if platform == "pinterest":
         if slides:
             return await _publish_pinterest_images(credentials=credentials, image_urls=slides, title=title, caption=caption)
@@ -288,10 +298,56 @@ async def _publish_instagram_carousel(
     }
 
 
-async def _publish_tiktok_photos(*, credentials: dict[str, Any], image_urls: list[str], caption: str) -> dict[str, Any]:
+async def _tiktok_resume(token: str, publish_id: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"publish_id": publish_id},
+        )
+    if not response.is_success:
+        raise PublisherError(f"TikTok status: HTTP {response.status_code} {response.text[:240]}")
+    data = response.json() if response.content else {}
+    inner = data.get("data") if isinstance(data, dict) else {}
+    inner = inner if isinstance(inner, dict) else {}
+    status_name = str(inner.get("status") or "").upper()
+    if status_name == "FAILED":
+        raise PublisherError(str(inner.get("fail_reason") or "TikTok отклонил публикацию")[:240])
+    post_ids = inner.get("publicaly_available_post_id") or inner.get("publicly_available_post_id") or []
+    if status_name == "PUBLISH_COMPLETE":
+        public_id = str(post_ids[0]) if isinstance(post_ids, list) and post_ids else publish_id
+        return {
+            "status": "posted",
+            "external_id": public_id,
+            "posted_url": "",
+            "publisher_state": {"tiktok_publish_id": publish_id},
+            "note": "TikTok подтвердил публикацию.",
+        }
+    note = "TikTok ещё обрабатывает загрузку."
+    if status_name == "SEND_TO_USER_INBOX":
+        note = "TikTok положил ролик во входящие приложения: его нужно подтвердить вручную."
+    return {
+        "status": "processing",
+        "external_id": publish_id,
+        "posted_url": "",
+        "publisher_state": {"tiktok_publish_id": publish_id},
+        "note": note,
+    }
+
+
+async def _publish_tiktok_photos(
+    *,
+    credentials: dict[str, Any],
+    image_urls: list[str],
+    caption: str,
+    publisher_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     token = str(credentials.get("access_token") or "").strip()
     if not token:
         raise PublisherError("TikTok: нужен access_token")
+    existing = str((publisher_state or {}).get("tiktok_publish_id") or "").strip()
+    if existing:
+        return await _tiktok_resume(token, existing)
     payload = {
         "post_info": {"title": caption[:90], "privacy_level": "PUBLIC_TO_EVERYONE", "disable_comment": False},
         "source_info": {"source": "PULL_FROM_URL", "photo_cover_index": 0, "photo_images": image_urls[:35]},
@@ -361,10 +417,19 @@ async def _publish_pinterest_images(
     }
 
 
-async def _publish_tiktok(*, credentials: dict[str, Any], video_url: str | None, caption: str) -> dict[str, Any]:
+async def _publish_tiktok(
+    *,
+    credentials: dict[str, Any],
+    video_url: str | None,
+    caption: str,
+    publisher_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     token = str(credentials.get("access_token") or "").strip()
     if not token:
         raise PublisherError("TikTok: нужен access_token")
+    existing = str((publisher_state or {}).get("tiktok_publish_id") or "").strip()
+    if existing:
+        return await _tiktok_resume(token, existing)
     if not str(video_url or "").startswith("http"):
         raise PublisherError("TikTok: нет публичного URL ролика")
     payload = {

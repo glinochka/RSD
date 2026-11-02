@@ -345,6 +345,8 @@ def grok_carousel_message(
     style = str(brief or "").strip() or DEFAULT_GROK_CAROUSEL_BRIEF
     if follow_up:
         text = (
+            f"Стиль и дизайн, держи тот же:\n{style}\n\n"
+            f"Компания: {company or 'не указана'}.\n"
             "Сделай новую фото-карусель с другой тематикой и другим сценарием. "
             "Снова 6 или 7 отдельных вертикальных кадров 9:16, в порядке свайпа. "
             "Не повторяй прошлые темы. Без текста на фото. "
@@ -368,31 +370,46 @@ def grok_carousel_message(
     return text
 
 
+def _grok_b64(value: Any) -> str:
+    raw = str(value or "").strip()
+    if raw.startswith("data:") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    return raw
+
+
+def _collect_grok_output(node: Any, images: list[dict[str, str]], texts: list[str], prompt: str = "") -> None:
+    if isinstance(node, list):
+        for item in node:
+            _collect_grok_output(item, images, texts, prompt)
+        return
+    if not isinstance(node, dict):
+        return
+    kind = str(node.get("type") or "")
+    current_prompt = str(node.get("prompt") or prompt or "")[:500]
+    if kind in {"image_generation_call", "output_image"} or node.get("b64_json"):
+        if str(node.get("status") or "completed") == "completed":
+            raw = _grok_b64(node.get("result") or node.get("b64_json") or "")
+            if raw:
+                images.append({"b64": raw, "prompt": current_prompt})
+    if kind == "message" or node.get("text"):
+        content = node.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(node.get("text"), str) and kind != "image_generation_call":
+            texts.append(str(node.get("text")))
+    for child_key in ("content", "output"):
+        child = node.get(child_key)
+        if isinstance(child, (list, dict)):
+            _collect_grok_output(child, images, texts, current_prompt)
+
+
 def grok_agent_pack(payload: dict[str, Any]) -> dict[str, Any]:
     """Images stay in the order the agent emitted them."""
     import base64
 
     images: list[dict[str, str]] = []
     texts: list[str] = []
-    for item in payload.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") == "image_generation_call" and str(item.get("status") or "completed") == "completed":
-            raw = str(item.get("result") or "").strip()
-            if raw.startswith("data:") and "," in raw:
-                raw = raw.split(",", 1)[1]
-            if raw:
-                images.append({"b64": raw, "prompt": str(item.get("prompt") or "")[:500]})
-        elif item.get("type") == "message":
-            content = item.get("content")
-            if isinstance(content, str):
-                texts.append(content)
-            elif isinstance(content, list):
-                for part in content:
-                    if isinstance(part, str):
-                        texts.append(part)
-                    elif isinstance(part, dict):
-                        texts.append(str(part.get("text") or ""))
+    _collect_grok_output(payload.get("output") or [], images, texts)
     decoded: list[dict[str, Any]] = []
     for image in images:
         try:
@@ -461,7 +478,7 @@ async def generate_grok_carousel_pack(
         pack = await _ask(False, "")
     images = pack["images"]
     if len(images) < 4:
-        raise RuntimeError(f"Grok Bot вернул {len(images)} кадров, для карусели нужно 6–7")
+        raise RuntimeError(f"Grok Bot вернул {len(images)} кадров, для карусели нужно хотя бы 4")
     paths: list[Path] = []
     prompts: list[str] = []
     for index, image in enumerate(images[:7]):

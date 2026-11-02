@@ -19,6 +19,7 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import CustomAutomation
 from ..config import settings as app_settings
 from ..services.custom.content_factory_antifraud import factory_return_url
+from ..services.custom.content_factory_media import factory_grok_bot_id
 from ..services.custom.content_factory_pipeline import generate_now, tick
 from ..services.custom.content_factory_publishers import (
     oauth_configured,
@@ -90,7 +91,6 @@ async def update_content_factory_settings(
         return serialize_settings(row)
 
 
-@router.get("/automations/{automation_id}/content-factory/accounts")
 @router.post("/automations/{automation_id}/content-factory/grok-bot")
 async def save_grok_carousel_bot(
     automation_id: int,
@@ -139,6 +139,7 @@ async def save_grok_carousel_bot(
         }
 
 
+@router.get("/automations/{automation_id}/content-factory/accounts")
 async def get_content_factory_accounts(
     automation_id: int,
     automation: CustomAutomation = Depends(get_current_custom_automation),

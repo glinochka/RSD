@@ -2111,6 +2111,7 @@ class ContentFactoryAccountUpdateRequest(BaseModel):
     credentials: Optional[dict[str, str]] = None
     pause: Optional[bool] = None
     resume: Optional[bool] = None
+    mark_warmed: Optional[bool] = None
 
 
 class ContentFactoryGrokBotRequest(BaseModel):

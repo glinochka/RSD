@@ -234,7 +234,9 @@ async def _advance_video(
     settings: CustomContentFactorySettings,
 ) -> None:
     try:
-        if video.status == "queued":
+        if video.status in {"queued", "ideating", "scripting"} and _is_grok_carousel(video, settings):
+            await _render_carousel(session, video, settings)
+        elif video.status == "queued":
             await _write_idea_and_script(session, video, settings)
         elif video.status in {"ideating", "scripting"}:
             await _write_idea_and_script(session, video, settings)
@@ -271,7 +273,8 @@ async def _write_idea_and_script(
     video.status = "scripting"
     video.started_at = video.started_at or now_utc()
     used = await recent_hooks(session, video.custom_automation_id)
-    pack = await _generate_pack(settings, video, used)
+    performance = await _performance_hint(session, video.custom_automation_id)
+    pack = await _generate_pack(settings, video, used, performance)
     hook = str(pack.get("hook") or "").strip()
     if settings.hook_required and not hook_is_strong(hook):
         hook = _fallback_hook(settings, video.id)
@@ -324,13 +327,38 @@ def _compose_script(hook: str, body: str, settings: CustomContentFactorySettings
     return text[:8000]
 
 
+async def _performance_hint(session: AsyncSession, automation_id: int) -> str:
+    result = await session.execute(
+        select(
+            CustomContentFactoryVideo.hook,
+            CustomContentFactoryPost.platform,
+            CustomContentFactoryPost.views,
+            CustomContentFactoryPost.likes,
+        )
+        .join(CustomContentFactoryPost, CustomContentFactoryPost.video_id == CustomContentFactoryVideo.id)
+        .where(
+            CustomContentFactoryVideo.custom_automation_id == automation_id,
+            CustomContentFactoryPost.status == "posted",
+        )
+        .order_by(CustomContentFactoryPost.views.desc(), CustomContentFactoryPost.posted_at.desc())
+        .limit(4)
+    )
+    lines = []
+    for hook, platform, views, likes in result.all():
+        lines.append(f"{platform}: {int(views or 0)} просмотров, {int(likes or 0)} лайков — {str(hook or '')[:80]}")
+    if not lines:
+        return ""
+    return "Уже опубликованное, от сильного к слабому. Угол сильных можно развить, текст не копировать:\n" + "\n".join(lines)
+
+
 async def _generate_pack(
     settings: CustomContentFactorySettings,
     video: CustomContentFactoryVideo,
     used_hooks: list[str],
+    performance: str = "",
 ) -> dict[str, Any]:
     fallback = _fallback_pack(settings, video, used_hooks)
-    prompt = _authoring_prompt(settings, video, used_hooks)
+    prompt = _authoring_prompt(settings, video, used_hooks, performance)
     carousel = str((video.extra or {}).get("media_kind") or "") == "carousel"
     completion = await _llm_json(
         settings,
@@ -363,7 +391,12 @@ def _creative_system(carousel: bool) -> str:
     )
 
 
-def _authoring_prompt(settings: CustomContentFactorySettings, video: CustomContentFactoryVideo, used_hooks: list[str]) -> str:
+def _authoring_prompt(
+    settings: CustomContentFactorySettings,
+    video: CustomContentFactoryVideo,
+    used_hooks: list[str],
+    performance: str = "",
+) -> str:
     from .creative_voice import tone_line
 
     voice = (
@@ -380,6 +413,7 @@ def _authoring_prompt(settings: CustomContentFactorySettings, video: CustomConte
         "visual каждой сцены — английский промпт одного кадра: та же физика новости, другой нелепый объект. "
         "Без текста на изображении и без логотипов.\n"
         f"Не повторяй хуки: {used_hooks[:8]}\n"
+        f"{performance}\n"
     )
     if str((video.extra or {}).get("media_kind") or "") == "carousel":
         return (
@@ -592,6 +626,34 @@ async def _stitch_clips(video: CustomContentFactoryVideo) -> None:
     video.render_task_id = None
 
 
+def _is_grok_carousel(video: CustomContentFactoryVideo, settings: CustomContentFactorySettings) -> bool:
+    if str((video.extra or {}).get("media_kind") or "") != "carousel":
+        return False
+    provider, _model, key = _carousel_key(settings)
+    return provider == "grok" and bool(key)
+
+
+def _apply_grok_copy(video: CustomContentFactoryVideo, settings: CustomContentFactorySettings, pack: dict[str, Any]) -> None:
+    text = str(pack.get("text") or "").strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    theme = lines[0] if lines else (settings.product_name or "Карусель")
+    video.idea = theme[:2000]
+    video.caption = (text or theme)[:2000]
+    video.script = video.caption
+    video.hook = theme[:300]
+    if settings.hook_required and not hook_is_strong(video.hook):
+        video.hook = _fallback_hook(settings, video.id)
+    prompts = [str(item).strip() for item in (pack.get("prompts") or []) if str(item).strip()]
+    board: list[dict[str, str]] = []
+    for index, prompt in enumerate(prompts):
+        voice = lines[index] if index < len(lines) else ""
+        board.append({"visual": prompt[:500], "voiceover": voice[:400]})
+    if board and not any(item["voiceover"] for item in board):
+        board[0]["voiceover"] = video.hook
+    if board:
+        video.storyboard = board
+
+
 def _carousel_key(settings: CustomContentFactorySettings) -> tuple[str, str, str]:
     provider = str(getattr(settings, "image_provider", "") or "chatgpt").strip().lower()
     if provider not in {"chatgpt", "grok"}:
@@ -639,18 +701,8 @@ async def _render_carousel(
         )
         paths = list(pack["paths"])
         urls = [public_media_url(path) for path in paths]
-        note_text = str(pack.get("text") or "").strip()
-        if note_text:
-            first = next((line.strip() for line in note_text.splitlines() if line.strip()), "")
-            video.idea = (first or note_text)[:2000]
-            video.caption = note_text[:2000]
-            if first and hook_is_strong(first):
-                video.hook = first[:300]
-        video.storyboard = [
-            {"visual": prompt, "voiceover": ""}
-            for prompt in (pack.get("prompts") or [])
-            if prompt
-        ] or video.storyboard
+        _apply_grok_copy(video, settings, pack)
+        video.started_at = video.started_at or now_utc()
         if pack.get("response_id"):
             settings.grok_bot_response_id = str(pack["response_id"])[:2000]
             settings.updated_at = now_utc()
@@ -833,7 +885,7 @@ async def _attach_soundtrack(
         return
     folder = video_dir(video.custom_automation_id, video.id)
     want_voice = mode in {"voice", "voice_bed"}
-    want_bed = mode in {"bed", "voice_bed"} or mode == "voice"
+    want_bed = mode in {"bed", "voice_bed"}
     bed_path = None
     voice_path = None
     note = ""
@@ -1293,8 +1345,11 @@ async def _sync_analytics(session: AsyncSession, automation_id: int) -> int:
             CustomContentFactoryPost.status == "posted",
             CustomContentFactoryPost.external_id != "",
         )
-        .order_by(CustomContentFactoryPost.posted_at.desc())
-        .limit(5)
+        .order_by(
+            CustomContentFactoryPost.analytics_synced_at.is_(None).desc(),
+            CustomContentFactoryPost.posted_at.asc(),
+        )
+        .limit(12)
     )
     updated = 0
     for post in result.scalars().all():

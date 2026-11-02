@@ -24,12 +24,9 @@ CONTENT_FORMATS = (
 VISUAL_STYLES = ("animation", "realism", "motion", "mixed")
 
 WARMUP_ACTIONS = (
-    ("watch_niche", "Просмотр роликов в своей нише"),
-    ("like_native", "Лайки на живой контент, не свой"),
-    ("browse_feed", "Лента без публикаций"),
-    ("save_reference", "Сохранения референсов"),
-    ("profile_polish", "Правка шапки и сторис-обложки"),
-    ("comment_light", "Короткий комментарий без ссылок"),
+    ("pace_day", "Пауза перед первым постом. Завод не открывает ленту и не ставит лайки"),
+    ("pace_gap", "Выдержка между отметками прогрева. Действий на площадке нет"),
+    ("pace_ready", "Счётчик дней прогрева. Аккаунт прогревает владелец, не завод"),
 )
 
 HOOK_PREFIXES = (
@@ -68,6 +65,7 @@ PLATFORM_CREDENTIAL_HINTS = {
     "instagram": "access_token и Instagram User ID",
     "tiktok": "access_token Content Posting API",
     "pinterest": "access_token и board_id",
+    "vk": "access_token сообщества и id группы",
 }
 
 
@@ -291,7 +289,7 @@ def should_flag_shadowban(*, recent_posts: list[dict[str, Any]], threshold: int,
     zero = [
         post
         for post in recent_posts
-        if post.get("status") in {"posted", "sandbox"}
+        if post.get("status") == "posted"
         and post.get("posted_at")
         and post["posted_at"] <= cutoff
         and int(post.get("views") or 0) == 0

@@ -1327,8 +1327,7 @@ async def list_joined_task_chats(
             .where(*filters)
             .distinct()
             .order_by(
-                ChatTarget.last_scanned_at.is_(None).desc(),
-                ChatTarget.last_scanned_at.asc(),
+                ChatTarget.last_scanned_at.asc().nulls_first(),
                 ChatTarget.id.asc(),
             )
             .limit(max(1, int(limit or 20)))

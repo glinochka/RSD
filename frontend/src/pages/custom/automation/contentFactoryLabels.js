@@ -58,9 +58,9 @@ export const CF_ASPECTS = [
 
 export const CF_VIDEO_MODELS = [
   { value: 'kling', label: 'Kling' },
-  { value: 'runway', label: 'Runway' },
-  { value: 'luma', label: 'Luma' },
   { value: 'preview', label: 'Только раскадровка' },
+  { value: 'runway', label: 'Runway — пока только раскадровка' },
+  { value: 'luma', label: 'Luma — пока только раскадровка' },
 ];
 
 export const CF_STATUS = {

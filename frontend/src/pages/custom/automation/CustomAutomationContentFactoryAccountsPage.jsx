@@ -157,7 +157,7 @@ const CustomAutomationContentFactoryAccountsPage = () => {
       <div className="ubt-hero">
         <div>
           <h1>Аккаунты контент-завода</h1>
-          <p>Новый аккаунт сначала прогревается: без холодного постинга, чтобы не словить теневой бан.</p>
+          <p>Новый аккаунт ждёт паузу перед первым боевым постом. Завод сам ленту не листает: если аккаунт уже живой, отметьте это вручную.</p>
         </div>
         <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY(id)}>
           Результаты
@@ -316,10 +316,15 @@ const CustomAutomationContentFactoryAccountsPage = () => {
                       ))}
                     </div>
                   ) : (
-                    <p className="cf-muted">Журнал прогрева появится после первых тиков планировщика. Это учёт действий, не эмуляция приложения.</p>
+                    <p className="cf-muted">Журнал появится после тиков планировщика. Это только счётчик паузы, не действия в приложении площадки.</p>
                   )}
                   {account.last_error ? <p className="form-hint form-hint--error">{account.last_error}</p> : null}
                   <div className="cf-actions">
+                    {account.warmup && !account.warmup.complete ? (
+                      <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => patchAccount(account.id, { mark_warmed: true }, 'Аккаунт отмечен как уже живой')}>
+                        Уже живой
+                      </button>
+                    ) : null}
                     {account.status === 'paused' ? (
                       <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => patchAccount(account.id, { resume: true }, 'Аккаунт снят с паузы')}>
                         Снять паузу

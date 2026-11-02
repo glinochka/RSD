@@ -409,6 +409,56 @@ async def test_multi_clip_kling_stitches_master(
     assert first.get("video_url")
 
 
+def test_shadowban_counts_only_live_posts():
+    from datetime import datetime, timedelta
+
+    from app.services.custom.content_factory_antifraud import should_flag_shadowban
+
+    old = datetime.utcnow() - timedelta(hours=40)
+    sandbox = [{"status": "sandbox", "posted_at": old, "views": 0} for _ in range(4)]
+    assert should_flag_shadowban(recent_posts=sandbox, threshold=3) is False
+    live = [{"status": "posted", "posted_at": old, "views": 0} for _ in range(3)]
+    assert should_flag_shadowban(recent_posts=live, threshold=3) is True
+
+
+async def test_accounts_list_and_mark_warmed(
+    client: AsyncClient,
+    custom_automation: CustomAutomation,
+    client_token: str,
+):
+    automation_id = custom_automation.id
+    connected = await client.post(
+        f"/api/custom/automations/{automation_id}/content-factory/accounts",
+        headers=_auth(client_token),
+        json={
+            "platform": "youtube",
+            "display_name": "Demo Shorts",
+            "credentials": {"refresh_token": "refresh-demo"},
+        },
+    )
+    assert connected.status_code == 201, connected.text
+    account_id = connected.json()["id"]
+    assert connected.json()["warmup"]["complete"] is False
+
+    listed = await client.get(
+        f"/api/custom/automations/{automation_id}/content-factory/accounts",
+        headers=_auth(client_token),
+    )
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["items"][0]["id"] == account_id
+    assert "youtube_oauth_ready" in body
+
+    warmed = await client.patch(
+        f"/api/custom/automations/{automation_id}/content-factory/accounts/{account_id}",
+        headers=_auth(client_token),
+        json={"mark_warmed": True},
+    )
+    assert warmed.status_code == 200, warmed.text
+    assert warmed.json()["status"] == "ready"
+    assert warmed.json()["warmup"]["complete"] is True
+
+
 def test_carousel_share_is_the_photo_slice():
     assert pick_media_kind(0, 1) == "video"
     assert pick_media_kind(30, 30) == "carousel"
@@ -451,6 +501,112 @@ def test_one_grok_bot_returns_frames_in_swipe_order():
     assert pack["response_id"] == "resp_1"
     assert [item["bytes"] for item in pack["images"]] == [b"png-a", b"png-b"]
     assert "очередь" in pack["text"]
+
+
+async def test_grok_bot_carousel_reaches_sandbox(
+    test_session: AsyncSession,
+    custom_automation: CustomAutomation,
+    monkeypatch,
+    tmp_path,
+):
+    from app.config import settings as app_settings
+    from app.services.custom.content_factory_pipeline import generate_now
+    from app.services.custom.content_factory_service import (
+        apply_settings_update,
+        connect_account,
+        get_or_create_settings,
+    )
+
+    calls = {"llm": 0, "grok": 0}
+
+    async def _no_llm(*_args, **_kwargs):
+        calls["llm"] += 1
+        return None
+
+    async def fake_pack(**kwargs):
+        calls["grok"] += 1
+        folder = kwargs["folder"]
+        folder.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for index in range(6):
+            dest = folder / f"slide-{index:02d}.png"
+            dest.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([index + 1]))
+            paths.append(dest)
+        return {
+            "paths": paths,
+            "prompts": [f"кадр {index + 1}" for index in range(6)],
+            "text": "Стоп. Очередь в кофейне\nВторой кадр про смену",
+            "response_id": "resp_e2e",
+            "continued": False,
+        }
+
+    def fake_slides(slide_paths, dest, seconds=2.4):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"slideshow-" + str(len(slide_paths)).encode())
+        return dest
+
+    def fake_uniq(*, source, dest, recipe, aspect_ratio):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(source.read_bytes() + b"-uniq")
+        return dest
+
+    monkeypatch.setattr(app_settings, "MEDIA_ROOT", str(tmp_path))
+    monkeypatch.setattr("app.services.custom.content_factory_media.settings.MEDIA_ROOT", str(tmp_path))
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline._llm_json", _no_llm)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.generate_grok_carousel_pack", fake_pack)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.slides_to_mp4", fake_slides)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.uniqualize_file", fake_uniq)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.write_thumbnail", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.asyncio.sleep", lambda *_args, **_kwargs: None)
+
+    settings = await get_or_create_settings(test_session, custom_automation.id)
+    apply_settings_update(settings, {
+        "sandbox_mode": True,
+        "enabled": True,
+        "product_name": "Кофейня",
+        "image_provider": "grok",
+        "xai_api_key": "xai-test",
+        "carousel_share": 100,
+        "music_mode": "off",
+    })
+    await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="instagram",
+        display_name="IG",
+        handle="@cafe",
+        external_id="1789",
+        credentials={"access_token": "tok", "ig_user_id": "1789"},
+    )
+    video = await generate_now(test_session, custom_automation.id)
+    await test_session.commit()
+    await test_session.refresh(settings)
+
+    assert calls["llm"] == 0
+    assert calls["grok"] == 1
+    assert video.status == "sandbox"
+    assert "кофейне" in (video.idea or "").lower() or "кофейне" in (video.hook or "").lower()
+    assert len(video.storyboard or []) == 6
+    assert (video.storyboard or [])[0].get("voiceover")
+    extra = video.extra or {}
+    assert extra.get("media_kind") == "carousel"
+    assert extra.get("grok_bot_id", "").startswith("cf-carousel-")
+    assert len(extra.get("slide_urls") or []) == 6
+    assert video.video_url
+    assert settings.grok_bot_response_id == "resp_e2e"
+    from sqlalchemy import select
+    from app.alembic.models import CustomContentFactoryPost
+
+    posts = list(
+        (
+            await test_session.execute(
+                select(CustomContentFactoryPost).where(CustomContentFactoryPost.video_id == video.id)
+            )
+        ).scalars().all()
+    )
+    assert posts
+    assert posts[0].status == "sandbox"
+    assert posts[0].platform == "instagram"
 
 
 def test_music_bed_is_an_original_wav(tmp_path):

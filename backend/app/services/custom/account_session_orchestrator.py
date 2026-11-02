@@ -394,6 +394,9 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             except TimeoutError:
                 logger.warning("%s tick timed out for automation %s", name, automation_id)
                 results[name] = {"status": "timeout"}
+            except Exception as exc:
+                logger.exception("%s tick failed for automation %s: %s", name, automation_id, exc)
+                results[name] = {"status": "error", "error": str(exc)[:240]}
         lifestyle_name = None
         peer = next((item for item in lifestyle if item[0] == "peer_dialog"), None)
         if peer is not None:
@@ -403,6 +406,9 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             except TimeoutError:
                 logger.warning("%s tick timed out for automation %s", peer[0], automation_id)
                 results[peer[0]] = {"status": "timeout"}
+            except Exception as exc:
+                logger.exception("%s tick failed for automation %s: %s", peer[0], automation_id, exc)
+                results[peer[0]] = {"status": "error", "error": str(exc)[:240]}
         others = [item for item in lifestyle if item[0] != "peer_dialog"]
         if others:
             lifestyle_name, lifestyle_fn = others[hub.cursor % len(others)]
@@ -414,6 +420,9 @@ async def run_account_sessions(automation_id: int) -> dict[str, Any]:
             except TimeoutError:
                 logger.warning("%s tick timed out for automation %s", lifestyle_name, automation_id)
                 results[lifestyle_name] = {"status": "timeout"}
+            except Exception as exc:
+                logger.exception("%s tick failed for automation %s: %s", lifestyle_name, automation_id, exc)
+                results[lifestyle_name] = {"status": "error", "error": str(exc)[:240]}
         primary = job_work[0][0] if job_work else lifestyle_name
         return {
             "status": "ok",
