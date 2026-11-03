@@ -12,12 +12,12 @@ export const CF_PLATFORMS = [
   {
     id: 'tiktok',
     title: 'TikTok',
-    hint: 'Content Posting API: access token. Без него завод собирает ролик, но не публикует.',
+    hint: 'Content Posting API. Публичный пост возможен только после аудита приложения TikTok — иначе завод остановит публикацию и напишет причину.',
   },
   {
     id: 'pinterest',
     title: 'Pinterest',
-    hint: 'access token и board_id. Фото-карусель уходит пином из нескольких кадров.',
+    hint: 'access token и board_id. Фото и карусель уходят пином. Видео Pinterest API v5 по ссылке не принимает.',
   },
   {
     id: 'vk',

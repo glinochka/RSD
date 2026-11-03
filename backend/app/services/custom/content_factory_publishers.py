@@ -268,7 +268,7 @@ async def _publish_instagram_carousel(
             params={"fields": "status_code", "access_token": token},
         )
         code = str((status_resp.json() or {}).get("status_code") or "").upper() if status_resp.is_success else ""
-        if code not in {"FINISHED", "PUBLISHED", ""}:
+        if code not in {"FINISHED", "PUBLISHED"}:
             return {
                 "status": "processing",
                 "external_id": container_id,
@@ -335,6 +335,30 @@ async def _tiktok_resume(token: str, publish_id: str) -> dict[str, Any]:
     }
 
 
+async def _tiktok_privacy_level(token: str) -> str:
+    """Prefer the privacy TikTok actually allows. A failed lookup keeps the previous public attempt."""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
+    except httpx.HTTPError:
+        return "PUBLIC_TO_EVERYONE"
+    if not response.is_success:
+        return "PUBLIC_TO_EVERYONE"
+    data = response.json() if response.content else {}
+    inner = data.get("data") if isinstance(data, dict) else {}
+    inner = inner if isinstance(inner, dict) else {}
+    options = [str(item) for item in (inner.get("privacy_level_options") or []) if item]
+    if not options or "PUBLIC_TO_EVERYONE" in options:
+        return "PUBLIC_TO_EVERYONE"
+    raise PublisherError(
+        "TikTok не разрешает публичный пост этому приложению. "
+        f"Доступно: {', '.join(options)}. Нужен аудит Content Posting API."
+    )
+
+
 async def _publish_tiktok_photos(
     *,
     credentials: dict[str, Any],
@@ -348,8 +372,9 @@ async def _publish_tiktok_photos(
     existing = str((publisher_state or {}).get("tiktok_publish_id") or "").strip()
     if existing:
         return await _tiktok_resume(token, existing)
+    privacy = await _tiktok_privacy_level(token)
     payload = {
-        "post_info": {"title": caption[:90], "privacy_level": "PUBLIC_TO_EVERYONE", "disable_comment": False},
+        "post_info": {"title": caption[:90], "privacy_level": privacy, "disable_comment": False},
         "source_info": {"source": "PULL_FROM_URL", "photo_cover_index": 0, "photo_images": image_urls[:35]},
         "post_mode": "DIRECT_POST",
         "media_type": "PHOTO",
@@ -432,10 +457,11 @@ async def _publish_tiktok(
         return await _tiktok_resume(token, existing)
     if not str(video_url or "").startswith("http"):
         raise PublisherError("TikTok: нет публичного URL ролика")
+    privacy = await _tiktok_privacy_level(token)
     payload = {
         "post_info": {
             "title": caption[:150],
-            "privacy_level": "PUBLIC_TO_EVERYONE",
+            "privacy_level": privacy,
             "disable_duet": False,
             "disable_comment": False,
             "disable_stitch": False,
@@ -479,30 +505,12 @@ async def _publish_pinterest(*, credentials: dict[str, Any], video_url: str | No
     board_id = str(credentials.get("board_id") or "").strip()
     if not token or not board_id:
         raise PublisherError("Pinterest: нужен access_token и board_id")
-    if not str(video_url or "").startswith("http"):
-        raise PublisherError("Pinterest: нет публичного URL ролика")
-    payload = {
-        "board_id": board_id,
-        "title": (title or "Idea pin")[:100],
-        "description": caption[:500],
-        "media_source": {"source_type": "video_url", "url": video_url},
-    }
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.post(
-            "https://api.pinterest.com/v5/pins",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json=payload,
-        )
-    if not response.is_success:
-        raise PublisherError(f"Pinterest pin: HTTP {response.status_code} {response.text[:240]}")
-    data = response.json() if response.content else {}
-    pin_id = str((data or {}).get("id") or "").strip()
-    link = str((data or {}).get("link") or "")
-    return {
-        "status": "posted",
-        "external_id": pin_id,
-        "posted_url": link or (f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else ""),
-    }
+    if not str(video_url or "").strip():
+        raise PublisherError("Pinterest: нет файла ролика")
+    raise PublisherError(
+        "Pinterest API v5 не принимает видео по ссылке. Для этой площадки публикуйте фото-карусель. "
+        "Ролики уходят на YouTube, Instagram, TikTok и VK."
+    )
 
 
 async def _youtube_stats(*, credentials: dict[str, Any], video_id: str) -> dict[str, int]:
@@ -523,31 +531,43 @@ async def _youtube_stats(*, credentials: dict[str, Any], video_id: str) -> dict[
         "comments": int(stats.get("commentCount") or 0),
         "shares": 0,
         "saves": 0,
+        "token_bundle": bundle,
     }
 
 
 async def _instagram_stats(*, credentials: dict[str, Any], media_id: str) -> dict[str, int]:
     token = str(credentials.get("access_token") or "").strip()
+    metric_sets = (
+        "plays,likes,comments,shares,saved",
+        "views,likes,comments,shares,saved",
+        "likes,comments,shares,saved",
+    )
+    last_error = "Instagram insights: пустой ответ"
     async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            f"https://graph.facebook.com/v21.0/{media_id}/insights",
-            params={"metric": "plays,likes,comments,shares,saved", "access_token": token},
-        )
-    if not response.is_success:
-        raise PublisherError(f"Instagram insights HTTP {response.status_code}")
-    mapped = {}
-    for item in (response.json() or {}).get("data") or []:
-        name = str(item.get("name") or "")
-        values = item.get("values") or []
-        value = int((values[0] or {}).get("value") or 0) if values else 0
-        mapped[name] = value
-    return {
-        "views": mapped.get("plays") or 0,
-        "likes": mapped.get("likes") or 0,
-        "comments": mapped.get("comments") or 0,
-        "shares": mapped.get("shares") or 0,
-        "saves": mapped.get("saved") or 0,
-    }
+        for metric in metric_sets:
+            response = await client.get(
+                f"https://graph.facebook.com/v21.0/{media_id}/insights",
+                params={"metric": metric, "access_token": token},
+            )
+            if not response.is_success:
+                last_error = f"Instagram insights HTTP {response.status_code}"
+                continue
+            mapped = {}
+            for item in (response.json() or {}).get("data") or []:
+                name = str(item.get("name") or "")
+                values = item.get("values") or []
+                value = int((values[0] or {}).get("value") or 0) if values else 0
+                mapped[name] = value
+            views_known = "plays" in mapped or "views" in mapped
+            return {
+                "views": int(mapped.get("plays") or mapped.get("views") or 0),
+                "likes": int(mapped.get("likes") or 0),
+                "comments": int(mapped.get("comments") or 0),
+                "shares": int(mapped.get("shares") or 0),
+                "saves": int(mapped.get("saved") or 0),
+                "views_unreliable": 0 if views_known else 1,
+            }
+    raise PublisherError(last_error)
 
 
 async def _tiktok_stats(*, credentials: dict[str, Any], video_id: str) -> dict[str, int] | None:
@@ -588,9 +608,11 @@ async def _pinterest_stats(*, credentials: dict[str, Any], pin_id: str) -> dict[
     if not response.is_success:
         return None
     payload = response.json() if response.content else {}
-    pin_metrics = (payload.get("pin_metrics") or {}) if isinstance(payload, dict) else {}
+    pin_metrics = payload.get("pin_metrics") if isinstance(payload, dict) else None
+    if not isinstance(pin_metrics, dict) or not pin_metrics:
+        return None
     lifetime = pin_metrics.get("90d") or pin_metrics.get("lifetime") or pin_metrics
-    if not isinstance(lifetime, dict):
+    if not isinstance(lifetime, dict) or not any(key in lifetime for key in ("impression", "save", "pin_click", "reaction")):
         return None
     views = int(lifetime.get("impression") or lifetime.get("video_avg_watch_time") or 0)
     return {

@@ -1,5 +1,7 @@
 """AI content factory routes for /custom automations."""
+import hashlib
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Optional
@@ -49,6 +51,21 @@ from ..services.youtube_client import get_youtube_client
 from ..utils.crypto import decrypt_token, encrypt_token
 
 logger = getLogger(__name__)
+_USED_OAUTH_STATE: dict[str, float] = {}
+
+
+def _consume_oauth_state(state: str, exp: float | None) -> None:
+    now = time.time()
+    for key, until in list(_USED_OAUTH_STATE.items()):
+        if until < now:
+            _USED_OAUTH_STATE.pop(key, None)
+    digest = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    if digest in _USED_OAUTH_STATE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state уже использован. Запустите подключение снова.",
+        )
+    _USED_OAUTH_STATE[digest] = float(exp or now + 1200)
 router = APIRouter()
 
 
@@ -273,6 +290,7 @@ async def youtube_oauth_callback(
         raise
     except (TypeError, ValueError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный OAuth state")
+    _consume_oauth_state(state, float(exp) if exp is not None else None)
     try:
         tokens = await youtube_exchange_code(code=code)
     except Exception as exc:

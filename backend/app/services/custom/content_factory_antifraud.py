@@ -212,6 +212,124 @@ def hook_is_strong(hook: str) -> bool:
     return bool(re.search(r"\d", text)) and len(text.split()) <= 18
 
 
+_CAPTION_SUFFIXES = {
+    "youtube": (
+        "Подпишись, если хочешь ещё разборы.",
+        "Следующий разбор выйдет на этом канале.",
+        "Если узнал свою ситуацию — напиши в комментарии.",
+    ),
+    "instagram": (
+        "Сохрани, чтобы не потерять.",
+        "Отправь тому, кому это сейчас полезно.",
+        "Напиши в комментарии, если узнал себя.",
+    ),
+    "tiktok": (
+        "Досмотри до хука — там суть.",
+        "Сохрани, если надо пересмотреть.",
+        "Напиши, если хочешь разбор на твоём примере.",
+    ),
+    "pinterest": (
+        "Идея, которую можно внедрить сегодня.",
+        "Сохрани пин и вернись к нему на неделе.",
+        "Короткий разбор, который можно применить сразу.",
+    ),
+    "vk": (
+        "Клип для тех, кто листает ленту.",
+        "Если узнал свою ситуацию — оставь комментарий.",
+        "Сохрани, чтобы не искать это снова.",
+    ),
+}
+
+PUBLISH_ATTEMPT_LIMIT = 4
+
+
+def parse_utc_naive(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", ""))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    return parsed
+
+
+def local_today(timezone_name: str, moment: datetime | None = None):
+    try:
+        zone = ZoneInfo(str(timezone_name or "Europe/Moscow"))
+    except Exception:
+        zone = ZoneInfo("Europe/Moscow")
+    if moment is None:
+        current = datetime.now(zone)
+    elif moment.tzinfo is None:
+        current = moment.replace(tzinfo=ZoneInfo("UTC")).astimezone(zone)
+    else:
+        current = moment.astimezone(zone)
+    return current.date()
+
+
+def local_midnight_utc_naive(timezone_name: str, moment: datetime | None = None) -> datetime:
+    try:
+        zone = ZoneInfo(str(timezone_name or "Europe/Moscow"))
+    except Exception:
+        zone = ZoneInfo("Europe/Moscow")
+    if moment is None:
+        current = datetime.now(zone)
+    elif moment.tzinfo is None:
+        current = moment.replace(tzinfo=ZoneInfo("UTC")).astimezone(zone)
+    else:
+        current = moment.astimezone(zone)
+    start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+
+def live_daily_cap(
+    *,
+    max_posts_per_day: int,
+    warmup_completed_at: datetime | None,
+    owner_confirmed: bool,
+    ramp: bool = True,
+    now: datetime | None = None,
+) -> int:
+    """Ramp the first live days. An owner-confirmed account skips the ramp."""
+    cap = max(1, min(int(max_posts_per_day or 1), 8))
+    if not ramp or owner_confirmed or warmup_completed_at is None:
+        return cap
+    current = now or now_utc()
+    age_days = max(0.0, (current - warmup_completed_at).total_seconds() / 86400.0)
+    if age_days < 3:
+        return 1
+    if age_days < 7:
+        return min(cap, 2)
+    return cap
+
+
+def settle_publish_status(statuses: list[str], *, has_retryable_failure: bool) -> str:
+    """Video status after one publish pass. Held accounts must not kill the video."""
+    if not statuses:
+        return "ready"
+    if all(status in {"posted", "sandbox"} for status in statuses):
+        return "sandbox" if all(status == "sandbox" for status in statuses) else "posted"
+    if any(status == "processing" for status in statuses):
+        return "posting"
+    if any(status in {"held", "pending"} for status in statuses) or has_retryable_failure:
+        return "ready"
+    if any(status in {"posted", "sandbox"} for status in statuses):
+        return "posted"
+    return "failed"
+
+
+def publish_attempt_due(*, attempts: int, retry_after: datetime | None, now: datetime | None = None) -> bool:
+    if int(attempts or 0) >= PUBLISH_ATTEMPT_LIMIT:
+        return False
+    current = now or now_utc()
+    if retry_after is not None and current < retry_after:
+        return False
+    return True
+
+
 def caption_variant(
     base: str,
     platform: str,
@@ -220,14 +338,9 @@ def caption_variant(
     hashtags: list[str] | None = None,
 ) -> str:
     text = re.sub(r"\s+", " ", str(base or "")).strip()
-    suffixes = {
-        "youtube": "Подпишись, если хочешь ещё разборы.",
-        "instagram": "Сохрани, чтобы не потерять.",
-        "tiktok": "Досмотри до хука — там суть.",
-        "pinterest": "Идея, которую можно внедрить сегодня.",
-        "vk": "Клип для тех, кто листает ленту.",
-    }
-    extra = suffixes.get(platform, "")
+    digest = hashlib.sha256(f"{seed}:{platform}:caption".encode("utf-8")).digest()
+    pool = _CAPTION_SUFFIXES.get(platform) or ("",)
+    extra = pool[digest[0] % len(pool)]
     url = str(product_url or "").strip()
     parts = [text]
     if extra and extra.lower() not in text.lower():
@@ -243,6 +356,9 @@ def caption_variant(
         if clean:
             tags.append(f"#{clean[:40]}")
     unique_tags = list(dict.fromkeys(tags))[:8]
+    if len(unique_tags) > 1:
+        shift = digest[1] % len(unique_tags)
+        unique_tags = unique_tags[shift:] + unique_tags[:shift]
     if unique_tags:
         parts.append(" ".join(unique_tags))
     variant = " ".join(part for part in parts if part).strip()
@@ -292,13 +408,14 @@ def should_flag_shadowban(*, recent_posts: list[dict[str, Any]], threshold: int,
         if post.get("status") == "posted"
         and post.get("posted_at")
         and post["posted_at"] <= cutoff
+        and post.get("views_known", True)
         and int(post.get("views") or 0) == 0
     ]
     return len(zero) >= max(2, int(threshold or 3))
 
 
 def should_clear_shadowban(*, recent_posts: list[dict[str, Any]]) -> bool:
-    live = [post for post in recent_posts if post.get("status") == "posted"][:3]
+    live = [post for post in recent_posts if post.get("status") == "posted" and post.get("views_known", True)][:3]
     if not live:
         return False
     return sum(int(post.get("views") or 0) for post in live) > 0

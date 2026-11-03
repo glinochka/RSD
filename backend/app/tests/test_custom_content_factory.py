@@ -86,6 +86,11 @@ def test_hook_and_uniqualization():
     assert captions["youtube"] != captions["instagram"]
     assert "https://x.test" in captions["youtube"]
     assert "#saas" in captions["youtube"]
+    varied = {
+        caption_variant("База", "vk", "", f"account-{index}", hashtags=["one", "two"])
+        for index in range(12)
+    }
+    assert len(varied) >= 3
     assert factory_return_url("https://evil.test/phish", 9, base_url="https://app.test") == "https://app.test/custom/automations/9/content-factory/accounts"
     assert factory_return_url(
         "https://app.test/custom/automations/9/content-factory/accounts",
@@ -417,8 +422,43 @@ def test_shadowban_counts_only_live_posts():
     old = datetime.utcnow() - timedelta(hours=40)
     sandbox = [{"status": "sandbox", "posted_at": old, "views": 0} for _ in range(4)]
     assert should_flag_shadowban(recent_posts=sandbox, threshold=3) is False
-    live = [{"status": "posted", "posted_at": old, "views": 0} for _ in range(3)]
+    live = [{"status": "posted", "posted_at": old, "views": 0, "views_known": True} for _ in range(3)]
     assert should_flag_shadowban(recent_posts=live, threshold=3) is True
+    unknown = [{"status": "posted", "posted_at": old, "views": 0, "views_known": False} for _ in range(4)]
+    assert should_flag_shadowban(recent_posts=unknown, threshold=3) is False
+
+
+def test_publish_keeps_video_when_a_sibling_is_still_held():
+    from datetime import datetime, timedelta
+
+    from app.services.custom.content_factory_antifraud import (
+        live_daily_cap,
+        publish_attempt_due,
+        settle_publish_status,
+    )
+
+    assert settle_publish_status(["held", "failed"], has_retryable_failure=True) == "ready"
+    assert settle_publish_status(["held", "failed"], has_retryable_failure=False) == "ready"
+    assert settle_publish_status(["failed", "failed"], has_retryable_failure=False) == "failed"
+    assert settle_publish_status(["posted", "failed"], has_retryable_failure=False) == "posted"
+    assert settle_publish_status(["processing", "held"], has_retryable_failure=False) == "posting"
+    assert settle_publish_status(["sandbox", "sandbox"], has_retryable_failure=False) == "sandbox"
+
+    now = datetime.utcnow()
+    assert publish_attempt_due(attempts=1, retry_after=now + timedelta(minutes=10), now=now) is False
+    assert publish_attempt_due(attempts=1, retry_after=now - timedelta(minutes=1), now=now) is True
+    assert publish_attempt_due(attempts=4, retry_after=None, now=now) is False
+
+    completed = now - timedelta(days=1)
+    assert live_daily_cap(max_posts_per_day=4, warmup_completed_at=completed, owner_confirmed=False, now=now) == 1
+    assert live_daily_cap(max_posts_per_day=4, warmup_completed_at=completed, owner_confirmed=False, ramp=False, now=now) == 4
+    assert live_daily_cap(max_posts_per_day=4, warmup_completed_at=completed, owner_confirmed=True, now=now) == 4
+    assert live_daily_cap(
+        max_posts_per_day=4,
+        warmup_completed_at=now - timedelta(days=4),
+        owner_confirmed=False,
+        now=now,
+    ) == 2
 
 
 async def test_accounts_list_and_mark_warmed(

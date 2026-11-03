@@ -26,6 +26,7 @@ from .content_factory_antifraud import (
     VISUAL_STYLES,
     compute_health_score,
     in_posting_window,
+    local_today,
     next_enqueue_at,
     now_utc,
     uniqualize_recipe,
@@ -400,12 +401,34 @@ async def connect_account(
     if platform not in PLATFORMS:
         raise ValueError(f"Неподдерживаемая площадка: {platform}")
     cleaned = validate_platform_credentials(platform, credentials, external_id=external_id)
+    identity = (external_id or cleaned.get("ig_user_id") or cleaned.get("group_id") or "")[:191]
+    if identity:
+        existing = await session.scalar(
+            select(CustomContentFactoryAccount).where(
+                CustomContentFactoryAccount.custom_automation_id == automation_id,
+                CustomContentFactoryAccount.platform == platform,
+                CustomContentFactoryAccount.external_id == identity,
+            )
+        )
+        if existing:
+            existing.credentials_enc = encrypt_json(cleaned)
+            if display_name or handle:
+                existing.display_name = (display_name or handle or existing.display_name or platform)[:200]
+            if handle:
+                existing.handle = handle[:128]
+            existing.external_id = identity
+            existing.is_enabled = True
+            if existing.status == "disconnected":
+                existing.status = "warming" if start_warming else "connected"
+            existing.updated_at = now_utc()
+            await session.flush()
+            return existing
     account = CustomContentFactoryAccount(
         custom_automation_id=automation_id,
         platform=platform,
         display_name=(display_name or handle or platform)[:200],
         handle=(handle or "")[:128],
-        external_id=(external_id or cleaned.get("ig_user_id") or cleaned.get("open_id") or "")[:191],
+        external_id=identity[:191],
         credentials_enc=encrypt_json(cleaned),
         status="warming" if start_warming else "connected",
         is_enabled=True,
@@ -449,6 +472,10 @@ async def update_account(
     if payload.get("mark_warmed"):
         account.warmup_started_at = account.warmup_started_at or now_utc()
         account.warmup_completed_at = now_utc()
+        extra = dict(account.extra or {})
+        extra["owner_confirmed"] = True
+        extra.pop("apply_post_ramp", None)
+        account.extra = extra
         if account.status in {"warming", "connected", "shadow_risk"}:
             account.status = "ready"
     if payload.get("resume") and account.status == "paused":
@@ -728,6 +755,17 @@ async def retry_video(session: AsyncSession, automation_id: int, video_id: int) 
     extra = dict(video.extra or {})
     extra["retried_at"] = now_utc().isoformat()
     extra.pop("hold_reason", None)
+    extra["kling_polls"] = 0
+    extra["awaiting_kling"] = False
+    plan = extra.get("clip_plan")
+    if isinstance(plan, list):
+        for item in plan:
+            if isinstance(item, dict) and item.get("status") == "failed":
+                item.pop("task_id", None)
+                item.pop("url", None)
+                item.pop("path", None)
+                item["status"] = "queued"
+        extra["clip_plan"] = plan
     video.extra = extra
     video.last_error = None
     video.finished_at = None
@@ -778,14 +816,25 @@ async def recent_warmup_events_map(
     return grouped
 
 
-def recipes_for_video(video: CustomContentFactoryVideo, settings: CustomContentFactorySettings, platforms: list[str]) -> dict[str, Any]:
-    seed = f"{video.id}:{video.hook}:{video.script}"
+def recipes_for_video(
+    video: CustomContentFactoryVideo,
+    settings: CustomContentFactorySettings,
+    accounts: list[CustomContentFactoryAccount],
+) -> dict[str, Any]:
+    enabled = bool(settings.uniqualize_enabled)
+    if not accounts:
+        seed = f"{video.id}:{video.hook}:{video.script}"
+        return {"youtube": uniqualize_recipe(platform="youtube", seed=seed, enabled=enabled)}
     if not settings.unique_per_platform:
-        platforms = platforms[:1] or ["youtube"]
-    return {
-        platform: uniqualize_recipe(platform=platform, seed=seed, enabled=bool(settings.uniqualize_enabled))
-        for platform in platforms
-    }
+        platform = accounts[0].platform or "youtube"
+        seed = f"{video.id}:{video.hook}:{video.script}"
+        return {platform: uniqualize_recipe(platform=platform, seed=seed, enabled=enabled)}
+    recipes: dict[str, Any] = {}
+    for account in accounts:
+        key = f"{account.platform}:{account.id}"
+        seed = f"{video.id}:{account.id}:{video.hook}:{video.script}"
+        recipes[key] = uniqualize_recipe(platform=account.platform, seed=seed, enabled=enabled)
+    return recipes
 
 
 async def recent_hooks(session: AsyncSession, automation_id: int, limit: int = 12) -> list[str]:
@@ -822,8 +871,13 @@ async def add_warmup_event(
     return event
 
 
-def reset_daily_counter(account: CustomContentFactoryAccount, today: date | None = None) -> None:
-    day = today or now_utc().date()
+def reset_daily_counter(
+    account: CustomContentFactoryAccount,
+    today: date | None = None,
+    *,
+    timezone_name: str = "Europe/Moscow",
+) -> None:
+    day = today or local_today(timezone_name)
     if account.posts_today_date != day:
         account.posts_today = 0
         account.posts_today_date = day

@@ -9,7 +9,7 @@ import re
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -36,9 +36,15 @@ from .content_factory_antifraud import (
     in_posting_window,
     is_due,
     jitter_post_time,
+    live_daily_cap,
+    local_midnight_utc_naive,
     now_utc,
+    parse_utc_naive,
     pick_media_kind,
     pick_warmup_action,
+    publish_attempt_due,
+    PUBLISH_ATTEMPT_LIMIT,
+    settle_publish_status,
     should_clear_shadowban,
     should_flag_shadowban,
     uniqueness_hash,
@@ -70,12 +76,16 @@ from .content_factory_service import (
     add_warmup_event,
     decrypt_json,
     decrypted_secret,
+    encrypt_json,
     get_or_create_settings,
     recent_hooks,
     recipes_for_video,
     record_token_usage,
     reset_daily_counter,
 )
+
+KLING_POLL_LIMIT = 80
+PROCESSING_TIMEOUT = timedelta(hours=6)
 
 logger = logging.getLogger(__name__)
 
@@ -204,11 +214,54 @@ async def _enqueue_if_due(
     return video
 
 
-async def _process_next_video(
+def _has_processing_posts(video: CustomContentFactoryVideo) -> bool:
+    return any(getattr(post, "status", None) == "processing" for post in (video.posts or []))
+
+
+def _publish_time_blocked(video: CustomContentFactoryVideo, settings: CustomContentFactorySettings) -> bool:
+    """True when a new publish should wait. Platform polling still runs."""
+    if settings.sandbox_mode or _has_processing_posts(video):
+        return False
+    if video.scheduled_for and video.scheduled_for > now_utc():
+        return True
+    if not in_posting_window(
+        timezone_name=settings.timezone,
+        start=settings.posting_window_start,
+        end=settings.posting_window_end,
+    ):
+        return True
+    nxt = parse_utc_naive(str((video.extra or {}).get("next_publish_at") or ""))
+    return bool(nxt and nxt > now_utc())
+
+
+async def _claim_video(session: AsyncSession, video: CustomContentFactoryVideo) -> bool:
+    """Compare-and-set on Postgres so two app instances do not advance the same row."""
+    connection = await session.connection()
+    if connection.dialect.name != "postgresql":
+        return True
+    seen_at = video.updated_at
+    now = now_utc()
+    result = await session.execute(
+        update(CustomContentFactoryVideo)
+        .where(
+            CustomContentFactoryVideo.id == video.id,
+            CustomContentFactoryVideo.status == video.status,
+            CustomContentFactoryVideo.updated_at == seen_at,
+        )
+        .values(updated_at=now)
+    )
+    if int(result.rowcount or 0) != 1:
+        return False
+    video.updated_at = now
+    return True
+
+
+async def _load_inflight(
     session: AsyncSession,
     automation_id: int,
-    settings: CustomContentFactorySettings,
-) -> CustomContentFactoryVideo | None:
+    *,
+    limit: int = 8,
+) -> list[CustomContentFactoryVideo]:
     result = await session.execute(
         select(CustomContentFactoryVideo)
         .options(selectinload(CustomContentFactoryVideo.posts))
@@ -217,15 +270,34 @@ async def _process_next_video(
             CustomContentFactoryVideo.status.in_(tuple(VIDEO_IN_FLIGHT)),
         )
         .order_by(CustomContentFactoryVideo.scheduled_for.asc(), CustomContentFactoryVideo.id.asc())
-        .limit(1)
+        .limit(limit)
     )
-    video = result.scalars().first()
-    if not video:
+    return list(result.scalars().unique().all())
+
+
+async def _process_next_video(
+    session: AsyncSession,
+    automation_id: int,
+    settings: CustomContentFactorySettings,
+) -> CustomContentFactoryVideo | None:
+    """Advance generation even while an older video is waiting to publish."""
+    videos = await _load_inflight(session, automation_id)
+    if not videos:
         return None
-    if video.status in {"ready", "posting"} and video.scheduled_for and video.scheduled_for > now_utc() + timedelta(minutes=2):
-        return video
-    await _advance_video(session, video, settings)
-    return video
+    generation = next((item for item in videos if item.status not in {"ready", "posting"}), None)
+    publishing = next((item for item in videos if item.status in {"ready", "posting"}), None)
+    progressed: CustomContentFactoryVideo | None = None
+    heavy_render = generation is not None and generation.status == "uniqualizing"
+    if generation is not None and await _claim_video(session, generation):
+        await _advance_video(session, generation, settings)
+        progressed = generation
+    if publishing is not None and publishing is not generation and not heavy_render:
+        if _publish_time_blocked(publishing, settings):
+            return progressed or publishing
+        if await _claim_video(session, publishing):
+            await _advance_video(session, publishing, settings)
+            progressed = publishing
+    return progressed or videos[0]
 
 
 async def _advance_video(
@@ -812,6 +884,13 @@ async def _render_video(
                 cost_usd=estimate_render_cost_usd(video_model="kling", duration_seconds=duration),
             )
             return
+        polls = int(extra.get("kling_polls") or 0) + 1
+        extra["kling_polls"] = polls
+        video.extra = extra
+        if polls > KLING_POLL_LIMIT:
+            extra["awaiting_kling"] = False
+            video.extra = extra
+            raise RuntimeError(f"Kling не завершил клип {index + 1} за {KLING_POLL_LIMIT} проверок")
         payload = await client.poll_render(task_id=str(current["task_id"]))
         status = str(payload.get("status") or "")
         if status == "rendered":
@@ -827,6 +906,7 @@ async def _render_video(
                 logger.info("Clip download deferred: %s", exc)
             current["url"] = url
             current["status"] = "rendered"
+            extra["kling_polls"] = 0
             extra["clip_plan"] = plan
             extra["clips"] = [str(item.get("url") or "") for item in plan if item.get("url")]
             extra["clips_done"] = sum(1 for item in plan if item.get("url"))
@@ -958,15 +1038,7 @@ async def _uniqualize(
             )
         ).scalars().all()
     )
-    platforms = []
-    seen = set()
-    for account in accounts:
-        if account.platform not in seen:
-            platforms.append(account.platform)
-            seen.add(account.platform)
-    if not platforms:
-        platforms = ["youtube"]
-    recipes = recipes_for_video(video, settings, platforms)
+    recipes = recipes_for_video(video, settings, accounts)
     digest = uniqueness_hash(script=video.script, hook=video.hook, recipes=recipes)
     collision = await session.scalar(
         select(CustomContentFactoryVideo.id).where(
@@ -976,7 +1048,7 @@ async def _uniqualize(
         )
     )
     if collision:
-        salted = recipes_for_video(video, settings, platforms)
+        salted = recipes_for_video(video, settings, accounts)
         for payload in salted.values():
             if isinstance(payload, dict):
                 payload["salt"] = f"v{video.id}"
@@ -985,8 +1057,14 @@ async def _uniqualize(
     master = local_path_from_url(video.video_url)
     if master and master.exists() and master.stat().st_size > 0:
         folder = video_dir(video.custom_automation_id, video.id)
-        for platform, recipe in recipes.items():
+        encoded: dict[str, tuple[str, str]] = {}
+        for key, recipe in recipes.items():
             if not isinstance(recipe, dict):
+                continue
+            platform = str(recipe.get("platform") or str(key).split(":", 1)[0] or "youtube")
+            shared = encoded.get(platform)
+            if shared:
+                recipe["video_url"], recipe["path"] = shared
                 continue
             dest = folder / f"uniq-{platform}.mp4"
             uniqualize_file(
@@ -995,8 +1073,10 @@ async def _uniqualize(
                 recipe=recipe,
                 aspect_ratio=video.aspect_ratio or "9:16",
             )
-            recipe["video_url"] = public_media_url(dest)
+            url = public_media_url(dest)
+            recipe["video_url"] = url
             recipe["path"] = str(dest)
+            encoded[platform] = (url, str(dest))
     elif video.video_url:
         for recipe in recipes.values():
             if isinstance(recipe, dict) and not recipe.get("video_url"):
@@ -1007,25 +1087,29 @@ async def _uniqualize(
     video.last_error = None
 
 
+def _mark_publish_failure(post: CustomContentFactoryPost, account: CustomContentFactoryAccount, message: str) -> None:
+    meta = dict(post.uniqualization_applied or {})
+    attempts = int(meta.get("attempts") or 0) + 1
+    meta["attempts"] = attempts
+    delay_min = min(180, 2 ** min(attempts, 7))
+    meta["retry_after"] = (now_utc() + timedelta(minutes=delay_min)).isoformat()
+    post.uniqualization_applied = meta
+    post.status = "failed"
+    post.hold_reason = message[:500]
+    account.last_error = message[:500]
+
+
+def _failure_keeps_video(post: CustomContentFactoryPost) -> bool:
+    if post.status != "failed":
+        return False
+    return int((post.uniqualization_applied or {}).get("attempts") or 0) < PUBLISH_ATTEMPT_LIMIT
+
+
 async def _post_video(
     session: AsyncSession,
     video: CustomContentFactoryVideo,
     settings: CustomContentFactorySettings,
 ) -> None:
-    if not in_posting_window(
-        timezone_name=settings.timezone,
-        start=settings.posting_window_start,
-        end=settings.posting_window_end,
-    ) and not settings.sandbox_mode:
-        video.status = "ready"
-        extra = dict(video.extra or {})
-        extra["hold_reason"] = "Вне окна публикаций"
-        video.extra = extra
-        return
-    if video.scheduled_for and video.scheduled_for > now_utc() and not settings.sandbox_mode:
-        video.status = "ready"
-        return
-    video.status = "posting"
     existing_rows = list(
         (
             await session.execute(
@@ -1051,16 +1135,39 @@ async def _post_video(
         video.extra = extra
         video.last_error = None
         return
-    stagger = not bool(settings.sandbox_mode)
-    published_this_tick = 0
+    needs_poll = any(post.status == "processing" for post in existing_rows)
+    if not settings.sandbox_mode and not needs_poll:
+        if not in_posting_window(
+            timezone_name=settings.timezone,
+            start=settings.posting_window_start,
+            end=settings.posting_window_end,
+        ):
+            video.status = "ready"
+            extra["hold_reason"] = "Вне окна публикаций"
+            video.extra = extra
+            return
+        if video.scheduled_for and video.scheduled_for > now_utc():
+            video.status = "ready"
+            video.extra = extra
+            return
+    video.status = "posting"
+    stagger_until = parse_utc_naive(str(extra.get("next_publish_at") or ""))
+    stagger_open = bool(settings.sandbox_mode) or stagger_until is None or now_utc() >= stagger_until
+    attempted_this_tick = 0
     for account in accounts:
-        reset_daily_counter(account)
+        reset_daily_counter(account, timezone_name=settings.timezone or "Europe/Moscow")
         progress = warmup_progress(
             started_at=account.warmup_started_at,
             completed_at=account.warmup_completed_at,
             actions_done=int(account.warmup_actions_done or 0),
             warmup_days=int(settings.warmup_days or 7),
             actions_per_day=int(settings.warmup_actions_per_day or 8),
+        )
+        daily_cap = live_daily_cap(
+            max_posts_per_day=int(settings.max_posts_per_account_per_day or 2),
+            warmup_completed_at=account.warmup_completed_at,
+            owner_confirmed=bool((account.extra or {}).get("owner_confirmed")),
+            ramp=bool((account.extra or {}).get("apply_post_ramp")),
         )
         if settings.sandbox_mode:
             allowed, reason = True, ""
@@ -1070,7 +1177,7 @@ async def _post_video(
                 is_enabled=account.is_enabled,
                 warmup=progress,
                 posts_today=int(account.posts_today or 0),
-                max_posts_per_day=int(settings.max_posts_per_account_per_day or 2),
+                max_posts_per_day=daily_cap,
                 last_posted_at=account.last_posted_at,
                 stagger_min_minutes=int(settings.stagger_min_minutes or 25),
             )
@@ -1088,16 +1195,36 @@ async def _post_video(
             existing[account.id] = post
         if post.status in {"posted", "sandbox"}:
             continue
+        if post.status == "processing":
+            started = parse_utc_naive(str((post.uniqualization_applied or {}).get("processing_since") or ""))
+            if started and now_utc() - started > PROCESSING_TIMEOUT:
+                _mark_publish_failure(post, account, "Площадка не подтвердила публикацию за 6 часов")
+                attempted_this_tick += 1
+                continue
+        if post.status == "failed":
+            meta = post.uniqualization_applied or {}
+            due = publish_attempt_due(
+                attempts=int(meta.get("attempts") or 0),
+                retry_after=parse_utc_naive(str(meta.get("retry_after") or "")),
+            )
+            if not due:
+                continue
         if not allowed and post.status != "processing":
             post.status = "held"
             post.hold_reason = reason
             continue
-        if stagger and published_this_tick >= 1 and post.status != "processing":
+        if not stagger_open and post.status != "processing":
             if post.status not in {"held", "failed"}:
                 post.status = "pending"
-                post.hold_reason = "Ждём паузу между аккаунтами"
+                post.hold_reason = "Пауза между аккаунтами"
             continue
-        recipe = dict((video.uniqualization or {}).get(account.platform) or {})
+        if not settings.sandbox_mode and attempted_this_tick >= 1 and post.status != "processing":
+            if post.status not in {"held", "failed"}:
+                post.status = "pending"
+                post.hold_reason = "Пауза между аккаунтами"
+            continue
+        recipe_map = video.uniqualization or {}
+        recipe = dict(recipe_map.get(f"{account.platform}:{account.id}") or recipe_map.get(account.platform) or {})
         publisher_state = {
             key: value
             for key, value in (post.uniqualization_applied or {}).items()
@@ -1126,10 +1253,13 @@ async def _post_video(
                 else None,
             )
         except PublisherError as exc:
-            post.status = "failed"
-            post.hold_reason = str(exc)[:500]
-            account.last_error = str(exc)[:500]
-            published_this_tick += 1
+            _mark_publish_failure(post, account, str(exc))
+            attempted_this_tick += 1
+            continue
+        except Exception as exc:
+            logger.exception("Content factory publish failed video=%s account=%s", video.id, account.id)
+            _mark_publish_failure(post, account, str(exc))
+            attempted_this_tick += 1
             continue
         status = str(result.get("status") or "posted")
         post.status = status
@@ -1139,59 +1269,73 @@ async def _post_video(
         applied = dict(recipe)
         if isinstance(result.get("publisher_state"), dict):
             applied.update(result["publisher_state"])
+        if status == "processing" and not applied.get("processing_since"):
+            applied["processing_since"] = now_utc().isoformat()
         post.uniqualization_applied = applied
         post.hold_reason = str(result.get("note") or "") or None
-        if status in {"posted", "sandbox"}:
+        if status == "posted" and not settings.sandbox_mode:
             post.posted_at = now_utc()
             account.last_posted_at = now_utc()
             account.posts_today = int(account.posts_today or 0) + 1
             account.last_error = None
             if account.status in {"connected", "ready", "warming"}:
                 account.status = "ready"
-        published_this_tick += 1
+            wait = timedelta(minutes=max(5, int(settings.stagger_min_minutes or 25)))
+            stagger_until = now_utc() + wait
+            extra["next_publish_at"] = stagger_until.isoformat()
+            video.extra = extra
+            stagger_open = False
+        elif status == "sandbox":
+            post.posted_at = now_utc()
+            account.last_error = None
+        attempted_this_tick += 1
         bundle = result.get("token_bundle")
         if isinstance(bundle, dict) and bundle:
-            from .content_factory_service import encrypt_json
-
             merged = decrypt_json(account.credentials_enc)
             merged.update({key: value for key, value in bundle.items() if value})
             account.credentials_enc = encrypt_json(merged)
+        if not settings.sandbox_mode and post.external_id:
+            await session.commit()
     statuses = [item.status for item in existing.values()]
-    if not statuses:
-        video.status = "ready"
-        extra["hold_reason"] = "Нет площадок для публикации"
-        video.extra = extra
-        video.last_error = None
-        return
-    if all(status in {"posted", "sandbox"} for status in statuses):
-        video.status = "sandbox" if all(item == "sandbox" for item in statuses) else "posted"
+    has_retryable = any(_failure_keeps_video(item) for item in existing.values())
+    video.status = settle_publish_status(statuses, has_retryable_failure=has_retryable)
+    if video.status in {"posted", "sandbox"}:
         video.finished_at = now_utc()
-        extra.pop("hold_reason", None)
-        video.extra = extra
+        failed = [item.hold_reason for item in existing.values() if item.status == "failed" and item.hold_reason]
+        video.last_error = failed[0][:800] if failed else None
+        if failed:
+            extra["hold_reason"] = "Часть площадок опубликована, остальные исчерпали попытки"
+        else:
+            extra.pop("hold_reason", None)
+    elif video.status == "failed":
+        video.finished_at = now_utc()
+        video.last_error = next((item.hold_reason for item in existing.values() if item.hold_reason), "Не удалось опубликовать")
+        extra["hold_reason"] = video.last_error
+    elif video.status == "posting":
         video.last_error = None
-        return
-    if any(status in {"processing", "pending"} for status in statuses):
-        video.status = "posting" if any(status == "processing" for status in statuses) else "ready"
         extra["hold_reason"] = "Публикация продолжается по аккаунтам с паузой"
-        video.extra = extra
+    else:
         video.last_error = None
-        return
-    if all(status == "held" for status in statuses):
-        video.status = "ready"
-        extra["hold_reason"] = next((item.hold_reason for item in existing.values() if item.hold_reason), "Постинг отложен")
-        video.extra = extra
-        video.last_error = None
-        return
-    if any(status in {"posted", "sandbox"} for status in statuses):
-        video.status = "ready"
-        extra["hold_reason"] = "Часть площадок готова, остальные ждут прогрева или лимита"
-        video.extra = extra
-        video.last_error = None
-        return
-    video.status = "failed"
-    video.finished_at = now_utc()
-    video.last_error = next((item.hold_reason for item in existing.values() if item.hold_reason), "Не удалось опубликовать")
+        extra["hold_reason"] = next(
+            (item.hold_reason for item in existing.values() if item.status in {"held", "pending", "failed"} and item.hold_reason),
+            "Постинг отложен",
+        )
+        if not statuses:
+            extra["hold_reason"] = "Нет площадок для публикации"
     video.extra = extra
+
+
+def _finish_warmup(account: CustomContentFactoryAccount) -> None:
+    """Close the calendar gate. Ramp applies only to accounts that finish after this release."""
+    account.warmup_completed_at = account.warmup_completed_at or now_utc()
+    if account.status != "warming":
+        return
+    account.status = "ready"
+    if (account.extra or {}).get("owner_confirmed"):
+        return
+    extra = dict(account.extra or {})
+    extra["apply_post_ramp"] = True
+    account.extra = extra
 
 
 async def _advance_warmup(
@@ -1224,9 +1368,7 @@ async def _advance_warmup(
             actions_per_day=int(settings.warmup_actions_per_day or 8),
         )
         if progress["complete"]:
-            account.warmup_completed_at = account.warmup_completed_at or now_utc()
-            if account.status == "warming":
-                account.status = "ready"
+            _finish_warmup(account)
             continue
         if account.status != "warming":
             account.status = "warming"
@@ -1238,7 +1380,7 @@ async def _advance_warmup(
         interval = warmup_action_interval(int(settings.warmup_actions_per_day or 8))
         if last_event_at and now_utc() < last_event_at + interval:
             continue
-        day_start = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = local_midnight_utc_naive(settings.timezone or "Europe/Moscow")
         today_count = int(
             await session.scalar(
                 select(func.count()).select_from(CustomContentFactoryWarmupEvent).where(
@@ -1262,8 +1404,7 @@ async def _advance_warmup(
             actions_per_day=int(settings.warmup_actions_per_day or 8),
         )
         if progress["complete"]:
-            account.warmup_completed_at = now_utc()
-            account.status = "ready"
+            _finish_warmup(account)
     return created
 
 
@@ -1296,7 +1437,12 @@ async def _apply_shadowban_guards(
             ).scalars().all()
         )
         payload = [
-            {"status": item.status, "posted_at": item.posted_at, "views": item.views}
+            {
+                "status": item.status,
+                "posted_at": item.posted_at,
+                "views": item.views,
+                "views_known": bool(item.analytics_synced_at) and not (item.uniqualization_applied or {}).get("views_unreliable"),
+            }
             for item in posts
         ]
         recent_views = sum(int(item.views or 0) for item in posts[:3])
@@ -1363,11 +1509,22 @@ async def _sync_analytics(session: AsyncSession, automation_id: int) -> int:
         )
         if not stats:
             continue
-        post.views = int(stats.get("views") or 0)
+        bundle = stats.get("token_bundle") if isinstance(stats.get("token_bundle"), dict) else None
+        unreliable = bool(stats.get("views_unreliable"))
+        if not unreliable:
+            post.views = int(stats.get("views") or 0)
         post.likes = int(stats.get("likes") or 0)
         post.comments = int(stats.get("comments") or 0)
         post.shares = int(stats.get("shares") or 0)
         post.saves = int(stats.get("saves") or 0)
-        post.analytics_synced_at = now_utc()
+        applied = dict(post.uniqualization_applied or {})
+        applied["views_unreliable"] = unreliable
+        post.uniqualization_applied = applied
+        if not unreliable:
+            post.analytics_synced_at = now_utc()
+        if isinstance(bundle, dict) and bundle.get("access_token"):
+            merged = decrypt_json(account.credentials_enc)
+            merged.update({key: value for key, value in bundle.items() if value})
+            account.credentials_enc = encrypt_json(merged)
         updated += 1
     return updated
