@@ -177,17 +177,19 @@ class AccountSessionHub:
             logger.warning("Parent intercept session open failed %s: %s", account.id, exc)
 
     async def _close(self, account_id: int) -> None:
-        parent = self.parent_clients.pop(account_id, None)
+        parent = self.parent_clients.get(account_id)
         if parent is not None:
             try:
-                await parent.drop_alive()
+                if await parent.drop_alive():
+                    self.parent_clients.pop(account_id, None)
             except Exception:
                 logger.debug("Parent intercept session close failed %s", account_id, exc_info=True)
-        client = self.clients.pop(account_id, None)
+        client = self.clients.get(account_id)
         if client is None:
             return
         try:
-            await client.drop_alive()
+            if await client.drop_alive():
+                self.clients.pop(account_id, None)
         except Exception:
             logger.debug("Account session close failed %s", account_id, exc_info=True)
 

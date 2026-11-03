@@ -79,6 +79,18 @@ def test_device_family_matches_official_api():
     assert "iPhone" not in samsung["device_model"]
     mixed = {pick_device_profile(seed=f"mix-{i}", mix=True)["family"] for i in range(80)}
     assert {FAMILY_DESKTOP, FAMILY_ANDROID, FAMILY_IOS} <= mixed
+    for item in _DEVICE_PROFILES:
+        system = item["system_version"]
+        app = item["app_version"]
+        model = item["device_model"]
+        assert model not in {"Desktop", "Laptop", "RSD Platform", "RSD Spare"}
+        if "macOS" in system:
+            assert not model.startswith("PC")
+            assert "x64" not in app
+        if model == "PC 64bit":
+            assert system.startswith("Windows")
+            assert app.endswith("x64")
+        assert not app.startswith("4.")
 
 
 def test_ensure_account_device_keeps_existing_and_migrates_legacy():

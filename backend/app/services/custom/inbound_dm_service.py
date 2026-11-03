@@ -338,6 +338,11 @@ async def _process_account(
             async with TelegramAccountClient.for_account(account) as client:
                 return await _run_with_client(client)
     except Exception as exc:
+        text = str(exc).lower()
+        if "while disconnected" in text or "session is busy" in text:
+            logger.info("Inbound DM skipped for account %s: %s", account.id, exc)
+            await session.rollback()
+            return {"status": "skipped", "reason": "session_unavailable"}
         logger.warning("Inbound DM pass failed for account %s: %s", account.id, exc)
         await log_action_error(
             session,

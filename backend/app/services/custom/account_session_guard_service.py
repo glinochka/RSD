@@ -31,6 +31,10 @@ OPERATOR_PAUSE_SECONDS = 15 * 60
 GUARD_INTERVAL_SECONDS = 4 * 60
 ALERT_SCAN_SECONDS = 90
 PASSWORD_RESET_CHECK_SECONDS = 3 * 24 * 60 * 60
+# Telegram refuses ResetAuthorization from a session younger than about a day
+# ("too new"). Retrying that every hub tick is itself the farm signal.
+_RESET_BACKOFF_SECONDS = 24 * 60 * 60
+_reset_not_before: dict[int, float] = {}
 
 _LOGIN_ALERT_RE = re.compile(
     r"("
@@ -122,6 +126,24 @@ def plan_session_guard(
     terminate = [item for item in sorted(newcomers | incomplete) if item not in currents]
     keep = hashes - set(terminate)
     return {"action": "enforce", "keep": keep, "terminate": terminate}
+
+
+def reset_authorisation_too_new(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower().replace("_", " ")
+    return (
+        "too new" in text
+        or "fresh reset authorisation" in text
+        or "cannot be used to reset other" in text
+    )
+
+
+def reset_authorisations_blocked(account_id: int, *, now: float | None = None) -> bool:
+    deadline = _reset_not_before.get(int(account_id or 0), 0.0)
+    return (time.time() if now is None else now) < deadline
+
+
+def block_reset_authorisations(account_id: int, *, seconds: float = _RESET_BACKOFF_SECONDS) -> None:
+    _reset_not_before[int(account_id or 0)] = time.time() + float(seconds)
 
 
 def _hash_set(value: Any) -> set[str]:
@@ -305,25 +327,47 @@ async def enforce_authorizations(
         takeover=takeover,
     )
     terminated: list[str] = []
-    for hash_value in plan["terminate"]:
-        try:
-            await telethon(ResetAuthorizationRequest(hash=int(hash_value)))
-            terminated.append(hash_value)
-        except Exception as exc:
-            logger.warning("Session guard could not reset %s on %s: %s", hash_value, account.id, exc)
-    if terminated:
+    too_new = False
+    blocked = reset_authorisations_blocked(account_id)
+    if blocked:
+        logger.info("Session guard reset backoff still active for account %s", account.id)
+    else:
+        for hash_value in plan["terminate"]:
+            try:
+                await telethon(ResetAuthorizationRequest(hash=int(hash_value)))
+                terminated.append(hash_value)
+            except Exception as exc:
+                if reset_authorisation_too_new(exc):
+                    too_new = True
+                    block_reset_authorisations(account_id)
+                    logger.warning(
+                        "Session guard will not reset other devices on %s for 24h: session is too new",
+                        account.id,
+                    )
+                    break
+                logger.warning("Session guard could not reset %s on %s: %s", hash_value, account.id, exc)
+    if terminated and not too_new:
         raw = await list_authorizations_via_client(telethon)
         live = [serialize_authorization(item) for item in raw]
         keep = {str(item.get("hash") or "") for item in live if item.get("hash") is not None}
         keep.discard("")
+    elif too_new or blocked:
+        # Leave the previous snapshot alone. Dropping the failed hashes from
+        # `known` made the next tick treat them as newcomers and call Reset again.
+        keep = set(known)
     else:
         keep = set(plan["keep"])
-    if not parent:
+    if not parent and not too_new and not blocked:
         account.known_auth_hashes = sorted(keep)
     account.telegram_session_count = len(live)
     account.session_guard_checked_at = _utc_now()
     account.updated_at = _utc_now()
-    status = "terminated" if terminated else plan["action"]
+    if too_new or blocked:
+        status = "reset_backoff"
+    elif terminated:
+        status = "terminated"
+    else:
+        status = plan["action"]
     if terminated:
         logger.info("Session guard dropped %s new login(s) on account %s", len(terminated), account.id)
     return {

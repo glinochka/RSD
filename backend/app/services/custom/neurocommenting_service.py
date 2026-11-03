@@ -32,7 +32,14 @@ from .chat_membership_service import (
 )
 from .chat_scope import apply_entity_metadata, commit_chat_scan, count_target_actions_today, is_broadcast_channel, is_lab_chat, is_paused, is_public_readable
 from .pending_action_service import enqueue_pending_action, has_pending_action
-from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
+from .post_engagement import (
+    NEUROCOMMENTING,
+    SHILLING,
+    SKIP,
+    claim_post_engagement,
+    get_post_engagement_claim,
+    post_target_id,
+)
 from .rotation_service import (
     current_daily_messages_sent,
     moscow_day_start_utc_naive,
@@ -713,7 +720,33 @@ async def process_chat_target(
             )
             if result.get("status") == "ok":
                 shilled += 1
-            continue
+                continue
+            # Only a skip from before any message is sent can become a comment.
+            # setup_failed / reply_failed may already have posted the question.
+            if not neuro_enabled or result.get("status") != "skipped":
+                continue
+            if result.get("reason") not in {
+                "post_shilling_off",
+                "channel_not_selected",
+                "chat_daily_target_limit",
+                "other_action",
+                "comments_closed",
+                "need_two_accounts",
+                "same_account",
+                "same_telegram_user",
+                "account_blocked",
+                "reader_lost",
+                "waiting_join",
+                "empty_dialogue",
+            }:
+                continue
+            claim_row = await get_post_engagement_claim(
+                session, automation_id, chat_target.id, post.id
+            )
+            if claim_row is not None and claim_row.result == SHILLING:
+                claim_row.result = NEUROCOMMENTING
+                await session.commit()
+            claimed = NEUROCOMMENTING
         if claimed != NEUROCOMMENTING or not neuro_enabled:
             continue
         if not lab_mode:

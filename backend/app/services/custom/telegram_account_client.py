@@ -72,7 +72,7 @@ class _RpcGate:
         self._task: asyncio.Task | None = None
         self._depth = 0
 
-    async def acquire(self) -> None:
+    async def acquire(self, timeout: float = 25) -> None:
         task = asyncio.current_task()
         if self._task is task:
             self._depth += 1
@@ -80,7 +80,7 @@ class _RpcGate:
         # Another task (join loop vs comment send) must not wait forever while
         # the holder sits inside Telegram with a database row still locked.
         try:
-            await asyncio.wait_for(self._lock.acquire(), timeout=25)
+            await asyncio.wait_for(self._lock.acquire(), timeout=timeout)
         except TimeoutError as exc:
             raise TimeoutError("Telegram session is busy") from exc
         self._task = task
@@ -100,6 +100,18 @@ class _LiveHandle:
         self.wrapper = wrapper
         self.rpc = _RpcGate()
         self.persistent = False
+        self.closing = False
+
+
+def _handle_usable(handle: _LiveHandle | None) -> bool:
+    """False once drop_alive has started, or the socket object is gone.
+
+    Do not consult Telethon is_connected(). A live client reports False while
+    it reconnects, and treating that as "free" opens a second auth key.
+    """
+    if handle is None or handle.closing:
+        return False
+    return handle.wrapper.client is not None
 
 
 def _session_key(path: str) -> str:
@@ -631,7 +643,10 @@ class TelegramAccountClient:
         try:
             key = _session_key(self.session_path)
             handle = _live_handles.get(key)
-            if handle and handle.wrapper.client:
+            if handle is not None and handle.closing:
+                self._release_asyncio_lock()
+                raise TimeoutError("Telegram session is busy")
+            if _handle_usable(handle):
                 self._release_asyncio_lock()
                 self._adopt_live(handle)
                 return
@@ -656,7 +671,7 @@ class TelegramAccountClient:
         """Open (or reuse) the MTProto session and keep it connected across task streams."""
         key = _session_key(self.session_path)
         handle = _live_handles.get(key)
-        if handle and handle.wrapper.client:
+        if _handle_usable(handle):
             self._adopt_live(handle)
             handle.persistent = True
             return handle.wrapper
@@ -675,28 +690,51 @@ class TelegramAccountClient:
         self._release_asyncio_lock()
         return self
 
-    async def drop_alive(self) -> None:
+    async def drop_alive(self, *, wait_timeout: float = 25) -> bool:
+        """Close the live socket. False means another task still holds it, so it stayed up."""
         key = _session_key(self.session_path)
         handle = _live_handles.get(key)
-        if handle:
+        if handle and handle.wrapper is not self:
+            return await handle.wrapper.drop_alive(wait_timeout=wait_timeout)
+        held = False
+        if handle is not None:
+            other_task = handle.rpc._task not in (None, asyncio.current_task())
+            if other_task:
+                try:
+                    await handle.rpc.acquire(timeout=wait_timeout)
+                    held = True
+                except TimeoutError:
+                    # Closing under an in-flight RPC is what produces
+                    # "Cannot send requests while disconnected" and Telethon's
+                    # "wrong session ID" on the next packet.
+                    logger.warning(
+                        "Telegram session stayed up because another task still holds account %s",
+                        self._account_id or key,
+                    )
+                    return False
             handle.persistent = False
-            if handle.wrapper is not self:
-                await handle.wrapper.drop_alive()
-                return
+            handle.closing = True
             _live_handles.pop(key, None)
         try:
             await self._close_client()
         finally:
+            if held and handle is not None:
+                handle.rpc.release()
             self._cleanup_work_dir()
             self._release_locks()
+        return True
 
     async def __aenter__(self) -> "TelegramAccountClient":
         key = _session_key(self.session_path)
         handle = _live_handles.get(key)
-        if handle and handle.wrapper.client:
+        if _handle_usable(handle):
             self._adopt_live(handle)
             await handle.rpc.acquire()
-            return self
+            if _handle_usable(handle):
+                return self
+            handle.rpc.release()
+            if handle.closing:
+                raise TimeoutError("Telegram session is busy")
         await self._connect_fresh()
         if self._borrowed:
             handle = self._live_handle

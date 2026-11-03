@@ -1100,3 +1100,51 @@ def test_classify_reauth_error_maps_known_failures():
     assert classify_reauth_error(SessionInvalidError("session invalid"))[0] == INTERCEPT_ERROR_SESSION
     assert classify_reauth_error(ProxyDeadError("Прокси недоступен"))[0] == INTERCEPT_ERROR_PROXY
     assert classify_reauth_error(RuntimeError("something else"))[0] == INTERCEPT_ERROR_FAILED
+
+
+@pytest.mark.asyncio
+async def test_drop_alive_leaves_socket_when_another_task_holds_it():
+    import asyncio
+
+    from app.services.custom.telegram_account_client import (
+        TelegramAccountClient,
+        _LiveHandle,
+        _live_handles,
+        _session_key,
+    )
+
+    path = "drop-alive-held.session"
+    key = _session_key(path)
+    owner = TelegramAccountClient(path)
+    owner.client = SimpleNamespace(is_connected=lambda: True)
+    handle = _LiveHandle(owner)
+    handle.persistent = True
+    _live_handles[key] = handle
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    async def holder():
+        await handle.rpc.acquire()
+        started.set()
+        await release.wait()
+        handle.rpc.release()
+
+    task = asyncio.create_task(holder())
+    await started.wait()
+    closed: list[int] = []
+
+    async def _close():
+        closed.append(1)
+
+    owner._close_client = _close
+    try:
+        stayed = await owner.drop_alive(wait_timeout=0.05)
+        assert stayed is False
+        assert closed == []
+        assert _live_handles.get(key) is handle
+        assert handle.closing is False
+        assert handle.persistent is True
+    finally:
+        release.set()
+        await task
+        _live_handles.pop(key, None)

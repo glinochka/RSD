@@ -42,19 +42,23 @@ _FAMILY_WEIGHT_VALUES = (40, 35, 25)
 # Realistic Telegram fingerprints. "RSD Platform" is a farm tell.
 # device_model + api_id family must match: iPhone never rides Desktop api 2040.
 # Locale is NOT stored here — it comes from the phone country at mint/normalize time.
+# Windows Telegram Desktop really does send device_model "PC 64bit" and an "x64"
+# app version. "Desktop"/"Laptop" are not that string. Mac builds do not use "x64"
+# and never announce themselves as "PC 64bit". 4.14/4.16 are 2022–2023 clients.
+# Already stored profiles are kept as-is; this catalog is only for a new pick.
 _DEVICE_PROFILES: tuple[dict[str, str], ...] = (
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "4.16.8 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "4.16.30 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.7.3 x64"},
     {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.3.0 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 11", "app_version": "5.6.1 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 10", "app_version": "5.8.2 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.14.13 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "Laptop", "system_version": "Windows 10", "app_version": "5.5.5 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.9.0 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "macOS 14.5", "app_version": "5.6.3 x64"},
-    {"family": FAMILY_DESKTOP, "device_model": "MacBook Pro", "system_version": "macOS 15.0", "app_version": "5.8.1 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.5.5 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.6.1 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.6.3 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.7.3 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.8.2 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.8.1 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.9.0 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.9.0 x64"},
+    {"family": FAMILY_DESKTOP, "device_model": "MacBook Pro", "system_version": "macOS 15.3", "app_version": "5.9.0"},
+    {"family": FAMILY_DESKTOP, "device_model": "MacBook Air", "system_version": "macOS 14.6", "app_version": "5.8.1"},
     {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S941B", "system_version": "SDK 36", "app_version": "11.14.1"},
     {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S946B", "system_version": "SDK 36", "app_version": "11.13.2"},
     {"family": FAMILY_ANDROID, "device_model": "Samsung SM-S938B", "system_version": "SDK 35", "app_version": "11.12.0"},

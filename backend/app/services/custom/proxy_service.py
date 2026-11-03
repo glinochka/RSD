@@ -1011,29 +1011,39 @@ async def _rotate_lock_for(account_id: int) -> asyncio.Lock:
         return lock
 
 
-async def _drop_live_session(account: SocialAccount) -> None:
-    """Disconnect the one live Telethon client before changing its IP."""
+async def _drop_live_session(account: SocialAccount) -> bool:
+    """Disconnect the one live Telethon client before changing its IP.
+
+    False means the socket is still up. The caller must not bind a new exit.
+    """
     from ...config import settings
     from .account_session_orchestrator import _hubs
     from .telegram_account_client import live_client_for_path
 
+    closed = True
     rel = (getattr(account, "session_file_path", None) or "").strip()
     if rel:
         path = str(Path(settings.MEDIA_ROOT).resolve() / rel)
         live = live_client_for_path(path)
         if live is not None:
             try:
-                await live.drop_alive()
+                closed = await live.drop_alive() and closed
             except Exception:
                 logger.debug("drop_alive before proxy rotate failed for %s", account.id, exc_info=True)
+                closed = False
     for hub in list(_hubs.values()):
-        client = hub.clients.pop(account.id, None)
+        client = hub.clients.get(account.id)
         if client is None:
             continue
         try:
-            await client.drop_alive()
+            if await client.drop_alive():
+                hub.clients.pop(account.id, None)
+            else:
+                closed = False
         except Exception:
             logger.debug("hub drop_alive before proxy rotate failed for %s", account.id, exc_info=True)
+            closed = False
+    return closed
 
 
 async def record_proxy_success(session: AsyncSession, account: SocialAccount) -> None:
@@ -1101,7 +1111,9 @@ async def recover_dead_proxy(session: AsyncSession, account: SocialAccount) -> C
         if chosen is None:
             logger.warning("No living proxy to rotate account %s onto", account.id)
             return None
-        await _drop_live_session(account)
+        if not await _drop_live_session(account):
+            logger.warning("Skip proxy rotate for account %s: the session is still in use", account.id)
+            return None
         bind_account_proxy(pool_account, account, chosen)
         mark_proxy_ok(chosen)
         _last_rotate_at[account.id] = _utc_now()
@@ -1149,7 +1161,12 @@ async def rebind_account_proxy_if_far(
         return None
     if current is not None and current_rank <= best_rank:
         return None
-    await _drop_live_session(social_account)
+    if not await _drop_live_session(social_account):
+        logger.warning(
+            "Skip proxy rebind for account %s: the session is still in use",
+            social_account.id,
+        )
+        return None
     bind_account_proxy(pool_account, social_account, best)
     logger.info(
         "Rebound account %s proxy %s -> %s (%s) for country %s",

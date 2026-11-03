@@ -372,6 +372,80 @@ async def test_enforce_authorizations_drops_newcomer_on_farm():
     assert "GetAuthorizationsRequest" in calls
 
 
+def _auth(**overrides):
+    base = dict(
+        current=False,
+        device_model="PC",
+        platform="Windows",
+        app_name="Telegram",
+        app_version="1",
+        ip="1.1.1.1",
+        country="RU",
+        region="",
+        date_created=1,
+        date_active=2,
+        password_pending=False,
+        unconfirmed=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+@pytest.mark.asyncio
+async def test_enforce_authorizations_backs_off_when_session_too_new():
+    from app.services.custom.account_session_guard_service import _reset_not_before
+
+    _reset_not_before.clear()
+    auths = [
+        _auth(hash=0, current=True),
+        _auth(hash=222, device_model="iPhone", platform="iOS", ip="2.2.2.2"),
+    ]
+    calls: list[str] = []
+
+    class FakeClient:
+        async def get_messages(self, peer, limit=8):
+            return []
+
+        async def __call__(self, request):
+            name = type(request).__name__
+            calls.append(name)
+            if name == "GetAuthorizationsRequest":
+                return SimpleNamespace(authorizations=list(auths))
+            if name == "ResetAuthorizationRequest":
+                raise Exception(
+                    "The current session is too new and cannot be used to reset "
+                    "other authorisations yet (caused by ResetAuthorizationRequest)"
+                )
+            if name == "GetPasswordRequest":
+                return SimpleNamespace(pending_reset_date=None)
+            if name == "DeclinePasswordResetRequest":
+                return True
+            raise AssertionError(name)
+
+    account = SimpleNamespace(
+        id=77,
+        origin="farm",
+        session_guard_enabled=True,
+        session_guard_paused_until=None,
+        session_guard_checked_at=None,
+        cloud_password_reset_checked_at=None,
+        known_auth_hashes=["0"],
+        telegram_session_count=None,
+        created_at=datetime.utcnow() - timedelta(days=10),
+        updated_at=None,
+    )
+    try:
+        first = await enforce_authorizations(FakeClient(), account, force=True)
+        assert first["status"] == "reset_backoff"
+        assert first["terminated"] == []
+        assert account.known_auth_hashes == ["0"]
+        second = await enforce_authorizations(FakeClient(), account, force=True)
+        assert second["status"] == "reset_backoff"
+        assert calls.count("ResetAuthorizationRequest") == 1
+    finally:
+        _reset_not_before.pop(77, None)
+
+
 @pytest.mark.asyncio
 async def test_decline_pending_cloud_password_reset():
     calls: list[str] = []
