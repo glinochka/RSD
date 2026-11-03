@@ -1463,6 +1463,17 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getAutomationValidation(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SETTINGS(automationId)}/validation`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async getAutomationSettings(automationId) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_SETTINGS(automationId)}`,

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
@@ -15,13 +15,18 @@ const CustomAutomationDmpSettingsPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [warnings, setWarnings] = useState([]);
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await customService.getAutomationSettings(id);
+      const [data, validation] = await Promise.all([
+        customService.getAutomationSettings(id),
+        customService.getAutomationValidation(id).catch(() => null),
+      ]);
       setSettings(data);
       setForm(data);
+      setWarnings(validation?.warnings || []);
       setError(null);
     } catch (err) {
       setError(err.message || 'Не удалось загрузить настройки DMP');
@@ -35,6 +40,16 @@ const CustomAutomationDmpSettingsPage = () => {
   }, [loadSettings]);
 
   const formRef = useLiveRef(form);
+  const saveQueue = useRef(Promise.resolve());
+
+  const flagSnapshot = (src) => ({
+    is_lead_qualification_enabled: Boolean(src.is_lead_qualification_enabled),
+    is_sasha_ai_enabled: Boolean(src.is_sasha_ai_enabled),
+    sasha_auto_push: src.sasha_auto_push !== false,
+    sasha_qualify_on_commit: src.sasha_qualify_on_commit !== false,
+    sasha_notify_on_commit: src.sasha_notify_on_commit !== false,
+    is_amocrm_enabled: Boolean(src.is_amocrm_enabled),
+  });
 
   const persistFlag = (partial) => {
     const next = { ...formRef.current, ...partial };
@@ -53,11 +68,15 @@ const CustomAutomationDmpSettingsPage = () => {
     if (settings?.solution_kind === 'dmp_bot') {
       payload.is_amocrm_enabled = Boolean(next.is_amocrm_enabled);
     }
-    customService.updateAutomationSettings(id, payload)
+    const run = saveQueue.current.then(() => customService.updateAutomationSettings(id, payload));
+    saveQueue.current = run
       .then((data) => {
         setSettings(data);
-        setForm(data);
+        setForm({ ...data, ...flagSnapshot(formRef.current) });
         setSuccess('Настройки DMP сохранены');
+        customService.getAutomationValidation(id)
+          .then((validation) => setWarnings(validation?.warnings || []))
+          .catch(() => {});
       })
       .catch((err) => setError(err.message || 'Не удалось сохранить'))
       .finally(() => setIsSaving(false));
@@ -86,6 +105,14 @@ const CustomAutomationDmpSettingsPage = () => {
       </div>
       {error ? <p className="form-hint">{error}</p> : null}
       {success ? <p className="form-hint">{success}</p> : null}
+      {warnings.length ? (
+        <div className="ubt-panel">
+          <h2>Что ещё нужно для работы</h2>
+          <ul>
+            {warnings.map((item) => <li key={item} className="form-hint">{item}</li>)}
+          </ul>
+        </div>
+      ) : null}
 
       <form className="ubt-panel" onSubmit={handleSave}>
         <div className="settings-toggles">
@@ -128,7 +155,7 @@ const CustomAutomationDmpSettingsPage = () => {
           {settings?.solution_kind === 'dmp_bot' ? (
             <FeatureToggle
               title="Отправлять в AmoCRM"
-              description="Квалифицированные номера уходят в воронку CRM."
+              description="Номер, который уходит в бота, также создаёт сделку в AmoCRM. Сначала подключите CRM в интеграциях, иначе сделка не появится."
               checked={Boolean(form.is_amocrm_enabled)}
               onChange={(checked) => persistFlag({ is_amocrm_enabled: checked })}
             />
@@ -163,7 +190,24 @@ const CustomAutomationDmpSettingsPage = () => {
           Бот и таблица настраиваются в
           {' '}
           <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_INTEGRATIONS(id)}>Интеграциях</Link>
-          {settings?.solution_kind === 'dmp_bot' ? '.' : (
+          {settings?.solution_kind === 'dmp_bot' ? (
+            <>
+              .
+              {form.is_amocrm_enabled ? (
+                <>
+                  {' '}
+                  AmoCRM подключается в
+                  {' '}
+                  <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_INTEGRATIONS(id)}>интеграциях</Link>
+                  {' '}
+                  и виден на странице
+                  {' '}
+                  <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_AMOCRM(id)}>AmoCRM</Link>
+                  .
+                </>
+              ) : null}
+            </>
+          ) : (
             <>
               . Включить AmoCRM можно в
               {' '}

@@ -7,8 +7,9 @@ import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
 import '../../../styles/customSasha.css';
 
-const CopyField = ({ id, label, value, hint }) => {
+const CopyField = ({ id, label, value, hint, masked = false }) => {
   const [copied, setCopied] = useState(false);
+  const [visible, setVisible] = useState(false);
   const handleCopy = async () => {
     if (!value) {
       return;
@@ -24,12 +25,17 @@ const CopyField = ({ id, label, value, hint }) => {
   return (
     <div className="form-group">
       <label htmlFor={id}>{label}</label>
-      <input id={id} type="text" value={value || ''} readOnly />
+      <input id={id} type={masked && !visible ? 'password' : 'text'} value={value || ''} readOnly />
       {hint ? <span className="form-hint">{hint}</span> : null}
       <div className="settings-actions">
         <button type="button" className="btn btn-outline" onClick={handleCopy} disabled={!value}>
           {copied ? 'Скопировано' : 'Копировать'}
         </button>
+        {masked ? (
+          <button type="button" className="btn btn-outline" onClick={() => setVisible((prev) => !prev)} disabled={!value}>
+            {visible ? 'Скрыть' : 'Показать'}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -95,10 +101,11 @@ const CustomAutomationDmpConnectionPage = () => {
     setMessage(null);
     setError(null);
     try {
+      const keepOff = settings?.is_sasha_ai_enabled === false && Boolean(settings?.sasha_upload_url);
       const payload = {
         sasha_upload_url: sashaForm.sasha_upload_url,
         sasha_upload_format: sashaForm.sasha_upload_format,
-        is_sasha_ai_enabled: true,
+        is_sasha_ai_enabled: !keepOff,
       };
       if (sashaForm.sasha_hmac_secret) {
         payload.sasha_hmac_secret = sashaForm.sasha_hmac_secret;
@@ -153,7 +160,8 @@ const CustomAutomationDmpConnectionPage = () => {
           id="dmp-webhook-secret"
           label="API / webhook-секрет"
           value={settings?.dmp_webhook_secret || ''}
-          hint="Этот секрет подписывает входящие номера. Исходящий API-ключ DMP живёт в окружении сервера."
+          masked
+          hint="Секрет уже входит в URL выше. Показывайте его только тем, кто настраивает DMP.one."
         />
         <div className="settings-actions">
           <button type="button" className="btn btn-outline" onClick={handleRotate} disabled={isRotating}>

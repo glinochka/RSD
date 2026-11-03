@@ -51,6 +51,7 @@ const CustomAutomationAmocrmPage = () => {
 
   const enabled = settings?.is_amocrm_enabled;
   const connected = Boolean(connection?.connected);
+  const isDmpBot = settings?.solution_kind === 'dmp_bot';
 
   if (isLoading) {
     return (
@@ -77,7 +78,16 @@ const CustomAutomationAmocrmPage = () => {
 
       <div className="ubt-panel">
         {!enabled ? (
-          <p className="ubt-empty">Включите модуль в общих настройках, затем подключите аккаунт в интеграциях.</p>
+          <p className="ubt-empty">
+            {isDmpBot ? (
+              <>
+                Включите «Отправлять в AmoCRM» в
+                {' '}
+                <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SETTINGS(id)}>настройках DMP</Link>
+                , затем подключите аккаунт в интеграциях.
+              </>
+            ) : 'Включите модуль в общих настройках, затем подключите аккаунт в интеграциях.'}
+          </p>
         ) : (
           <>
             <p className="form-hint">Поддомен: {connection?.subdomain || '—'}</p>
@@ -92,8 +102,11 @@ const CustomAutomationAmocrmPage = () => {
           <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_INTEGRATIONS(id)} className="acc-btn acc-btn--dark">
             Интеграции
           </Link>
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)} className="acc-btn acc-btn--ghost">
-            Настройки
+          <Link
+            to={isDmpBot ? NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SETTINGS(id) : NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)}
+            className="acc-btn acc-btn--ghost"
+          >
+            {isDmpBot ? 'Настройки DMP' : 'Настройки'}
           </Link>
           <button type="button" onClick={handleSync} disabled={isSyncing || !connected} className="acc-btn acc-btn--ghost">
             {isSyncing ? '...' : 'Синхронизировать статусы'}

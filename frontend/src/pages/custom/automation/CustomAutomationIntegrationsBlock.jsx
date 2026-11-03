@@ -101,10 +101,8 @@ const CustomAutomationIntegrationsBlock = ({
   }, [automationId, onError]);
 
   useEffect(() => {
-    if (!isDmpBot) {
-      loadConnection();
-    }
-  }, [isDmpBot, loadConnection]);
+    loadConnection();
+  }, [loadConnection]);
 
   const handleAmoChange = (e) => {
     const { name, value } = e.target;
@@ -281,15 +279,13 @@ const CustomAutomationIntegrationsBlock = ({
               : 'Не подключён'}
           </em>
         </button>
-        {isDmpBot ? null : (
-          <button type="button" className={`int-card ${openTemplate === 'amocrm' ? 'is-on' : ''}`} onClick={() => toggleTemplate('amocrm')}>
-            <strong>AmoCRM</strong>
-            <span>Готовый шаблон: OAuth, воронка и передача сделок.</span>
-            <em className={connection?.connected ? '' : 'is-off'}>
-              {connection?.connected ? 'Подключено' : 'Не подключено'}
-            </em>
-          </button>
-        )}
+        <button type="button" className={`int-card ${openTemplate === 'amocrm' ? 'is-on' : ''}`} onClick={() => toggleTemplate('amocrm')}>
+          <strong>AmoCRM</strong>
+          <span>Готовый шаблон: OAuth, воронка и передача сделок.</span>
+          <em className={connection?.connected ? '' : 'is-off'}>
+            {connection?.connected ? 'Подключено' : 'Не подключено'}
+          </em>
+        </button>
       </div>
 
       {openTemplate === 'telegram' ? (
@@ -347,7 +343,7 @@ const CustomAutomationIntegrationsBlock = ({
         </div>
       ) : null}
 
-      {openTemplate === 'amocrm' && !isDmpBot ? (
+      {openTemplate === 'amocrm' ? (
         <div className="int-form">
           <h2>AmoCRM</h2>
           <p className="form-hint">{connection?.connected ? 'Подключено' : 'Не подключено'}</p>

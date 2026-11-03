@@ -73,6 +73,8 @@ class CustomAutomationDashboardResponse(BaseModel):
     automation_id: int
     name: str | None
     client_name: str | None
+    solution_kind: str | None = None
+    is_dmp_one_enabled: bool = False
     accounts: CustomAutomationDashboardAccountStats
     leads: CustomAutomationDashboardLeadStats
     dmp: CustomAutomationDashboardDmpStats
@@ -655,7 +657,7 @@ class ShillingRunResponse(BaseModel):
 class DmpOneImportCreate(BaseModel):
     import_type: str
     source_url: Optional[str] = None
-    requested_count: int = 100
+    requested_count: int = Field(default=100, ge=1, le=10000)
 
 
 class DmpOneImportResponse(BaseModel):
@@ -1959,6 +1961,8 @@ class CustomLeadResponse(BaseModel):
     dmp_raw_data: Optional[dict[str, Any]] = None
     last_message_at: Optional[datetime] = None
     transferred_at: Optional[datetime] = None
+    bot_notified_at: Optional[datetime] = None
+    sheets_synced_at: Optional[datetime] = None
     status_history: Optional[list] = None
     sasha_status: Optional[str] = None
     sasha_uploaded_at: Optional[datetime] = None

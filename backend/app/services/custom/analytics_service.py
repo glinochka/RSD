@@ -304,6 +304,8 @@ async def get_automation_dashboard(session: AsyncSession, automation_id: int) ->
         "automation_id": automation_id,
         "name": automation.name if automation else None,
         "client_name": automation.client_name if automation else None,
+        "solution_kind": automation.solution_kind if automation else None,
+        "is_dmp_one_enabled": bool(automation and automation.is_dmp_one_enabled),
         "accounts": await _account_stats(session, automation_id),
         "leads": await _lead_stats(session, automation_id),
         "dmp": await _dmp_stats(session, automation_id),

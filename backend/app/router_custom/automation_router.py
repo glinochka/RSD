@@ -3997,6 +3997,8 @@ async def create_dmp_order(
                 source_url=payload.source_url,
                 requested_count=payload.requested_count,
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         return DmpOneImportResponse.model_validate(dmp_import)
@@ -4005,11 +4007,10 @@ async def create_dmp_order(
 @router.post("/automations/{automation_id}/dmp/poll")
 async def run_dmp_poll(
     automation_id: int,
-    background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    background_tasks.add_task(poll_pending_imports, automation_id)
-    return {"status": "started"}
+    result = await poll_pending_imports(automation_id)
+    return {"status": "done", **result}
 
 
 async def _accept_dmp_webhook(automation_id: int, payload: Any, incoming_secret: str) -> DmpOneWebhookResponse:

@@ -77,7 +77,11 @@ const CustomAutomationDashboardPage = () => {
   const dmpCost = data.dmp?.cost_rub;
   const sasha = data.sasha || {};
   const showSasha = (sasha.uploaded || 0) > 0 || (sasha.calls || 0) > 0 || (sasha.committed_leads || 0) > 0;
-  const showDmp = dmpPurchased > 0 || (dmpCost !== undefined && dmpCost !== null && Number(dmpCost) > 0) || showSasha;
+  const showDmp = Boolean(data.is_dmp_one_enabled)
+    || data.solution_kind === 'dmp_bot'
+    || dmpPurchased > 0
+    || Number(dmpCost) > 0
+    || showSasha;
 
   return (
     <div className="ubt-page">
@@ -143,9 +147,12 @@ const CustomAutomationDashboardPage = () => {
                 <h2>DMP и Sasha AI</h2>
                 <p>Закупки номеров и результаты прозвона.</p>
               </div>
-              {showSasha ? (
-                <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SASHA(id)}>Прозвон</Link>
-              ) : null}
+              <div className="settings-actions">
+                <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP(id)}>Дашборд DMP</Link>
+                {showSasha ? (
+                  <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SASHA(id)}>Прозвон</Link>
+                ) : null}
+              </div>
             </div>
             <div className="ubt-health-grid">
               <div className="ubt-kpi ubt-kpi--soft ubt-kpi--ok">

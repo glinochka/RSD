@@ -736,6 +736,9 @@ async def dispatch_dmp_notifications(
 ) -> dict[str, Any]:
     from .lead_delivery_service import lead_conversation_text
 
+    was_transferred = lead.status == LeadStatus.TRANSFERRED.value and bool(lead.transferred_at)
+    had_bot = bool(lead.bot_notified_at)
+    had_sheets = bool(lead.sheets_synced_at)
     conversation = await lead_conversation_text(session, lead.id)
     bot = await _deliver_bot(
         session,
@@ -746,19 +749,37 @@ async def dispatch_dmp_notifications(
     sheets = await _deliver_sheets(session, automation, lead)
     now = _utc_now()
     lead.status = LeadStatus.TRANSFERRED.value
-    lead.transferred_at = lead.transferred_at or now
-    lead.status_history = (lead.status_history or []) + [
-        {
-            "status": LeadStatus.TRANSFERRED.value,
-            "changed_at": now.isoformat(),
-            "bot_sent": bot.get("sent") or 0,
-            "bot_pending": bool(bot.get("pending")),
-            "sheets": sheets.get("ok"),
-        }
-    ]
-    lead.updated_at = now
+    if not lead.transferred_at:
+        lead.transferred_at = now
+    delivery_progress = (bool(lead.bot_notified_at) and not had_bot) or (bool(lead.sheets_synced_at) and not had_sheets)
+    if not was_transferred or delivery_progress:
+        lead.status_history = (lead.status_history or []) + [
+            {
+                "status": LeadStatus.TRANSFERRED.value,
+                "changed_at": now.isoformat(),
+                "bot_sent": bot.get("sent") or 0,
+                "bot_pending": bool(bot.get("pending")),
+                "sheets": sheets.get("ok"),
+            }
+        ]
+        lead.updated_at = now
+    amo = None
+    if automation.is_amocrm_enabled:
+        from .amocrm_service import transfer_lead_to_amocrm
+
+        try:
+            amo = await transfer_lead_to_amocrm(session, automation.id, lead)
+        except Exception as exc:
+            logger.warning("DMP AmoCRM transfer failed for lead %s: %s", lead.id, exc)
+            amo = {"transferred": False, "reason": "amocrm_error"}
     await session.commit()
-    return {"transferred": True, "bot_sent": bot.get("sent") or 0, "bot_pending": bool(bot.get("pending")), "sheets": sheets}
+    return {
+        "transferred": True,
+        "bot_sent": bot.get("sent") or 0,
+        "bot_pending": bool(bot.get("pending")),
+        "sheets": sheets,
+        "amocrm": amo,
+    }
 
 
 async def dispatch_sales_bot_notification(

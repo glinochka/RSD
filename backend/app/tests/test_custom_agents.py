@@ -3439,7 +3439,7 @@ class TestBuiltinSolutions:
         lead = await test_session.scalar(
             select(CustomLead).where(
                 CustomLead.custom_automation_id == automation_id,
-                CustomLead.contact_value == "79007654321",
+                CustomLead.contact_value.in_(("79007654321", "+79007654321")),
             )
         )
         assert lead is not None

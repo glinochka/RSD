@@ -1,4 +1,5 @@
 """DMP.one integration: create orders, receive webhooks/poll results, warm leads."""
+import hashlib
 import hmac
 import json
 import logging
@@ -103,8 +104,8 @@ async def _generate_outreach_message(
             "company": company or "",
             "website": website or "",
             "page": page or "",
-            "partner_utm_url": "",
-            "partner_promo_code": "",
+            "partner_utm_url": (automation.partner_utm_url or "").strip(),
+            "partner_promo_code": (automation.partner_promo_code or "").strip(),
             "registered": registered or "unknown",
         },
     )
@@ -153,8 +154,9 @@ def dmp_webhook_secret_ok(automation: CustomAutomation | None, incoming: str) ->
     incoming = (incoming or "").strip()
     if not incoming:
         return False
-    if automation and _secrets_match(incoming, (automation.dmp_webhook_secret or "").strip()):
-        return True
+    own = (automation.dmp_webhook_secret or "").strip() if automation else ""
+    if own:
+        return _secrets_match(incoming, own)
     return _secrets_match(incoming, (settings.DMP_ONE_WEBHOOK_SECRET or "").strip())
 
 
@@ -281,20 +283,20 @@ async def resolve_telegram_for_lead(
     except Exception as exc:
         logger.info("Telegram resolve failed for lead %s phone %s: %s", lead.id, phone, exc)
         return None
-    session.add(
-        AutomationActionLog(
-            custom_automation_id=automation.id,
-            social_account_id=account.id,
-            action_type="contact_import",
-            target_id=str(lead.id),
-            target_type="lead",
-            result="success",
-            payload={"phone": phone},
-            created_at=_utc_now(),
-        )
+    import_log = AutomationActionLog(
+        custom_automation_id=automation.id,
+        social_account_id=account.id,
+        action_type="contact_import",
+        target_id=str(lead.id),
+        target_type="lead",
+        result="success",
+        payload={"phone": phone},
+        created_at=_utc_now(),
     )
+    session.add(import_log)
     value = _telegram_value_from_user(user, phone)
     if not value or value == "unknown":
+        import_log.result = "empty"
         return None
 
     duplicate = await find_existing_lead(
@@ -306,6 +308,7 @@ async def resolve_telegram_for_lead(
         exclude_id=lead.id,
     )
     if duplicate:
+        import_log.result = "duplicate"
         await mark_lead_duplicate(session, lead, duplicate, reason="resolved_to_existing_telegram")
         await session.commit()
         return None
@@ -333,12 +336,21 @@ async def create_order(
     source_url: str | None,
     requested_count: int,
 ) -> DmpOneImport:
-    if not settings.DMP_ONE_API_BASE_URL or not settings.DMP_ONE_API_KEY:
-        raise RuntimeError("DMP.one is not configured (DMP_ONE_API_BASE_URL / DMP_ONE_API_KEY)")
-
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
         raise RuntimeError("Automation not found")
+    if not automation.is_dmp_one_enabled:
+        raise ValueError("Модуль DMP.one выключен")
+    if not settings.DMP_ONE_API_BASE_URL or not settings.DMP_ONE_API_KEY:
+        raise RuntimeError("DMP.one is not configured (DMP_ONE_API_BASE_URL / DMP_ONE_API_KEY)")
+    if import_type in {"website", "competitors"} and not (source_url or "").strip():
+        raise ValueError("Укажите источник: сайт или URL")
+    if requested_count < 1:
+        raise ValueError("Количество должно быть больше нуля")
+
+    if not automation.dmp_webhook_secret:
+        ensure_dmp_webhook_secret(automation)
+        await session.commit()
 
     payload = {
         "type": import_type,
@@ -358,7 +370,9 @@ async def create_order(
     if not isinstance(data, dict) or not data:
         raise RuntimeError("DMP.one returned an empty order response")
 
-    external_order_id = str(data.get("order_id") or data.get("id") or "")
+    external_order_id = str(data.get("order_id") or data.get("id") or "").strip()
+    if not external_order_id:
+        raise RuntimeError("DMP.one не вернул идентификатор заказа")
     status = str(data.get("status") or "pending").lower()
     cost = data.get("cost") or data.get("price") or data.get("cost_rub")
     estimated = data.get("estimated_count") or data.get("count") or requested_count
@@ -390,13 +404,52 @@ async def create_order(
 async def _fetch_order_results(external_order_id: str) -> dict[str, Any]:
     if not settings.DMP_ONE_API_BASE_URL:
         raise RuntimeError("DMP_ONE_API_BASE_URL is not configured")
-    async with _client() as client:
-        response = await client.get(f"/orders/{external_order_id}")
-        response.raise_for_status()
-        return response.json()
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            async with _client() as client:
+                response = await client.get(f"/orders/{external_order_id}")
+                if response.status_code in {429, 500, 502, 503, 504} and attempt == 0:
+                    last_exc = RuntimeError(f"DMP.one HTTP {response.status_code}")
+                    continue
+                response.raise_for_status()
+                data = response.json()
+            if not isinstance(data, dict):
+                raise RuntimeError("DMP.one order payload is not an object")
+            return data
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0:
+                continue
+            raise
+    raise RuntimeError(f"DMP.one order fetch failed: {last_exc}")
+
+
+def _normalize_contact_record(data: dict) -> dict:
+    """Collapse DMP.one field aliases (phone/site/page) into the keys the pipeline reads."""
+    item = dict(data)
+    phone = item.get("phone") or item.get("phone_number") or item.get("tel") or item.get("msisdn")
+    if phone and not item.get("phone"):
+        item["phone"] = phone
+    website = item.get("website") or item.get("site") or item.get("domain")
+    if website and not item.get("website"):
+        item["website"] = website
+    return item
+
+
+def _as_int(value: Any, default: int) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _lead_contact(data: dict) -> tuple[str, str]:
+    data = _normalize_contact_record(data)
     phone = data.get("phone") or data.get("phone_number") or data.get("tel")
     telegram = data.get("telegram") or data.get("telegram_username") or data.get("tg")
     telegram_id = data.get("telegram_id") or data.get("tg_id")
@@ -424,9 +477,116 @@ def _extract_leads_data(results: dict[str, Any]) -> list[dict[str, Any]]:
         leads_data = [leads_data]
     if not isinstance(leads_data, list):
         leads_data = []
-    if not leads_data and (results.get("phone") or results.get("phone_number") or results.get("telegram")):
+    if not leads_data and (results.get("phone") or results.get("phone_number") or results.get("telegram") or results.get("tel")):
         leads_data = [results]
-    return [item for item in leads_data if isinstance(item, dict)]
+    return [_normalize_contact_record(item) for item in leads_data if isinstance(item, dict)]
+
+
+_VENDOR_OK = {"completed", "complete", "done", "success", "ready", "finished"}
+_VENDOR_FAIL = {"failed", "error", "cancelled", "canceled", "rejected"}
+_VENDOR_WAIT = {"pending", "processing", "in_progress", "new", "queued", "created"}
+
+
+def _next_import_status(dmp_import: DmpOneImport, results: dict[str, Any], leads_data: list) -> str:
+    vendor = str(results.get("status") or "").strip().lower()
+    external_order_id = str((dmp_import.raw_payload or {}).get("external_order_id") or "").strip()
+    if vendor in _VENDOR_FAIL:
+        return "failed"
+    if vendor in _VENDOR_OK:
+        return "completed"
+    if vendor in _VENDOR_WAIT and external_order_id:
+        return "processing"
+    if leads_data and not external_order_id:
+        return "completed"
+    if external_order_id and not leads_data:
+        return "processing"
+    if leads_data:
+        return "completed"
+    return "completed"
+
+
+def _webhook_fingerprint(payload: dict[str, Any]) -> str:
+    leads = _extract_leads_data(payload)
+    parts: list[str] = []
+    for item in leads:
+        contact_type, contact_value = _lead_contact(item)
+        parts.append(f"{contact_type}:{(contact_value or '').strip().lower()}")
+    parts.sort()
+    if parts:
+        basis = "|".join(parts)
+    else:
+        basis = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)[:2000]
+    return hashlib.sha256(basis.encode()).hexdigest()[:32]
+
+
+async def _find_dmp_import(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    external_order_id: str = "",
+    fingerprint: str = "",
+) -> DmpOneImport | None:
+    if external_order_id:
+        try:
+            bind = session.get_bind()
+            dialect = bind.dialect.name
+        except Exception:
+            dialect = ""
+        if dialect == "postgresql":
+            found = await session.scalar(
+                select(DmpOneImport).where(
+                    DmpOneImport.custom_automation_id == automation_id,
+                    DmpOneImport.raw_payload.contains({"external_order_id": external_order_id}),
+                )
+            )
+            if found:
+                return found
+    if not external_order_id and not fingerprint:
+        return None
+    rows = (
+        await session.scalars(
+            select(DmpOneImport)
+            .where(DmpOneImport.custom_automation_id == automation_id)
+            .order_by(DmpOneImport.id.desc())
+            .limit(500)
+        )
+    ).all()
+    for row in rows:
+        raw = row.raw_payload or {}
+        if external_order_id and str(raw.get("external_order_id") or "") == external_order_id:
+            return row
+        if fingerprint and raw.get("webhook_fingerprint") == fingerprint:
+            return row
+    return None
+
+
+def _fill_lead_gaps(lead: CustomLead, data: dict[str, Any]) -> None:
+    changed = False
+    raw = dict(lead.dmp_raw_data or {})
+    for key, value in data.items():
+        if value in (None, "", [], {}):
+            continue
+        if raw.get(key) in (None, "", [], {}):
+            raw[key] = value
+            changed = True
+    if not (lead.full_name or "").strip():
+        name = data.get("name") or data.get("full_name") or data.get("fio")
+        if name:
+            lead.full_name = str(name)[:255]
+            changed = True
+    if not (lead.company or "").strip():
+        company = data.get("company") or data.get("organization") or data.get("org") or data.get("website")
+        if company:
+            lead.company = str(company)[:255]
+            changed = True
+    if not (lead.position or "").strip():
+        position = data.get("position") or data.get("job") or data.get("page")
+        if position:
+            lead.position = str(position)[:255]
+            changed = True
+    if changed:
+        lead.dmp_raw_data = raw
+        lead.updated_at = _utc_now()
 
 
 async def _send_outreach(
@@ -538,6 +698,16 @@ async def process_dmp_lead(
 
     from .sasha_ai_service import lead_sasha_phone, maybe_send_lead_to_sasha, sasha_takes_over
 
+    conversion = await check_lead_conversion(automation, lead)
+    if conversion.get("subscribed"):
+        lead.status = LeadStatus.CONVERTED.value
+        lead.updated_at = _utc_now()
+        lead.status_history = (lead.status_history or []) + [
+            {"status": LeadStatus.CONVERTED.value, "changed_at": _utc_now().isoformat(), "reason": "conversion_check"}
+        ]
+        await session.commit()
+        return {"lead_id": lead.id, "status": "converted", "reason": "already_subscribed"}
+
     # Phone leads go DMP → Sasha → back here → the same bot.
     # A contact without a callable number stays on the Telegram path.
     if sasha_takes_over(automation) and lead_sasha_phone(lead):
@@ -553,16 +723,6 @@ async def process_dmp_lead(
         else:
             dispatched = await dispatch_sales_bot_notification(session, automation, lead)
         return {"lead_id": lead_id, "status": "transferred", **dispatched}
-
-    conversion = await check_lead_conversion(automation, lead)
-    if conversion.get("subscribed"):
-        lead.status = LeadStatus.CONVERTED.value
-        lead.updated_at = _utc_now()
-        lead.status_history = (lead.status_history or []) + [
-            {"status": LeadStatus.CONVERTED.value, "changed_at": _utc_now().isoformat(), "reason": "conversion_check"}
-        ]
-        await session.commit()
-        return {"lead_id": lead.id, "status": "converted", "reason": "already_subscribed"}
 
     registered = "yes" if conversion.get("registered") else "no" if conversion.get("registered") is False else "unknown"
     resolved = await resolve_telegram_for_lead(session, automation, lead)
@@ -596,6 +756,7 @@ async def _create_leads_from_data(
             raw=data,
         )
         if existing:
+            _fill_lead_gaps(existing, data)
             continue
         lead = CustomLead(
             custom_automation_id=automation_id,
@@ -626,8 +787,8 @@ async def process_order_results(
     results: dict[str, Any],
 ) -> dict[str, Any]:
     leads_data = _extract_leads_data(results)
-    received = int(results.get("received_count") or results.get("count") or len(leads_data))
-    purchased = int(results.get("purchased_count") or results.get("bought_count") or len(leads_data))
+    received = _as_int(results.get("received_count") or results.get("count"), len(leads_data))
+    purchased = _as_int(results.get("purchased_count") or results.get("bought_count"), len(leads_data))
     cost = results.get("cost") or results.get("cost_rub") or results.get("price")
     cost_rub = float(cost) if isinstance(cost, (int, float)) else dmp_import.cost_rub
 
@@ -636,7 +797,7 @@ async def process_order_results(
     dmp_import.cost_rub = cost_rub
     if cost_rub and purchased:
         dmp_import.cpl_rub = round(cost_rub / purchased, 2)
-    dmp_import.status = "completed" if leads_data else "processing"
+    dmp_import.status = _next_import_status(dmp_import, results, leads_data)
     dmp_import.updated_at = _utc_now()
     dmp_import.raw_payload = {
         **(dmp_import.raw_payload or {}),
@@ -656,30 +817,29 @@ async def handle_webhook(
     payload: Any,
 ) -> dict[str, Any]:
     payload = _normalize_webhook_payload(payload)
-    external_order_id = str(
-        payload.get("order_id")
-        or payload.get("id")
-        or (payload.get("order") or {}).get("id")
-        or ""
+    order = payload.get("order")
+    nested_order_id = order.get("id") if isinstance(order, dict) else None
+    external_order_id = str(payload.get("order_id") or payload.get("id") or nested_order_id or "").strip()
+
+    fingerprint = _webhook_fingerprint(payload)
+    dmp_import = await _find_dmp_import(
+        session,
+        automation_id,
+        external_order_id=external_order_id,
+        fingerprint="" if external_order_id else fingerprint,
     )
 
-    dmp_import = None
-    if external_order_id:
-        dmp_import = await session.scalar(
-            select(DmpOneImport).where(
-                DmpOneImport.custom_automation_id == automation_id,
-                DmpOneImport.raw_payload.contains({"external_order_id": external_order_id}),
-            )
-        )
-
     if not dmp_import:
+        raw_payload = {"webhook_payload": payload, "webhook_fingerprint": fingerprint}
+        if external_order_id:
+            raw_payload["external_order_id"] = external_order_id
         dmp_import = DmpOneImport(
             custom_automation_id=automation_id,
             import_type=payload.get("type") or "webhook",
             source_url=payload.get("source_url"),
-            requested_count=payload.get("requested_count") or payload.get("count"),
+            requested_count=_as_int(payload.get("requested_count") or payload.get("count"), 0) or None,
             status="processing",
-            raw_payload={"webhook_payload": payload},
+            raw_payload=raw_payload,
             created_at=_utc_now(),
             updated_at=_utc_now(),
         )
@@ -698,29 +858,34 @@ async def poll_pending_imports(automation_id: int) -> dict[str, Any]:
     total_processed = 0
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
-        if not automation or not automation.is_dmp_one_enabled:
-            logger.info("DMP.one disabled or automation not found for %s", automation_id)
-            return {"imports_processed": 0, "leads_created": 0, "reason": "feature_disabled"}
+        if not automation:
+            logger.info("DMP.one automation not found for %s", automation_id)
+            return {"imports_processed": 0, "leads_created": 0, "leads_retried": 0, "reason": "not_found"}
 
-        result = await session.execute(
-            select(DmpOneImport).where(
-                DmpOneImport.custom_automation_id == automation_id,
-                DmpOneImport.status.in_({"pending", "processing"}),
+        orders_enabled = bool(automation.is_dmp_one_enabled)
+        if orders_enabled:
+            result = await session.execute(
+                select(DmpOneImport).where(
+                    DmpOneImport.custom_automation_id == automation_id,
+                    DmpOneImport.status.in_({"pending", "processing"}),
+                )
             )
-        )
-        imports = result.scalars().all()
-        for dmp_import in imports:
-            external_order_id = (dmp_import.raw_payload or {}).get("external_order_id")
-            if not external_order_id:
-                continue
-            try:
-                data = await _fetch_order_results(external_order_id)
-                res = await process_order_results(session, automation_id, dmp_import, data)
-                total_created += res.get("created_leads", 0)
-                total_processed += 1
-            except Exception as exc:
-                logger.warning("Polling DMP order %s failed: %s", external_order_id, exc)
+            imports = result.scalars().all()
+            for dmp_import in imports:
+                external_order_id = (dmp_import.raw_payload or {}).get("external_order_id")
+                if not external_order_id:
+                    continue
+                try:
+                    data = await _fetch_order_results(external_order_id)
+                    res = await process_order_results(session, automation_id, dmp_import, data)
+                    total_created += res.get("created_leads", 0)
+                    total_processed += 1
+                except Exception as exc:
+                    logger.warning("Polling DMP order %s failed: %s", external_order_id, exc)
+        else:
+            logger.info("DMP.one orders disabled for %s; retrying in-flight leads only", automation_id)
 
+        retried = 0
         pending = await session.execute(
             select(CustomLead).where(
                 CustomLead.custom_automation_id == automation_id,
@@ -731,7 +896,13 @@ async def poll_pending_imports(automation_id: int) -> dict[str, Any]:
         for lead in pending.scalars().all():
             try:
                 await process_dmp_lead(session, automation, lead)
+                retried += 1
             except Exception as exc:
                 logger.warning("Retry DMP outreach for lead %s failed: %s", lead.id, exc)
 
-    return {"imports_processed": total_processed, "leads_created": total_created}
+    return {
+        "imports_processed": total_processed,
+        "leads_created": total_created,
+        "leads_retried": retried,
+        "reason": None if orders_enabled else "orders_disabled",
+    }
