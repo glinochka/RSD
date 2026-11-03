@@ -124,17 +124,26 @@ def decode_oauth_state(state_token: str) -> dict[str, Any]:
     return data
 
 
+def _return_host_allowed(parsed, base_url: str) -> bool:
+    base = urlparse((base_url or "").strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if not parsed.hostname or not base.hostname:
+        return False
+    return parsed.hostname.lower() == base.hostname.lower()
+
+
 def safe_return_url(return_url: str | None, automation_id: int) -> str:
     fallback = f"{(settings.BASE_URL or '').rstrip('/')}/custom/automations/{automation_id}/settings"
     expected_path = f"/custom/automations/{automation_id}/settings"
     if not return_url:
         return fallback
     parsed = urlparse(return_url.strip())
-    if parsed.scheme not in {"http", "https"}:
+    if not _return_host_allowed(parsed, settings.BASE_URL or ""):
         return fallback
     if expected_path not in (parsed.path or ""):
         return fallback
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    return f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
 
 
 def _subdomain_from_referer(referer: str | None, fallback: str) -> str:

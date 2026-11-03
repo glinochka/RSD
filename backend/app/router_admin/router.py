@@ -1772,7 +1772,13 @@ async def ap_upload_image(
 @router.get("/article-publisher/images/{image_id}/file")
 async def ap_serve_image(
     image_id: int = Path(..., ge=1),
+    token: str = Query(default=""),
 ):
+    from ..services.article_publisher.service import article_image_access_token
+
+    expected = article_image_access_token(image_id)
+    if not token or len(token) != len(expected) or not compare_digest(token, expected):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
     async with async_session_maker() as session:
         async with session.begin():
             row = await session.scalar(

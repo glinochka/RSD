@@ -1,4 +1,5 @@
 import http from 'http';
+import { timingSafeEqual } from 'crypto';
 
 import express from 'express';
 import { WebSocketServer } from 'ws';
@@ -37,9 +38,19 @@ app.get('/', (_req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
+function mediaTokenOk(url: URL): boolean {
+  const expected = config.wsToken;
+  if (!expected) return true;
+  const presented = url.searchParams.get('token') || '';
+  const left = Buffer.from(presented);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-  if (url.pathname !== config.wsPath) {
+  if (url.pathname !== config.wsPath || !mediaTokenOk(url)) {
     socket.destroy();
     return;
   }

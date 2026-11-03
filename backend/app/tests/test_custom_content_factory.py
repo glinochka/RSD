@@ -93,6 +93,11 @@ def test_hook_and_uniqualization():
     assert len(varied) >= 3
     assert factory_return_url("https://evil.test/phish", 9, base_url="https://app.test") == "https://app.test/custom/automations/9/content-factory/accounts"
     assert factory_return_url(
+        "https://evil.test/custom/automations/9/content-factory/accounts",
+        9,
+        base_url="https://app.test",
+    ) == "https://app.test/custom/automations/9/content-factory/accounts"
+    assert factory_return_url(
         "https://app.test/custom/automations/9/content-factory/accounts",
         9,
         base_url="https://app.test",

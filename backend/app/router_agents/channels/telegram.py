@@ -265,6 +265,7 @@ async def request_userbot_code(
         phone_number=phone_number,
         phone_code_hash=phone_code_hash,
         encrypted_pending_session=encrypt_token(pending_session_string),
+        owner_user_id=current_user.id,
     )
     return JSONResponse(content={"auth_token": auth_token}, status_code=status.HTTP_200_OK)
 
@@ -278,6 +279,7 @@ async def verify_userbot_code(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     token_data = _decode_userbot_auth_token(payload.auth_token.strip())
+    _assert_userbot_token_owner(token_data, current_user)
     api_id = int(token_data["api_id"])
     api_hash = decrypt_token(token_data["encrypted_api_hash"])
     phone_number = token_data["phone_number"]
@@ -394,6 +396,7 @@ async def userbot_qr_start(
         api_hash=api_hash,
         auth_id=str(result["auth_id"]),
         encrypted_pending_session=encrypt_token(str(result.get("pending_session_string") or "")),
+        owner_user_id=current_user.id,
     )
     content: dict[str, Any] = {
         "auth_token": auth_token,
@@ -417,6 +420,7 @@ async def userbot_qr_status(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     token_data = _decode_userbot_qr_auth_token(payload.auth_token.strip())
+    _assert_userbot_token_owner(token_data, current_user)
     api_id = int(token_data["api_id"])
     api_hash = decrypt_token(token_data["encrypted_api_hash"])
     auth_id = str(token_data["auth_id"])
@@ -467,6 +471,7 @@ async def userbot_qr_verify_2fa(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     token_data = _decode_userbot_qr_auth_token(payload.auth_token.strip())
+    _assert_userbot_token_owner(token_data, current_user)
     api_id = int(token_data["api_id"])
     api_hash = decrypt_token(token_data["encrypted_api_hash"])
     pending_enc = token_data.get("encrypted_pending_session")

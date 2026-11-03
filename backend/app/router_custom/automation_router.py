@@ -4,6 +4,8 @@ from logging import getLogger
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+
+from ..utils.rate_limit import rate_limit
 from fastapi.responses import RedirectResponse
 from sqlalchemy import and_, func, or_, select
 
@@ -512,7 +514,11 @@ def _dmp_incoming_secret(request: Request, path_secret: str | None = None) -> st
     return incoming
 
 
-@router.post("/login", response_model=CustomLoginResponse)
+@router.post(
+    "/login",
+    response_model=CustomLoginResponse,
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="custom_automation_login"))],
+)
 async def login_automation(payload: CustomAutomationLoginRequest):
     async with async_session_maker() as session:
         credential = await session.scalar(

@@ -5,6 +5,30 @@ from .shared import *  # noqa: F403
 
 router = APIRouter()
 
+@router.get("/internal/telegram-webhook-targets")
+async def telegram_webhook_targets(internal: bool = Depends(is_internal_request)):
+    """Bot process uses this once at startup to attach webhook secrets. Not a public list."""
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    async with async_session_maker() as session:
+        rows = (
+            await session.execute(
+                select(Agent.bot_id, Agent.encrypted_token).where(
+                    Agent.bot_id.is_not(None),
+                    Agent.encrypted_token.is_not(None),
+                    Agent.is_active.is_(True),
+                    Agent.primary_provider == "telegram_bot",
+                )
+            )
+        ).all()
+    return {
+        "items": [
+            {"bot_id": int(bot_id), "encrypted_token": token}
+            for bot_id, token in rows
+            if bot_id and token
+        ]
+    }
+
 @router.get("")
 async def read_agent(
     agent_id: int | None = Query(default=None),

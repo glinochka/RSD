@@ -2179,13 +2179,23 @@ async def _max_bot_get_me(bot_token: str) -> dict:
 
 
 async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool) -> None:
+    from ..utils.telegram_webhook_secret import telegram_webhook_secret
+
     base_url = _normalize_public_base_url(settings.BASE_URL)
     if enabled:
         webhook_url = f"{base_url}/webhook/{bot_id}"
+        secret = telegram_webhook_secret(
+            encryption_key=settings.ENCRYPTION_KEY,
+            scope=str(bot_id),
+        )
         result = await _telegram_bot_api_json(
             bot_token,
             "setWebhook",
-            payload={"url": webhook_url, "drop_pending_updates": True},
+            payload={
+                "url": webhook_url,
+                "secret_token": secret,
+                "drop_pending_updates": True,
+            },
         )
     else:
         result = await _telegram_bot_api_json(bot_token, "deleteWebhook")
@@ -2654,6 +2664,7 @@ def _create_userbot_auth_token(
     phone_number: str,
     phone_code_hash: str,
     encrypted_pending_session: str,
+    owner_user_id: int,
 ) -> str:
     return userbot_auth_token.create(
         api_id=api_id,
@@ -2661,6 +2672,7 @@ def _create_userbot_auth_token(
         phone_number=phone_number,
         phone_code_hash=phone_code_hash,
         encrypted_pending_session=encrypted_pending_session,
+        owner_user_id=int(owner_user_id),
     )
 
 
@@ -2674,13 +2686,24 @@ def _create_userbot_qr_auth_token(
     api_hash: str,
     auth_id: str,
     encrypted_pending_session: str,
+    owner_user_id: int,
 ) -> str:
     return userbot_qr_auth_token.create(
         api_id=api_id,
         encrypted_api_hash=encrypt_token(api_hash),
         auth_id=auth_id,
         encrypted_pending_session=encrypted_pending_session,
+        owner_user_id=int(owner_user_id),
     )
+
+
+def _assert_userbot_token_owner(token_data: dict, current_user) -> None:
+    owner_id = token_data.get("owner_user_id")
+    if owner_id is None or int(owner_id) != int(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен подтверждения userbot",
+        )
 
 
 def _decode_userbot_qr_auth_token(auth_token: str) -> dict:

@@ -57,7 +57,6 @@ GOOGLE_OIDC_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_OIDC_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
 _GOOGLE_JWKS_CACHE: dict = {}
 _GOOGLE_JWKS_EXPIRES_AT: datetime | None = None
-_REGISTRATION_FAIL_OPEN_TOTAL = 0
 
 
 def _render_mailopost_card_html(*, title: str, paragraphs: list[str], accent_block_html: str = "") -> str:
@@ -479,64 +478,6 @@ async def _send_registration_email_code(email: str, code: str) -> None:
         )
 
 
-def _log_registration_fail_open(*, email: str, reason: str) -> None:
-    global _REGISTRATION_FAIL_OPEN_TOTAL
-    _REGISTRATION_FAIL_OPEN_TOTAL += 1
-    logger.info(
-        "registration_completed_without_email_verification email=%s reason=%s total=%s",
-        email,
-        reason,
-        _REGISTRATION_FAIL_OPEN_TOTAL,
-    )
-
-
-async def _complete_registration_without_email_verification(
-    normalized_email: str,
-    *,
-    reason: str,
-) -> JSONResponse:
-    """Finish registration when MailoPost cannot deliver the verification code."""
-    _log_registration_fail_open(email=normalized_email, reason=reason)
-    async with async_session_maker() as session:
-        user_dao = UserDAO(session)
-        async with session.begin():
-            user = await user_dao.find_one_by_filter(email=normalized_email)
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Пользователь не найден",
-                )
-            if not user.email_verified:
-                await user_dao.update(
-                    user,
-                    {
-                        "email_verified": True,
-                        "email_verification_code_hash": None,
-                        "email_verification_expires_at": None,
-                        "email_verification_attempts_left": 0,
-                        "email_verification_last_sent_at": None,
-                    },
-                )
-            access_token, refresh_token = await _issue_user_tokens(session, user.id)
-
-    await _send_welcome_email(normalized_email)
-    logger.info(
-        "Registration completed without email verification code for %s",
-        normalized_email,
-    )
-    return JSONResponse(
-        content={
-            "status": "registered",
-            "detail": "Регистрация завершена. Подтверждение email временно недоступно.",
-            "email": normalized_email,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-        },
-        status_code=status.HTTP_201_CREATED,
-    )
-
-
 async def _send_password_reset_email_code(email: str, code: str) -> None:
     api_token = settings.MAILOPOST_API_TOKEN.strip()
     from_email = settings.MAILOPOST_FROM_EMAIL.strip()
@@ -857,7 +798,9 @@ async def user_registration(new_user: NewUser):
                             "email_verification_expires_at": expires_at,
                             "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
                             "email_verification_last_sent_at": now_utc,
-                            "telegram_id": new_user.telegram_id,
+                            # Public registration must not claim a Telegram account.
+                            # Linking happens later, from the bot that proved the id.
+                            "telegram_id": None,
                         }
                     )
                     # Surface uniqueness races before leaving transaction block.
@@ -881,22 +824,12 @@ async def user_registration(new_user: NewUser):
 
     try:
         await _send_registration_email_code(normalized_email, verification_code)
-    except HTTPException as exc:
-        logger.warning(
-            "Registration verification email failed (status=%s): %s",
-            exc.status_code,
-            exc.detail,
-        )
-        return await _complete_registration_without_email_verification(
-            normalized_email,
-            reason=f"registration_send_http_{exc.status_code}",
-        )
-    except httpx.HTTPError as exc:
-        logger.error("Registration verification email transport error: %s", exc)
-        return await _complete_registration_without_email_verification(
-            normalized_email,
-            reason="registration_send_transport_error",
-        )
+    except (HTTPException, httpx.HTTPError) as exc:
+        logger.warning("Registration verification email failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось отправить код подтверждения. Попробуйте ещё раз позже.",
+        ) from exc
 
     logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 
@@ -966,22 +899,12 @@ async def resend_registration_code(payload: RegistrationResendCodeRequest):
 
     try:
         await _send_registration_email_code(normalized_email, code)
-    except HTTPException as exc:
-        logger.warning(
-            "Registration resend email failed (status=%s): %s",
-            exc.status_code,
-            exc.detail,
-        )
-        return await _complete_registration_without_email_verification(
-            normalized_email,
-            reason=f"registration_resend_http_{exc.status_code}",
-        )
-    except httpx.HTTPError as exc:
-        logger.error("Registration resend transport error: %s", exc)
-        return await _complete_registration_without_email_verification(
-            normalized_email,
-            reason="registration_resend_transport_error",
-        )
+    except (HTTPException, httpx.HTTPError) as exc:
+        logger.warning("Registration resend email failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось отправить код подтверждения. Попробуйте ещё раз позже.",
+        ) from exc
 
     return JSONResponse(
         content={
@@ -1471,11 +1394,16 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
                             detail="Пользователь заблокирован",
                         )
 
+                    account_updates: dict = {}
                     if user.email != normalized_email or not user.email_verified:
-                        await user_dao.update(
-                            user,
-                            {"email": normalized_email, "email_verified": True},
-                        )
+                        account_updates["email"] = normalized_email
+                        account_updates["email_verified"] = True
+                    # An unverified password row can be planted on this email.
+                    # Google has already proved the mailbox, so that password must not survive.
+                    if not user.email_verified and user.password:
+                        account_updates["password"] = None
+                    if account_updates:
+                        await user_dao.update(user, account_updates)
 
                     if identity is None:
                         session.add(

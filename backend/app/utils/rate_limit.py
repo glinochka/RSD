@@ -10,13 +10,8 @@ _RATE_LIMIT_LOCK = Lock()
 
 
 def _resolve_client_id(request: Request) -> str:
-    # Trust proxy header if present; fallback to direct peer address.
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        first_ip = forwarded_for.split(",")[0].strip()
-        if first_ip:
-            return first_ip
-
+    # Nginx overwrites X-Real-IP with the TCP client. X-Forwarded-For keeps a
+    # prefix the caller can set, so it must not choose the rate-limit bucket.
     real_ip = request.headers.get("x-real-ip", "").strip()
     if real_ip:
         return real_ip

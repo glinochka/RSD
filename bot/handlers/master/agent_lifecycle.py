@@ -33,9 +33,15 @@ async def toggle_agent(callback: types.CallbackQuery):
         temp_bot = Bot(token=decrypt_token(agent_json["encrypted_token"]))
 
         if new_status:
+            from core.telegram_webhook_secret import telegram_webhook_secret
+
             webhook_url = f"{settings.BASE_URL}/webhook/{agent_id}"
             await temp_bot.set_webhook(
                 url=webhook_url,
+                secret_token=telegram_webhook_secret(
+                    encryption_key=settings.ENCRYPTION_KEY,
+                    scope=str(agent_id),
+                ),
                 drop_pending_updates=True,
             )
 

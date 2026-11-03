@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import PlainTextResponse
 from logging import getLogger
 from app.logger_config import setup_logger
 setup_logger()
@@ -353,9 +354,29 @@ app.mount(
     name="website_assets",
 )
 
+class PrivateSessionMedia(StaticFiles):
+    """Serve avatars and other media, but never Telegram session sqlite files.
+
+    The account pool opens each session file itself. A second client on the same
+    file makes Telegram revoke the login, so this only refuses HTTP reads.
+    """
+
+    async def get_response(self, path: str, scope):
+        normalized = path.replace("\\", "/").lstrip("/").lower()
+        if (
+            normalized == "sessions"
+            or normalized.startswith("sessions/")
+            or "/sessions/" in f"/{normalized}"
+            or normalized.endswith(".session")
+            or normalized.endswith(".session-journal")
+        ):
+            return PlainTextResponse("Not Found", status_code=404)
+        return await super().get_response(path, scope)
+
+
 media_root = Path(settings.MEDIA_ROOT)
 media_root.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(media_root.resolve())), name="media")
+app.mount("/media", PrivateSessionMedia(directory=str(media_root.resolve())), name="media")
 
 
 if __name__ == "__main__":

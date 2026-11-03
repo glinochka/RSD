@@ -34,8 +34,9 @@ FULLPAGE_ALLOWED_TAGS: Set[str] = {
     'figure', 'figcaption', 'details', 'summary',
     # Forms (for contact forms)
     'form', 'input', 'textarea', 'button', 'label', 'select', 'option',
-    # Interactive elements
-    'script', 'style', 'svg', 'path', 'circle', 'rect', 'line', 'polyline',
+    # Interactive elements. script is omitted: a published page shares the
+    # cabinet origin and must not be able to read the visitor's token.
+    'style', 'svg', 'path', 'circle', 'rect', 'line', 'polyline',
     'polygon', 'ellipse', 'g', 'defs', 'use', 'text', 'tspan',
     # Media
     'video', 'audio', 'source', 'track',
@@ -122,7 +123,6 @@ FULLPAGE_TAG_ATTRIBUTES: dict[str, set[str]] = {
     'a': {'href', 'title', 'target', 'rel'},
     'img': {'src', 'alt', 'title', 'width', 'height', 'loading'},
     'table': {'border', 'cellpadding', 'cellspacing'},
-    'script': {'src', 'type', 'async', 'defer'},
     'style': {'type', 'media', 'scoped'},
     'svg': {'viewBox', 'fill', 'stroke', 'stroke-width', 'xmlns'},
     'path': {'d', 'fill', 'stroke', 'stroke-width'},
@@ -241,10 +241,13 @@ class WebsiteSanitizationService:
         return sanitized
 
     def _clean_fullpage_dangers(self, html: str) -> str:
-        """Clean dangerous patterns from fullpage HTML while preserving safe scripts."""
+        """Drop scripts and event handlers from published HTML."""
         if not html:
             return html
-        
+
+        html = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.IGNORECASE | re.DOTALL)
+        html = re.sub(r"<script\b[^>]*\/?>", "", html, flags=re.IGNORECASE)
+
         # Remove event handlers (onclick, onload, onerror, etc.)
         # Use regex to match on* attributes
         html = re.sub(

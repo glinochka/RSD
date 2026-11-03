@@ -11,12 +11,18 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Update
 
+from fastapi.responses import JSONResponse
+
 from core.crypto import decrypt_token
 from core.middlewares import AgentContextMiddleware
 from handlers.agent import agent_router
 from handlers.master import master_router
 from core.backendAPI import APIread
 from core.config import settings
+from core.telegram_webhook_secret import (
+    telegram_webhook_secret,
+    telegram_webhook_secret_matches,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -75,12 +81,29 @@ async def lifespan(app: FastAPI):
     agent_dp.message.middleware(AgentContextMiddleware())
     agent_dp.include_router(agent_router)
 
-    try:
-        webhook_url = f"{settings.BASE_URL}/webhook/master"
-        await master_bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-        logger.info(f"✅ Вебхук установлен: {webhook_url}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка установки вебхука: {e}")
+    webhook_url = f"{settings.BASE_URL}/webhook/master"
+    master_secret = telegram_webhook_secret(
+        encryption_key=settings.ENCRYPTION_KEY,
+        scope="master",
+    )
+    master_webhook_ok = False
+    for attempt in range(1, 6):
+        try:
+            await master_bot.set_webhook(
+                url=webhook_url,
+                secret_token=master_secret,
+                drop_pending_updates=True,
+            )
+            master_webhook_ok = True
+            logger.info("Master webhook secret registered")
+            break
+        except Exception:
+            logger.error("Master webhook setup failed attempt=%s", attempt)
+            await asyncio.sleep(3)
+    if not master_webhook_ok:
+        logger.error("Master webhook has no secret; updates will be rejected until setup succeeds")
+
+    await _sync_agent_webhook_secrets()
 
     yield
 
@@ -103,11 +126,67 @@ app.add_exception_handler(RateLimitExceeded, lambda request, exc: HTTPException(
 ))
 
 
+def _webhook_authorized(request: Request, scope: str) -> bool:
+    presented = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    expected = telegram_webhook_secret(encryption_key=settings.ENCRYPTION_KEY, scope=scope)
+    return telegram_webhook_secret_matches(presented, expected)
+
+
+async def _sync_agent_webhook_secrets() -> None:
+    """Re-register agent webhooks with the secret. Does not drop queued updates.
+
+    The process rejects unsigned updates, so this must succeed before serving.
+    Backend may still be running migrations when the bot starts.
+    """
+    payload = None
+    for attempt in range(1, 9):
+        try:
+            payload = await APIread.telegramWebhookTargets()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict) and not payload.get("error_code") and isinstance(payload.get("items"), list):
+            break
+        logger.warning("agent webhook secret sync unavailable attempt=%s", attempt)
+        payload = None
+        await asyncio.sleep(min(5 * attempt, 20))
+    if not isinstance(payload, dict):
+        logger.error("agent webhook secret sync failed; agent bots will reject updates until the next restart")
+        return
+    items = payload.get("items")
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        bot_id = item.get("bot_id")
+        encrypted = item.get("encrypted_token")
+        if not bot_id or not encrypted:
+            continue
+        temp_bot = None
+        try:
+            token = decrypt_token(encrypted)
+            secret = telegram_webhook_secret(
+                encryption_key=settings.ENCRYPTION_KEY,
+                scope=str(bot_id),
+            )
+            temp_bot = Bot(token=token)
+            await temp_bot.set_webhook(
+                url=f"{settings.BASE_URL}/webhook/{bot_id}",
+                secret_token=secret,
+                drop_pending_updates=False,
+            )
+        except Exception:
+            logger.warning("agent webhook secret sync failed bot_id=%s", bot_id)
+        finally:
+            if temp_bot is not None:
+                await temp_bot.session.close()
+
+
 @app.post("/webhook/master")
 @limiter.limit("100/minute")
 async def handle_master_webhook(request: Request):
     """Handle incoming updates for master Telegram bot."""
     global master_bot, master_dp
+    if not _webhook_authorized(request, "master"):
+        return JSONResponse({"status": "error", "detail": "Unauthorized"}, status_code=401)
     if not master_dp or not master_bot:
         logger.error("Master bot not initialized")
         return {"status": "error", "detail": "Bot not initialized"}
@@ -130,6 +209,8 @@ async def handle_master_webhook(request: Request):
 async def handle_agent_webhook(bot_id: int, request: Request):
     """Handle incoming updates for agent Telegram bot."""
     global agent_dp
+    if bot_id <= 0 or not _webhook_authorized(request, str(bot_id)):
+        return JSONResponse({"status": "error", "detail": "Unauthorized"}, status_code=401)
     if not agent_dp:
         logger.error("Agent dispatcher not initialized")
         return {"status": "error", "detail": "Agent dispatcher not initialized"}

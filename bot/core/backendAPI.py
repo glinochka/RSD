@@ -312,6 +312,11 @@ class APIread(APIbase):
         return await cls.agent({'bot_id': bot_id})
 
     @classmethod
+    async def telegramWebhookTargets(cls) -> dict:
+        url = f"{base_url}/agents/internal/telegram-webhook-targets"
+        return await cls.fetch_get(url, {})
+
+    @classmethod
     async def agentFrozenCheck(cls, bot_id: int, user_external_id: str) -> dict:
         return await cls.agent(
             {"bot_id": bot_id, "user_external_id": user_external_id},

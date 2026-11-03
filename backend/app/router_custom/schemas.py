@@ -1,7 +1,7 @@
 """Pydantic schemas for /custom API."""
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_serializer, model_validator
 
 
 class CustomAdminLoginRequest(BaseModel):
@@ -447,6 +447,11 @@ class AccountResponse(BaseModel):
     risk_score: Optional[float] = None
     trust_score: Optional[float] = None
     session_file_path: Optional[str] = None
+
+    @field_serializer("session_file_path")
+    def redact_session_file_path(self, value: Optional[str]) -> Optional[str]:
+        # The UI only checks that a session exists. The real path is a download URL.
+        return "present" if value else None
     daily_messages_sent: int = 0
     daily_messages_reset_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None

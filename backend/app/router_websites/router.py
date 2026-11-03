@@ -271,6 +271,15 @@ async def list_templates(dao: Annotated[WebsiteTemplateDAO, Depends(get_template
     return templates
 
 
+async def _assert_owned_agent(agent_id: int | None, user_id: int) -> None:
+    if not agent_id:
+        return
+    async with async_session_maker() as session:
+        agent = await session.get(Agent, int(agent_id))
+    if agent is None or agent.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+
 # ---------------------------------------------------------------------------
 # Websites CRUD
 # ---------------------------------------------------------------------------
@@ -315,6 +324,8 @@ async def create_website(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Template not found",
             )
+
+    await _assert_owned_agent(request.agent_id, user.id)
 
     # Create website
     website_data = {
@@ -1552,6 +1563,8 @@ async def generate_website(
             detail="Access denied",
         )
 
+    await _assert_owned_agent(request.agent_id, user.id)
+
     # Check if already generating
     if website.generation_status == "queued" or website.generation_status == "generating":
         raise HTTPException(
@@ -1628,6 +1641,8 @@ async def create_and_generate_website(
     if request.dark_mode:
         custom_styles["darkMode"] = True
         custom_styles["mode"] = "dark"
+
+    await _assert_owned_agent(request.agent_id, user.id)
 
     # Create website
     website_data = {

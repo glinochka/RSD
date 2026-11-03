@@ -10,6 +10,8 @@ if (nodeEnv === 'production' && sttProviderRaw === 'mock') {
 export const config = {
   port: Number.parseInt(process.env.PORT || '8200', 10),
   wsPath: (process.env.TELEPHONY_MEDIA_WS_PATH || '/ws').trim() || '/ws',
+  /** When set, the WebSocket URL must include the same ?token=. Empty keeps current Vox URLs working. */
+  wsToken: (process.env.TELEPHONY_MEDIA_WS_TOKEN || '').trim(),
   maxControlMessageBytes: Math.max(
     1024,
     Number.parseInt(process.env.TELEPHONY_MEDIA_MAX_CONTROL_BYTES || '65536', 10),

@@ -686,6 +686,10 @@ function resolveConfig() {
   var mediaWsUrl = String(
     cfg.media_ws_url || cfg.mediaWsUrl || secretValue('TELEPHONY_MEDIA_WS_URL') || '',
   ).trim();
+  var mediaToken = secretValue('TELEPHONY_MEDIA_WS_TOKEN');
+  if (mediaToken && mediaWsUrl && mediaWsUrl.indexOf('token=') === -1) {
+    mediaWsUrl += (mediaWsUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(mediaToken);
+  }
   var webhookSecret = String(
     secretValue('RSD_WEBHOOK_SECRET') || cfg.webhook_secret || cfg.webhookSecret || '',
   ).trim();

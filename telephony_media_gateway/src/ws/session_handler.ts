@@ -23,7 +23,7 @@ import { markDtmfReceived } from '../orch/agent_playback_tracker';
 import { publishOrchEvent } from '../orch/publisher';
 import { clearPlaybackPacer } from '../orch/agent_playback_pacer';
 import { markPlaybackReady } from '../orch/agent_playback_pacer';
-import { registerReplySession, unregisterReplySession } from '../orch/reply_hub';
+import { hasOpenReplySession, registerReplySession, unregisterReplySession } from '../orch/reply_hub';
 import { buildVoxMediaMessage, parseVoxMediaMessage } from './vox_media';
 import { ulawToPcm16Buffer } from '../audio/ulaw';
 
@@ -272,6 +272,10 @@ async function handleControl(
         return;
       }
       const p = (msg as SessionStartMessage).payload;
+      if (hasOpenReplySession(p.call_id.trim())) {
+        sendError(ws, 'session_already_active', 'Call media session is already open');
+        return;
+      }
       const base = {
         callId: p.call_id.trim(),
         connectionId: p.connection_id,

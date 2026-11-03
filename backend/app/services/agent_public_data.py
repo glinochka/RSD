@@ -54,10 +54,6 @@ def _agent_display_name(agent: Agent) -> str:
 def _agent_description(agent: Agent, max_len: int = 500) -> str | None:
     text = (agent.welcome_message or "").strip()
     if not text:
-        prompt = (agent.system_prompt or "").strip()
-        if prompt and prompt != "You are a helpful assistant.":
-            text = prompt[:max_len]
-    if not text:
         return None
     return text[:max_len] if len(text) > max_len else text
 

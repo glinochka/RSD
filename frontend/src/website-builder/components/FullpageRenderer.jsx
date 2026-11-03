@@ -16,12 +16,29 @@ const INTER_FONT_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 `;
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function stripUntrustedScripts(html) {
+  return String(html || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<script\b[^>]*\/?>/gi, '');
+}
+
 function buildFullDocument(html, title = 'Website', faviconUrl = null, landingConfig = null) {
-  const faviconTag = faviconUrl
-    ? `<link rel="icon" type="image/x-icon" href="${faviconUrl}">`
+  const safeHtml = stripUntrustedScripts(html);
+  const safeTitle = escapeHtml(title);
+  const safeFavicon = /^https?:\/\//i.test(String(faviconUrl || '')) ? escapeHtml(faviconUrl) : '';
+  const faviconTag = safeFavicon
+    ? `<link rel="icon" type="image/x-icon" href="${safeFavicon}">`
     : '';
-  const hasBackendMenuRuntime = html.includes('data-rsd-landing-runtime');
-  const hasFormRuntime = html.includes('data-rsd-form-runtime');
+  const hasBackendMenuRuntime = safeHtml.includes('data-rsd-landing-runtime');
+  const hasFormRuntime = safeHtml.includes('data-rsd-form-runtime');
   const formsEnabled = Boolean(landingConfig?.agentId);
 
   const menuRuntimeScript = !hasBackendMenuRuntime
@@ -40,7 +57,7 @@ function buildFullDocument(html, title = 'Website', faviconUrl = null, landingCo
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title || 'Website'}</title>
+  <title>${safeTitle || 'Website'}</title>
   ${faviconTag}
   <script src="${TAILWIND_CDN}"></script>
   <script>
@@ -77,7 +94,7 @@ function buildFullDocument(html, title = 'Website', faviconUrl = null, landingCo
   ${landingConfigScript}
 </head>
 <body>
-  ${html}
+  ${safeHtml}
   ${menuRuntimeScript}
   ${formRuntimeScript}
 </body>

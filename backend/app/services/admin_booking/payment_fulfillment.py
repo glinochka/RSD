@@ -281,17 +281,11 @@ async def sync_pending_payments_for_client(
 async def process_admin_booking_yookassa_webhook(
     *,
     yookassa_payment_id: str,
-    verified_status: str,
 ) -> BookingFulfillmentResult | None:
-    """Обработка webhook ЮKassa для платежей бронирования (отдельный магазин агента)."""
-    if verified_status != "succeeded":
-        return await fulfill_admin_booking_payment(
-            yookassa_payment_id=yookassa_payment_id,
-            verified_status=verified_status,
-        )
+    """Обработка webhook ЮKassa. Статус берётся из API магазина агента, не из тела уведомления."""
     result = await fulfill_admin_booking_payment(
         yookassa_payment_id=yookassa_payment_id,
-        verified_status=verified_status,
+        verified_status=None,
     )
     if result is None:
         return None

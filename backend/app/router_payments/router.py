@@ -1094,11 +1094,16 @@ async def yookassa_webhook(request: Request):
     if booking_payment_id is not None:
         from ..services.admin_booking.payment_fulfillment import process_admin_booking_yookassa_webhook
 
-        if event == WebhookNotificationEventType.PAYMENT_SUCCEEDED:
+        try:
             await process_admin_booking_yookassa_webhook(
                 yookassa_payment_id=payment_id,
-                verified_status=notification_status or "succeeded",
             )
+        except Exception:
+            logger.exception(
+                "YooKassa webhook: booking verify failed payment_id=%s",
+                payment_id,
+            )
+            return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         logger.info(
             "YooKassa webhook: admin_booking payment_id=%s event=%s status=%s",
             payment_id,

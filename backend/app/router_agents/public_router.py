@@ -7,9 +7,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent
+from ..router_users.dao import UserDAO
 from ..services.admin_booking import get_admin_booking_service
 from ..services.agent_public_data import (
     agent_has_published_website,
@@ -17,6 +19,7 @@ from ..services.agent_public_data import (
     is_admin_booking_agent,
 )
 from ..services.website_public_forms import submit_website_lead
+from ..utils.JWT import get_user_from_access_token
 from ..utils.rate_limit import rate_limit
 from .public_schemas import (
     AgentPublicDataResponse,
@@ -32,6 +35,29 @@ router = APIRouter(prefix="/api/v1/agents")
 logger = logging.getLogger(__name__)
 
 _PUBLIC_RATE = Depends(rate_limit(max_requests=100, window_seconds=60, scope="agents_public"))
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
+async def _optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+):
+    """Owner token for draft preview. A missing or stale token stays anonymous."""
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        async with async_session_maker() as session:
+            user_dao = UserDAO(session)
+            async with session.begin():
+                user = await get_user_from_access_token(credentials.credentials, user_dao)
+                return await user_dao.find_one_by_filter(id=user.id)
+    except HTTPException:
+        return None
+
+
+async def _public_booking_allowed(agent: Agent, user) -> bool:
+    if user is not None and agent.user_id == user.id:
+        return True
+    return await agent_has_published_website(agent.id)
 
 
 def _parse_iso_datetime(raw_value: str, *, field_name: str) -> datetime:
@@ -58,13 +84,20 @@ def _parse_iso_datetime(raw_value: str, *, field_name: str) -> datetime:
 async def get_agent_public_data_endpoint(
     agent_id: int,
     embed: Annotated[bool, Query(description="Include widget API key if agent has published website")] = False,
+    user=Depends(_optional_user),
     _: None = _PUBLIC_RATE,
 ):
-    """Public agent profile: services, contacts, optional widget key for embed."""
-    include_key = embed and await agent_has_published_website(agent_id)
+    """Public profile of a published agent. Draft data is only for its owner."""
+    published = await agent_has_published_website(agent_id)
+    include_key = embed and published
     data = await get_agent_public_data(agent_id, include_widget_key=include_key)
     if not data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if not published:
+        async with async_session_maker() as session:
+            agent = await session.get(Agent, agent_id)
+        if agent is None or user is None or agent.user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
     return data
 
 
@@ -73,12 +106,15 @@ async def list_public_booking_slots(
     agent_id: int,
     service_id: Annotated[int, Query(gt=0)],
     date: Annotated[str, Query(description="Date YYYY-MM-DD")],
+    user=Depends(_optional_user),
     _: None = _PUBLIC_RATE,
 ):
     """Available time slots for a service on a given day."""
     async with async_session_maker() as session:
         agent = await session.get(Agent, agent_id)
         if not agent or not agent.is_active or not is_admin_booking_agent(agent):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        if not await _public_booking_allowed(agent, user):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
     try:
@@ -105,12 +141,15 @@ async def list_public_booking_slots(
 async def create_public_booking(
     agent_id: int,
     request: PublicBookingCreateRequest,
+    user=Depends(_optional_user),
     _: None = _PUBLIC_RATE,
 ):
     """Create appointment from public website booking form."""
     async with async_session_maker() as session:
         agent = await session.get(Agent, agent_id)
         if not agent or not agent.is_active or not is_admin_booking_agent(agent):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        if not await _public_booking_allowed(agent, user):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
     start_dt = _parse_iso_datetime(request.starts_at, field_name="starts_at")

@@ -15,6 +15,7 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import AiMopLead, Website, WebsiteBlock
 from ...router_websites.dao import WebsiteBlockDAO, WebsiteDAO
 from ..website_generation_service import get_website_generation_service
+from ..website_interactivity import inject_landing_interactivity_runtime
 from ..website_sanitization_service import get_website_sanitization_service
 from .lead_lookup import credentials_already_sent, mark_credentials_sent
 
@@ -228,7 +229,9 @@ class AiMopToolRegistry:
                 logger.warning("AI MOP website edit failed lead_id=%s: %s", self._lead.id, exc)
                 return {"status": "error", "message": f"Не удалось применить правки: {exc}"}
 
-            sanitized_html = sanitization.sanitize_fullpage_html(edited_html)
+            sanitized_html = inject_landing_interactivity_runtime(
+                sanitization.sanitize_fullpage_html(edited_html)
+            )
             async with session.begin():
                 fresh_block = await session.get(WebsiteBlock, block.id)
                 fresh_website = await session.get(Website, website.id)

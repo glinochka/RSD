@@ -98,6 +98,26 @@ _JSON_PAIR_RE = re.compile(
 _CUSTOMER_VISIBLE_JSON_KEYS = frozenset({"payment_url", "confirmation_url"})
 _INTERNAL_MARKER_RE = re.compile(r"\[[A-Z][A-Z0-9_]{2,}\]")
 _HTTPS_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+_VISITOR_CHANNELS = {"external_api", "website"}
+_VISITOR_CRM_TOOLS = {"create_contact", "create_lead"}
+_DEFAULT_CRM_TOOL_NAMES = [
+    "find_contact",
+    "create_contact",
+    "find_lead",
+    "create_lead",
+    "update_lead",
+    "add_note",
+    "create_task",
+    "assign_owner",
+]
+
+
+def _visitor_crm_tools(source_channel: str | None, allowed: list[str] | None) -> list[str] | None:
+    """Widget and website chats may create a lead, not read or edit the whole CRM."""
+    if (source_channel or "").strip().lower() not in _VISITOR_CHANNELS:
+        return allowed
+    source = allowed if isinstance(allowed, list) else _DEFAULT_CRM_TOOL_NAMES
+    return [name for name in source if name in _VISITOR_CRM_TOOLS]
 
 
 class EscalationType(str, Enum):
@@ -843,7 +863,7 @@ class TemplateRuntimeService:
                 )
                 crm_registry = CRMToolRegistry(
                     provider=provider,
-                    allowed_tools=allowed_crm_tools,
+                    allowed_tools=_visitor_crm_tools(source_channel, allowed_crm_tools),
                     confirmation_policy=confirmation_policy,
                     user_message=user_message,
                     agent_id=agent_id,
@@ -1212,7 +1232,7 @@ class TemplateRuntimeService:
                 )
                 crm_registry = CRMToolRegistry(
                     provider=provider,
-                    allowed_tools=allowed_crm_tools,
+                    allowed_tools=_visitor_crm_tools(source_channel, allowed_crm_tools),
                     confirmation_policy=confirmation_policy,
                     user_message=user_message,
                     agent_id=agent_id,

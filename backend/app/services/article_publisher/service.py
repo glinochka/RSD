@@ -1,6 +1,8 @@
 """CRUD service for ArticlePublisher: settings, topics, images, jobs."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -27,6 +29,16 @@ ARTICLE_PUBLISHER_JOB_STATUSES = {
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def article_image_access_token(image_id: int) -> str:
+    from ...config import settings
+
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        f"article-image:{int(image_id)}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
 
 
 def _get_images_dir() -> str:
@@ -258,7 +270,10 @@ class ArticlePublisherService:
             "mime_type": row.mime_type,
             "size_bytes": row.size_bytes,
             "created_at": row.created_at.isoformat() if row.created_at else None,
-            "url": f"/api/admin/article-publisher/images/{row.id}/file",
+            "url": (
+                f"/api/admin/article-publisher/images/{row.id}/file"
+                f"?token={article_image_access_token(row.id)}"
+            ),
         }
 
     # ------------------------------------------------------------------

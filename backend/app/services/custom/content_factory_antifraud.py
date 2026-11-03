@@ -511,16 +511,18 @@ def vk_group_id(raw: str | None) -> str:
 def factory_return_url(return_url: str | None, automation_id: int, *, base_url: str = "") -> str:
     from urllib.parse import urlparse
 
+    from .amocrm_service import _return_host_allowed
+
     path = f"/custom/automations/{automation_id}/content-factory"
     fallback = f"{(base_url or '').rstrip('/')}{path}/accounts"
     if not return_url:
         return fallback
     parsed = urlparse(str(return_url).strip())
-    if parsed.scheme not in {"http", "https"}:
+    if not _return_host_allowed(parsed, base_url):
         return fallback
     if path not in (parsed.path or ""):
         return fallback
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    return f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
 
 
 def estimate_llm_cost_usd(*, model: str, prompt_tokens: int, completion_tokens: int) -> float:

@@ -121,8 +121,14 @@ async def process_token(message: types.Message, state: FSMContext):
         )
         get_response_status(response)
 
+        from core.telegram_webhook_secret import telegram_webhook_secret
+
         await temp_bot.set_webhook(
             url=f"{settings.BASE_URL}/webhook/{bot_info.id}",
+            secret_token=telegram_webhook_secret(
+                encryption_key=settings.ENCRYPTION_KEY,
+                scope=str(bot_info.id),
+            ),
             drop_pending_updates=True,
         )
 

@@ -480,6 +480,20 @@ class AdminBookingToolRegistry:
         self._yookassa_api_key = (yookassa_api_key or "").strip() or None
         self._idempotency = IdempotencyCache()
 
+    def _visitor_scoped(self) -> bool:
+        return self._source_channel in {"external_api", "website"}
+
+    async def _assert_visitor_owns_appointment(self, service: Any, appointment_id: int) -> None:
+        if not self._visitor_scoped():
+            return
+        snapshot = await service._get_appointment_snapshot(
+            agent_id=self._agent_id,
+            appointment_id=int(appointment_id),
+        )
+        owner = str(snapshot.get("client_external_id") or "").strip()
+        if owner != self._user_external_id:
+            raise RuntimeError("Запись принадлежит другому клиенту")
+
     def tools_for_llm(self) -> list[dict[str, Any]]:
         return [
             build_openai_tool_schema(name, _TOOL_MODELS[name], _TOOL_DESCRIPTIONS[name])
@@ -879,6 +893,7 @@ class AdminBookingToolRegistry:
                     appointment_date=str(data.get("appointment_date") or ""),
                     staff_id=data.get("lookup_staff_id"),
                 )
+            await self._assert_visitor_owns_appointment(service, int(appt_id))
             result = await service.reschedule_appointment(
                 agent_id=self._agent_id,
                 appointment_id=int(appt_id),
@@ -897,6 +912,7 @@ class AdminBookingToolRegistry:
                 )
             from .payment_service import RefundContactDetailsRequired
 
+            await self._assert_visitor_owns_appointment(service, int(appt_id))
             try:
                 cancel_result = await service.cancel_appointment(
                     agent_id=self._agent_id,
@@ -936,6 +952,9 @@ class AdminBookingToolRegistry:
                     "message": "Запись отменена и удалена.",
                 }
         elif tool_name == "list_appointments":
+            client_external_id = data.get("client_external_id")
+            if self._visitor_scoped():
+                client_external_id = self._user_external_id
             result = await service.list_appointments(
                 agent_id=self._agent_id,
                 starts_at=(
@@ -951,7 +970,7 @@ class AdminBookingToolRegistry:
                 staff_id=data.get("staff_id"),
                 resource_id=data.get("resource_id"),
                 service_id=data.get("service_id"),
-                client_external_id=data.get("client_external_id"),
+                client_external_id=client_external_id,
                 status=data.get("status"),
             )
         elif tool_name == "find_next_available":

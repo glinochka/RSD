@@ -1,4 +1,4 @@
-import type { WebSocket } from 'ws';
+import { WebSocket } from 'ws';
 import Redis from 'ioredis';
 
 import { config } from '../config';
@@ -11,6 +11,11 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(message));
   }
+}
+
+export function hasOpenReplySession(callId: string): boolean {
+  const existing = sessions.get(callId);
+  return Boolean(existing && existing.readyState === WebSocket.OPEN);
 }
 
 export function registerReplySession(callId: string, ws: WebSocket): void {

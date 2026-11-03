@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from logging import getLogger
 
 from fastapi import APIRouter, Depends, HTTPException, status
+
+from ..utils.rate_limit import rate_limit
 from sqlalchemy import func, select
 
 from .schemas import (
@@ -42,7 +44,11 @@ def _password_matches(plain: str, hashed: str | None) -> bool:
         return False
 
 
-@router.post("/login", response_model=CustomLoginResponse)
+@router.post(
+    "/login",
+    response_model=CustomLoginResponse,
+    dependencies=[Depends(rate_limit(max_requests=5, window_seconds=60, scope="custom_admin_login"))],
+)
 async def login_admin(payload: CustomAdminLoginRequest):
     env_login = (settings.CUSTOM_ADMIN_LOGIN or "").strip()
     env_hash = settings.CUSTOM_ADMIN_PASSWORD_HASH or ""

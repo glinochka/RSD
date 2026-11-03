@@ -120,6 +120,18 @@ async def get_current_custom_automation(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Automation not found",
             )
+        credential_id = payload.get("custom_credential_id")
+        if credential_id:
+            credential = await session.get(CustomAutomationCredential, int(credential_id))
+            if (
+                not credential
+                or not credential.is_active
+                or credential.custom_automation_id != automation.id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Credential access denied",
+                )
         return automation
 
 
