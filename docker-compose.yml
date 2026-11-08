@@ -161,6 +161,10 @@ services:
             - "443:443"
         volumes:
             - ./ssl:/etc/nginx/ssl:ro
+            - /root/masshtab/nginx/masshtab.conf:/etc/nginx/conf.d/masshtab.conf:ro
+            - /root/masshtab/nginx/masshtab-ssl.conf:/etc/nginx/conf.d/masshtab-ssl.conf:ro
+            - /var/www/certbot:/var/www/certbot:ro
+            - /etc/letsencrypt:/etc/letsencrypt:ro
         depends_on:
             backend:
                 condition: service_started
