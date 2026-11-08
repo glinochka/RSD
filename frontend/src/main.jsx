@@ -2,12 +2,34 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './index.css';
+import './styles/panelMasshtab.css';
+import { isCabinetPath, isPanelPath } from './config/cabinetBase';
+
+function syncPanelChrome() {
+  if (typeof document === 'undefined') return;
+  const panel = isPanelPath(window.location.pathname);
+  document.documentElement.classList.toggle('panel-masshtab', panel);
+  if (document.body) document.body.classList.toggle('panel-masshtab', panel);
+  if (!panel) return;
+  document.title = 'Панель — Масштаб';
+  if (!document.querySelector('link[data-masshtab-fonts="1"]')) {
+    const fonts = document.createElement('link');
+    fonts.rel = 'stylesheet';
+    fonts.href = '/fonts/fonts.css';
+    fonts.dataset.masshtabFonts = '1';
+    document.head.appendChild(fonts);
+  }
+  const icon = document.querySelector('link[rel="icon"]');
+  if (icon) icon.href = '/favicon.svg';
+}
+
+syncPanelChrome();
 
 function initRsdWidget() {
   const env = import.meta.env;
   const apiKey = (env.VITE_WIDGET_API_KEY || '').trim();
   if (!apiKey || typeof document === 'undefined') return;
-  if (window.location.pathname.startsWith('/custom')) return;
+  if (isCabinetPath(window.location.pathname)) return;
 
   if (document.querySelector('script[data-rsd-widget="1"]')) return;
 

@@ -3,6 +3,8 @@
  * Defines static values used throughout the application
  */
 
+import { mapCabinetPath } from './cabinetBase';
+
 export const HTTP_STATUS = {
   OK: 200,
   CREATED: 201,
@@ -482,7 +484,7 @@ export const AGENT_TASKS = {
 // Pricing plans are served by backend (/api/payments/plans) to keep bot + web consistent.
 export const PRICING_PLANS = [];
 
-export const NAVIGATION_ROUTES = {
+const NAVIGATION_ROUTES_BASE = {
   HOME: '/',
   AUTH: '/auth',
   AGENTS: '/agents',
@@ -547,6 +549,19 @@ export const NAVIGATION_ROUTES = {
   CUSTOM_AUTOMATION_CONTENT_FACTORY_ACCOUNTS: (id) => `/custom/automations/${id}/content-factory/accounts`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_SETTINGS: (id) => `/custom/automations/${id}/content-factory/settings`,
 };
+
+export const NAVIGATION_ROUTES = new Proxy(NAVIGATION_ROUTES_BASE, {
+  get(target, prop, receiver) {
+    const value = Reflect.get(target, prop, receiver);
+    if (typeof value === 'function') {
+      return (...args) => mapCabinetPath(value(...args));
+    }
+    if (typeof value === 'string') {
+      return mapCabinetPath(value);
+    }
+    return value;
+  },
+});
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).
 export const ERROR_MESSAGES = {

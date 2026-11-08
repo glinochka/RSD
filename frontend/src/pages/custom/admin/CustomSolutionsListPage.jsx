@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import { isMasshtabPanel } from '../../../config/cabinetBase';
 import customService from '../../../services/customService';
 import { SOLUTION_KIND_LABELS } from '../automation/activityLabels';
 import '../../../styles/projectLayout.css';
@@ -73,7 +74,7 @@ const CustomSolutionsListPage = () => {
     <div className="project-layout ubt-layout">
       <header className="project-topbar">
         <div className="project-topbar-left">
-          <h1 className="project-topbar-title">Кастомные агенты</h1>
+          <h1 className="project-topbar-title">{isMasshtabPanel() ? 'Масштаб' : 'Кастомные агенты'}</h1>
         </div>
         <div className="project-topbar-right">
           <span className="project-topbar-user">Администратор</span>

@@ -1,0 +1,347 @@
+/* Кабинет Масштаба на /panel. RSD /custom эти правила не видит. */
+
+body.panel-masshtab {
+  --ink: #12110e;
+  --paper: #f4efe4;
+  --paper-deep: #e4dccb;
+  --bone: #f7f3ea;
+  --line: #d3cbbd;
+  --mute: #5c564c;
+  --signal: #dff24a;
+  --hot: #ef3d1e;
+  --serif: "Literata", "Palatino Linotype", Palatino, Georgia, serif;
+  --display: "Unbounded", "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", Consolas, "Courier New", monospace;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+}
+
+body.panel-masshtab .custom-login,
+body.panel-masshtab .ubt-layout {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+}
+
+body.panel-masshtab .ubt-layout h1,
+body.panel-masshtab .ubt-layout h2,
+body.panel-masshtab .ubt-layout h3,
+body.panel-masshtab .custom-login h1,
+body.panel-masshtab .custom-login h2,
+body.panel-masshtab .ubt-kpi strong,
+body.panel-masshtab .project-topbar-title {
+  font-family: var(--display);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+
+body.panel-masshtab .custom-login {
+  min-height: 100dvh;
+}
+
+body.panel-masshtab .custom-login .management-header {
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: inset 0 -3px 0 var(--signal);
+}
+
+body.panel-masshtab .custom-login .management-header h1 {
+  color: var(--paper);
+  font-size: 1.35rem;
+}
+
+body.panel-masshtab .custom-login .management-login-portal-eyebrow,
+body.panel-masshtab .custom-login label,
+body.panel-masshtab .project-content label,
+body.panel-masshtab .ubt-section-label,
+body.panel-masshtab .ubt-table th,
+body.panel-masshtab .project-topbar-user,
+body.panel-masshtab .ubt-brand-kicker {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body.panel-masshtab .custom-login .management-login-portal-shell,
+body.panel-masshtab .custom-login .management-login-card {
+  background: var(--bone);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+body.panel-masshtab .custom-login .management-login-portal-subtitle,
+body.panel-masshtab .ubt-hero p,
+body.panel-masshtab .ubt-kpi span,
+body.panel-masshtab .ubt-empty,
+body.panel-masshtab .settings-subtitle,
+body.panel-masshtab .crm-subtitle {
+  color: var(--mute);
+}
+
+body.panel-masshtab .ubt-layout .project-topbar {
+  background: var(--ink);
+  color: var(--paper);
+  border-bottom: 0;
+  box-shadow: inset 0 -3px 0 var(--signal);
+}
+
+body.panel-masshtab .ubt-layout .project-topbar-title,
+body.panel-masshtab .ubt-layout .project-topbar-user,
+body.panel-masshtab .ubt-layout .project-topbar-back,
+body.panel-masshtab .ubt-layout .project-topbar-menu-btn {
+  color: var(--paper);
+}
+
+body.panel-masshtab .ubt-layout .project-topbar-title {
+  font-size: 1.15rem;
+}
+
+body.panel-masshtab .ubt-layout .project-topbar-back,
+body.panel-masshtab .ubt-layout .project-topbar-menu-btn {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body.panel-masshtab .ubt-layout .project-topbar-back:hover,
+body.panel-masshtab .ubt-layout .project-topbar-menu-btn:hover {
+  background: transparent;
+  color: var(--signal);
+}
+
+body.panel-masshtab .ubt-sidebar {
+  width: 280px;
+  background: var(--ink);
+  border-right: 0;
+  color: var(--paper);
+}
+
+body.panel-masshtab .ubt-brand {
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 18px 16px 12px;
+}
+
+body.panel-masshtab .ubt-brand-kicker {
+  width: 100%;
+  font-size: 11px;
+  color: var(--signal);
+}
+
+body.panel-masshtab .ubt-brand-mark {
+  border-radius: 0;
+  background: var(--signal);
+  color: var(--ink);
+}
+
+body.panel-masshtab .ubt-brand-name {
+  color: var(--paper);
+  font-family: var(--display);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+body.panel-masshtab .ubt-section-label {
+  color: #c9c0b2;
+  font-size: 10px;
+}
+
+body.panel-masshtab .ubt-group-toggle {
+  border-radius: 0;
+  color: var(--paper);
+  font-family: var(--serif);
+}
+
+body.panel-masshtab .ubt-group-toggle:hover,
+body.panel-masshtab .ubt-group-toggle--open {
+  background: rgba(244, 239, 228, 0.08);
+}
+
+body.panel-masshtab .ubt-chevron {
+  color: #c9c0b2;
+}
+
+body.panel-masshtab .ubt-link {
+  border-radius: 0;
+  color: var(--paper-deep);
+}
+
+body.panel-masshtab .ubt-link:hover {
+  background: rgba(244, 239, 228, 0.08);
+  color: var(--paper);
+}
+
+body.panel-masshtab .ubt-link--active,
+body.panel-masshtab .ubt-link--active:hover {
+  background: var(--signal);
+  color: var(--ink);
+}
+
+body.panel-masshtab .ubt-layout .project-content {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body.panel-masshtab .ubt-hero h1,
+body.panel-masshtab .settings-title,
+body.panel-masshtab .crm-title,
+body.panel-masshtab .ubt-layout .settings-header h2,
+body.panel-masshtab .ubt-panel-header h2 {
+  color: var(--ink);
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+}
+
+body.panel-masshtab .ubt-kpi,
+body.panel-masshtab .ubt-panel,
+body.panel-masshtab .ubt-placeholder,
+body.panel-masshtab .ubt-layout .settings-section,
+body.panel-masshtab .ubt-layout .crm-item,
+body.panel-masshtab .ubt-layout .nc-card,
+body.panel-masshtab .ubt-kpi--soft {
+  background: var(--bone);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+body.panel-masshtab .ubt-kpi strong,
+body.panel-masshtab .ubt-kpi--soft strong {
+  color: var(--ink);
+}
+
+body.panel-masshtab .ubt-kpi--warn strong { color: #9a3412; }
+body.panel-masshtab .ubt-kpi--danger strong { color: var(--hot); }
+body.panel-masshtab .ubt-kpi--ok strong { color: #3f6212; }
+
+body.panel-masshtab .ubt-table th,
+body.panel-masshtab .ubt-table td {
+  border-bottom: 1px solid var(--line);
+}
+
+body.panel-masshtab .ubt-table th {
+  color: var(--mute);
+  font-size: 11px;
+}
+
+body.panel-masshtab .ubt-table td {
+  color: var(--ink);
+}
+
+body.panel-masshtab .ubt-badge {
+  border-radius: 0;
+  background: var(--signal);
+  color: var(--ink);
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+body.panel-masshtab .project-content label,
+body.panel-masshtab .custom-login label {
+  font-size: 11px;
+  color: var(--mute);
+}
+
+body.panel-masshtab .project-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+body.panel-masshtab .project-content textarea,
+body.panel-masshtab .project-content select,
+body.panel-masshtab .management-login-card input:not([type="checkbox"]):not([type="file"]),
+body.panel-masshtab .management-login-card textarea,
+body.panel-masshtab .management-login-card select,
+body.panel-masshtab .custom-login input {
+  background: var(--bone);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  box-shadow: none;
+  font-family: var(--serif);
+}
+
+body.panel-masshtab .management-login-card input:focus,
+body.panel-masshtab .project-content input:focus,
+body.panel-masshtab .project-content textarea:focus,
+body.panel-masshtab .project-content select:focus {
+  outline: 2px solid var(--hot);
+  outline-offset: 2px;
+  border-color: var(--ink);
+  box-shadow: none;
+}
+
+body.panel-masshtab .ubt-layout .btn,
+body.panel-masshtab .ubt-layout .btn-black,
+body.panel-masshtab .ubt-layout .acc-btn,
+body.panel-masshtab .ubt-layout .acc-btn--primary,
+body.panel-masshtab .ubt-layout .acc-btn--dark,
+body.panel-masshtab .ubt-layout .acc-btn--ghost,
+body.panel-masshtab .ubt-layout .acc-btn--mint,
+body.panel-masshtab .custom-login .btn,
+body.panel-masshtab .custom-login .btn-black {
+  border-radius: 0;
+  box-shadow: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body.panel-masshtab .ubt-layout .btn-black,
+body.panel-masshtab .ubt-layout .acc-btn--primary,
+body.panel-masshtab .ubt-layout .acc-btn--dark,
+body.panel-masshtab .custom-login .btn-black {
+  background: var(--hot);
+  color: var(--ink);
+  border: 0;
+}
+
+body.panel-masshtab .ubt-layout .btn-black:hover,
+body.panel-masshtab .ubt-layout .acc-btn--primary:hover,
+body.panel-masshtab .custom-login .btn-black:hover {
+  background: var(--hot);
+  color: var(--ink);
+  filter: brightness(1.05);
+}
+
+body.panel-masshtab .ubt-layout .acc-btn--mint {
+  background: var(--signal);
+  color: var(--ink);
+  border: 0;
+}
+
+body.panel-masshtab .ubt-layout .btn-outline,
+body.panel-masshtab .ubt-layout .acc-btn--ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+body.panel-masshtab .ubt-layout .btn-danger {
+  background: transparent;
+  color: var(--hot);
+  border: 1px solid var(--hot);
+}
+
+body.panel-masshtab .project-content a:not(.ubt-link) {
+  color: var(--ink);
+  text-underline-offset: 0.15em;
+}
+
+body.panel-masshtab :focus-visible {
+  outline: 2px solid var(--hot);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  body.panel-masshtab .ubt-sidebar {
+    background: var(--ink);
+  }
+}

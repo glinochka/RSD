@@ -1,6 +1,7 @@
 import { Helmet } from 'react-helmet-async';
 import { useLocation } from 'react-router-dom';
 import { getPublicSiteOrigin, getSeoForPath } from '../config/seo';
+import { isPanelPath } from '../config/cabinetBase';
 
 const defaultOgImagePath = '/favicon/android-chrome-512x512.png';
 
@@ -9,6 +10,15 @@ const defaultOgImagePath = '/favicon/android-chrome-512x512.png';
  */
 const DocumentHead = () => {
   const { pathname } = useLocation();
+  if (isPanelPath(pathname)) {
+    return (
+      <Helmet prioritizeSeoTags>
+        <title>Панель — Масштаб</title>
+        <meta name="robots" content="noindex, nofollow" />
+      </Helmet>
+    );
+  }
+
   const seo = getSeoForPath(pathname);
   if (!seo) {
     return null;

@@ -11,6 +11,7 @@ import { NotificationProvider } from './context/NotificationContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotificationContainer from './components/NotificationContainer';
 import { NAVIGATION_ROUTES } from './config/constants';
+import { isCabinetPath, isPanelPath } from './config/cabinetBase';
 import DocumentHead from './components/DocumentHead';
 import ReferralCapture from './components/ReferralCapture';
 
@@ -92,7 +93,14 @@ const HideRsdWidgetOnCustom = () => {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    if (!pathname.startsWith('/custom')) {
+    const panel = isPanelPath(pathname);
+    document.body.classList.toggle('panel-masshtab', panel);
+    document.documentElement.classList.toggle('panel-masshtab', panel);
+    if (panel) {
+      document.title = 'Панель — Масштаб';
+    }
+
+    if (!isCabinetPath(pathname)) {
       const root = document.querySelector('.rsd-widget-root');
       if (root) {
         root.style.display = '';
@@ -114,6 +122,96 @@ const HideRsdWidgetOnCustom = () => {
 
   return null;
 };
+
+const cabinetRoutes = (base) => [
+  <Route key={`${base}-root`} path={base} element={<Navigate to={`${base}/login`} replace />} />,
+  <Route
+    key={`${base}-login`}
+    path={`${base}/login`}
+    element={
+      <CustomAuthProvider>
+        <CustomLoginPage />
+      </CustomAuthProvider>
+    }
+  />,
+  <Route
+    key={`${base}-admin`}
+    path={`${base}/admin`}
+    element={
+      <CustomAuthProvider>
+        <CustomAdminGuard>
+          <CustomSolutionsListPage />
+        </CustomAdminGuard>
+      </CustomAuthProvider>
+    }
+  />,
+  <Route
+    key={`${base}-admin-new`}
+    path={`${base}/admin/new`}
+    element={
+      <CustomAuthProvider>
+        <CustomAdminGuard>
+          <CustomNewSolutionPage />
+        </CustomAdminGuard>
+      </CustomAuthProvider>
+    }
+  />,
+  <Route
+    key={`${base}-admin-rest`}
+    path={`${base}/admin/*`}
+    element={<Navigate to={`${base}/admin`} replace />}
+  />,
+  <Route
+    key={`${base}-automation`}
+    path={`${base}/automations/:id/*`}
+    element={
+      <CustomAuthProvider>
+        <CustomSolutionLayout />
+      </CustomAuthProvider>
+    }
+  >
+    <Route index element={<Navigate to="dashboard" replace />} />
+    <Route path="dashboard" element={<CustomAutomationDashboardPage />} />
+    <Route path="activity" element={<CustomAutomationActivityPage />} />
+    <Route path="errors" element={<CustomAutomationErrorsPage />} />
+    <Route path="accounts" element={<Navigate to="../ubt/accounts" replace />} />
+    <Route path="ubt/accounts" element={<CustomAutomationAccountsPage />} />
+    <Route path="ubt/intercept" element={<CustomAutomationAccountsPage pool="intercept" />} />
+    <Route path="ubt/tasks" element={<CustomAutomationTasksPage />} />
+    <Route path="ubt/stats" element={<CustomAutomationStatsPage />} />
+    <Route path="ubt/neurocommenting" element={<CustomAutomationNeurocommentingPage />} />
+    <Route path="ubt/neuroblog" element={<CustomAutomationNeuroblogPage />} />
+    <Route path="ubt/lead-intercept" element={<CustomAutomationLeadInterceptPage />} />
+    <Route path="ubt/neurochatting" element={<CustomAutomationNeurochattingPage />} />
+    <Route path="ubt/masslooking" element={<CustomAutomationMasslookingPage />} />
+    <Route path="ubt/chat-broadcasts" element={<CustomAutomationChatBroadcastsPage />} />
+    <Route path="ubt/dm-broadcasts" element={<CustomAutomationDmBroadcastsPage />} />
+    <Route path="ubt/neuroshilling" element={<CustomAutomationNeuroshillingPage />} />
+    <Route path="ubt/warmup" element={<CustomAutomationWarmupPage />} />
+    <Route path="ubt/masspriming" element={<CustomAutomationMassprimingPage />} />
+    <Route path="ubt/parser" element={<CustomAutomationParserPage />} />
+    <Route path="ubt/chats" element={<CustomAutomationChatsPage />} />
+    <Route path="ubt/chats/discovery" element={<CustomAutomationChatsPage defaultTab="discovery" />} />
+    <Route path="settings" element={<CustomAutomationSettingsPage />} />
+    <Route path="chats" element={<Navigate to="../ubt/chats" replace />} />
+    <Route path="chats/discovery" element={<Navigate to="../ubt/chats/discovery" replace />} />
+    <Route path="leads" element={<CustomAutomationLeadsPage />} />
+    <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
+    <Route path="dmp" element={<CustomAutomationDmpPage />} />
+    <Route path="dmp/sasha" element={<CustomAutomationSashaPage />} />
+    <Route path="dmp/connection" element={<CustomAutomationDmpConnectionPage />} />
+    <Route path="dmp/settings" element={<CustomAutomationDmpSettingsPage />} />
+    <Route path="content-factory" element={<CustomAutomationContentFactoryResultsPage />} />
+    <Route path="content-factory/accounts" element={<CustomAutomationContentFactoryAccountsPage />} />
+    <Route path="content-factory/settings" element={<CustomAutomationContentFactorySettingsPage />} />
+    <Route path="integrations" element={<CustomAutomationIntegrationsPage />} />
+    <Route path="ubt/:moduleId" element={<CustomAutomationModulePlaceholder />} />
+    <Route path="amocrm" element={<CustomAutomationAmocrmPage />} />
+    <Route path="prompts" element={<CustomAutomationPromptsPage />} />
+    <Route path="prompts/:promptId/edit" element={<CustomAutomationPromptEditPage />} />
+    <Route path="test" element={<CustomAutomationTestPage />} />
+  </Route>,
+];
 
 const App = () => {
   return (
@@ -200,92 +298,9 @@ const App = () => {
                   element={<ProjectCreatePage />}
                 />
 
-                {/* Custom Agents Routes */}
-                <Route
-                  path="/custom"
-                  element={<Navigate to={NAVIGATION_ROUTES.CUSTOM_LOGIN} replace />}
-                />
-                <Route
-                  path={NAVIGATION_ROUTES.CUSTOM_LOGIN}
-                  element={
-                    <CustomAuthProvider>
-                      <CustomLoginPage />
-                    </CustomAuthProvider>
-                  }
-                />
-                <Route
-                  path="/custom/admin"
-                  element={
-                    <CustomAuthProvider>
-                      <CustomAdminGuard>
-                        <CustomSolutionsListPage />
-                      </CustomAdminGuard>
-                    </CustomAuthProvider>
-                  }
-                />
-                <Route
-                  path="/custom/admin/new"
-                  element={
-                    <CustomAuthProvider>
-                      <CustomAdminGuard>
-                        <CustomNewSolutionPage />
-                      </CustomAdminGuard>
-                    </CustomAuthProvider>
-                  }
-                />
-                <Route
-                  path="/custom/admin/*"
-                  element={<Navigate to={NAVIGATION_ROUTES.CUSTOM_ADMIN} replace />}
-                />
-                <Route
-                  path="/custom/automations/:id/*"
-                  element={
-                    <CustomAuthProvider>
-                      <CustomSolutionLayout />
-                    </CustomAuthProvider>
-                  }
-                >
-                  <Route index element={<Navigate to="dashboard" replace />} />
-                  <Route path="dashboard" element={<CustomAutomationDashboardPage />} />
-                  <Route path="activity" element={<CustomAutomationActivityPage />} />
-                  <Route path="errors" element={<CustomAutomationErrorsPage />} />
-                  <Route path="accounts" element={<Navigate to="../ubt/accounts" replace />} />
-                  <Route path="ubt/accounts" element={<CustomAutomationAccountsPage />} />
-                  <Route path="ubt/intercept" element={<CustomAutomationAccountsPage pool="intercept" />} />
-                  <Route path="ubt/tasks" element={<CustomAutomationTasksPage />} />
-                  <Route path="ubt/stats" element={<CustomAutomationStatsPage />} />
-                  <Route path="ubt/neurocommenting" element={<CustomAutomationNeurocommentingPage />} />
-                  <Route path="ubt/neuroblog" element={<CustomAutomationNeuroblogPage />} />
-                  <Route path="ubt/lead-intercept" element={<CustomAutomationLeadInterceptPage />} />
-                  <Route path="ubt/neurochatting" element={<CustomAutomationNeurochattingPage />} />
-                  <Route path="ubt/masslooking" element={<CustomAutomationMasslookingPage />} />
-                  <Route path="ubt/chat-broadcasts" element={<CustomAutomationChatBroadcastsPage />} />
-                  <Route path="ubt/dm-broadcasts" element={<CustomAutomationDmBroadcastsPage />} />
-                  <Route path="ubt/neuroshilling" element={<CustomAutomationNeuroshillingPage />} />
-                  <Route path="ubt/warmup" element={<CustomAutomationWarmupPage />} />
-                  <Route path="ubt/masspriming" element={<CustomAutomationMassprimingPage />} />
-                  <Route path="ubt/parser" element={<CustomAutomationParserPage />} />
-                  <Route path="ubt/chats" element={<CustomAutomationChatsPage />} />
-                  <Route path="ubt/chats/discovery" element={<CustomAutomationChatsPage defaultTab="discovery" />} />
-                  <Route path="settings" element={<CustomAutomationSettingsPage />} />
-                  <Route path="chats" element={<Navigate to="../ubt/chats" replace />} />
-                  <Route path="chats/discovery" element={<Navigate to="../ubt/chats/discovery" replace />} />
-                  <Route path="leads" element={<CustomAutomationLeadsPage />} />
-                  <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
-                  <Route path="dmp" element={<CustomAutomationDmpPage />} />
-                  <Route path="dmp/sasha" element={<CustomAutomationSashaPage />} />
-                  <Route path="dmp/connection" element={<CustomAutomationDmpConnectionPage />} />
-                  <Route path="dmp/settings" element={<CustomAutomationDmpSettingsPage />} />
-                  <Route path="content-factory" element={<CustomAutomationContentFactoryResultsPage />} />
-                  <Route path="content-factory/accounts" element={<CustomAutomationContentFactoryAccountsPage />} />
-                  <Route path="content-factory/settings" element={<CustomAutomationContentFactorySettingsPage />} />
-                  <Route path="integrations" element={<CustomAutomationIntegrationsPage />} />
-                  <Route path="ubt/:moduleId" element={<CustomAutomationModulePlaceholder />} />
-                  <Route path="amocrm" element={<CustomAutomationAmocrmPage />} />
-                  <Route path="prompts" element={<CustomAutomationPromptsPage />} />
-                  <Route path="prompts/:promptId/edit" element={<CustomAutomationPromptEditPage />} />
-                  <Route path="test" element={<CustomAutomationTestPage />} />
-                </Route>
+                {cabinetRoutes('/custom')}
+                {cabinetRoutes('/panel')}
+                <Route path="/panel/*" element={<Navigate to="/panel/login" replace />} />
 
                 {/* Website Builder Routes */}
                 <Route path="/preview/:websiteId" element={<PreviewPage />} />

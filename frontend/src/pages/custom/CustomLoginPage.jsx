@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCustomAuth } from '../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../config/constants';
+import { isMasshtabPanel } from '../../config/cabinetBase';
 import '../../styles/managementPortal.css';
 import '../../styles/customSolutionNav.css';
 
 const CustomLoginPage = () => {
   const navigate = useNavigate();
+  const panel = isMasshtabPanel();
   const { login, isAuthenticated, isAdmin, automationId } = useCustomAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -54,16 +56,18 @@ const CustomLoginPage = () => {
   return (
     <div className="management-page custom-login">
       <header className="management-header">
-        <h1>Кастомные агенты</h1>
+        <h1>{panel ? 'Масштаб' : 'Кастомные агенты'}</h1>
       </header>
 
       <main className="management-login-wrap">
         <div className="management-login-portal-shell">
           <div className="management-login-portal-header">
-            <p className="management-login-portal-eyebrow">RSD Custom</p>
+            <p className="management-login-portal-eyebrow">{panel ? 'Кабинет' : 'RSD Custom'}</p>
             <h2 className="management-login-portal-title">Вход в панель</h2>
             <p className="management-login-portal-subtitle">
-              Один вход для администратора и клиента автоматизации
+              {panel
+                ? 'Логин и пароль от вашей автоматизации'
+                : 'Один вход для администратора и клиента автоматизации'}
             </p>
           </div>
 

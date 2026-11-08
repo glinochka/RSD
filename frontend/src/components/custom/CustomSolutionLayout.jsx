@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useCustomAuth } from './useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../config/constants';
+import { isMasshtabPanel } from '../../config/cabinetBase';
 import customService from '../../services/customService';
 import { UBT_MODULES, ubtModulePath } from '../../pages/custom/automation/customNav';
 import '../../styles/projectLayout.css';
@@ -342,6 +343,7 @@ const CustomSolutionLayout = () => {
       <div className="project-layout-body">
         <aside className={`project-sidebar ubt-sidebar ${isMobileMenuOpen ? 'project-sidebar--open' : ''}`}>
           <div className="ubt-brand">
+            {isMasshtabPanel() ? <span className="ubt-brand-kicker">Масштаб</span> : null}
             <span className="ubt-brand-mark">{initials}</span>
             <span className="ubt-brand-name">{title}</span>
           </div>
