@@ -12,3 +12,6 @@ testfail.txt
 SEOJarvis/
 media/
 docker-compose.override.yml
+.cursor/agents/
+.cursor/skills/
+.cursor/team/

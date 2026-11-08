@@ -126,6 +126,8 @@ const UbtDistributeChats = ({
   const [messageHint, setMessageHint] = useState(null);
   const [madeLink, setMadeLink] = useState(null);
   const [addlistRefresh, setAddlistRefresh] = useState(0);
+  const [replaceTarget, setReplaceTarget] = useState(null);
+  const [replacePick, setReplacePick] = useState(null);
 
   const loadPool = useCallback(async () => {
     if (!automationId || !taskKey) {
@@ -308,6 +310,37 @@ const UbtDistributeChats = ({
     });
   };
 
+  const replaceCandidates = (pool?.available_accounts || []).filter((item) => (
+    item.selected === false
+    && item.eligible !== false
+    && Number(item.id) !== Number(replaceTarget?.id)
+  ));
+
+  const confirmReplace = async () => {
+    if (!replaceTarget || !replacePick) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await customService.replaceTaskPoolAccount(automationId, {
+        taskKey,
+        accountId: replaceTarget.id,
+        replacementAccountId: replacePick,
+      });
+      applyPool(data);
+      setReplaceTarget(null);
+      setReplacePick(null);
+      if (data.notice) {
+        setMessageHint(data.notice);
+      }
+    } catch (err) {
+      setError(err.message || 'Не удалось заменить аккаунт');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const makeAddlist = async (account) => {
     const ids = pickedChats[account.id] || [];
     if (!ids.length) {
@@ -373,7 +406,7 @@ const UbtDistributeChats = ({
         Комментарии идут в каналы, куда аккаунт уже вошёл, не дожидаясь полной пятидесятки. Addlist можно собрать вручную: откройте аккаунт и отметьте вступившие.
       </p>
       {messageHint ? <p className="acc-flash">{messageHint}</p> : null}
-      {error && !open && !picker ? <p className="acc-flash acc-flash--error">{error}</p> : null}
+      {error && !open && !picker && !replaceTarget ? <p className="acc-flash acc-flash--error">{error}</p> : null}
       <MixBar mix={mix} />
       {!selectedAccounts.length ? (
         <p className="nc-muted">Выберите аккаунты — здесь появится, кому какие каналы достались.</p>
@@ -384,17 +417,38 @@ const UbtDistributeChats = ({
             const count = item.assigned_count || (item.assigned || []).length;
             return (
               <div key={item.id} className="nc-pool-account">
-                <button
-                  type="button"
-                  className="nc-pool-account-btn"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
-                >
-                  <span>
-                    <strong>{item.label || item.username || item.phone_number || `аккаунт #${item.id}`}</strong>
-                    <span className="nc-muted">{item.status ? item.status : (item.username ? `@${item.username}` : item.phone_number || '')}</span>
-                  </span>
-                  <span className="nc-pool-count">{item.joined_count || 0} вступил · {count}/{cap}</span>
-                </button>
+                <div className="nc-pool-account-head">
+                  <button
+                    type="button"
+                    className="nc-pool-account-btn"
+                    onClick={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                  >
+                    <span>
+                      <strong>{item.label || item.username || item.phone_number || `аккаунт #${item.id}`}</strong>
+                      <span className="nc-muted">{item.status ? item.status : (item.username ? `@${item.username}` : item.phone_number || '')}</span>
+                    </span>
+                    <span className="nc-pool-count">{item.joined_count || 0} вступил · {count}/{cap}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="acc-icon-btn"
+                    title="Заменить"
+                    aria-label="Заменить"
+                    disabled={busy}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setReplaceTarget(item);
+                      setReplacePick(null);
+                      setError(null);
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M7 7h11M15 4l3 3-3 3" />
+                      <path d="M17 17H6M9 14l-3 3 3 3" />
+                    </svg>
+                  </button>
+                </div>
                 <div className="nc-pool-meter" title={`${item.joined_count || 0} из ${count || cap} вступили`}>
                   <span style={{ width: `${count ? Math.min(100, Math.round(((item.joined_count || 0) / count) * 100)) : 0}%` }} />
                 </div>
@@ -536,6 +590,48 @@ const UbtDistributeChats = ({
                 onClick={() => runPool({ accountIds: settings?.account_ids || pool?.account_ids, folderIds: pickedFolders, mode: 'mix' }, 'Папки добавлены и перемешаны')}
               >
                 {busy ? 'Сохранение...' : 'Сохранить и перемешать'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {replaceTarget ? (
+        <div className="nc-modal-backdrop" onClick={() => { if (!busy) setReplaceTarget(null); }}>
+          <div className="nc-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="nc-card-head">
+              <h2>Заменить аккаунт</h2>
+              <button type="button" className="acc-icon-btn" onClick={() => setReplaceTarget(null)} disabled={busy}>×</button>
+            </div>
+            <p className="nc-muted">
+              {replaceTarget.label || replaceTarget.username || `аккаунт #${replaceTarget.id}`} отдаёт свой пул.
+              В списке аккаунты этой автоматизации, которых ещё нет в задаче.
+            </p>
+            {error ? <p className="acc-flash acc-flash--error">{error}</p> : null}
+            <div className="nc-list" style={{ marginTop: 10, maxHeight: 360, overflow: 'auto' }}>
+              {!replaceCandidates.length ? <p className="nc-muted">Нет свободного аккаунта для замены</p> : null}
+              {replaceCandidates.map((item) => {
+                const on = Number(replacePick) === Number(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`nc-item ${on ? 'is-on' : ''}`}
+                    onClick={() => setReplacePick(Number(item.id))}
+                  >
+                    <div>
+                      <strong>{item.label || item.username || `#${item.id}`}</strong>
+                      <span>{item.username ? `@${item.username}` : item.phone_number || ''}</span>
+                    </div>
+                    <span>{on ? 'замена' : 'выбрать'}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="nc-row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+              <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => setReplaceTarget(null)}>Отмена</button>
+              <button type="button" className="acc-btn acc-btn--primary" disabled={busy || !replacePick} onClick={confirmReplace}>
+                {busy ? 'Замена...' : 'Заменить'}
               </button>
             </div>
           </div>

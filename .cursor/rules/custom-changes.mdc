@@ -1,0 +1,20 @@
+---
+description: Запись правки /custom — проблема, решение, что сделали, что сознательно не делали
+globs: backend/app/services/custom/**/*.py,backend/app/router_custom/**/*.py,backend/app/tests/test_custom*.py,frontend/src/pages/custom/**/*.jsx,frontend/src/pages/custom/**/*.js
+alwaysApply: false
+---
+
+# Правка /custom
+
+Числа пауз, капов и шансов бери из `docs/custom/RATE_LIMITS.md`. Не восстанавливай цифры из старых чатов.
+
+Если правка меняет постоянное правило, добавь `docs/custom/decisions/NNNN-коротко.md`:
+
+```
+## Проблема
+## Решение
+## Что сделали
+## Что сознательно не делали
+```
+
+Коммит только по просьбе. Тема: `fix(custom-ubt): ...` или `feat(custom-dmp): ...`. Тело — те же четыре блока. В коммит не клади чужой diff, `.env` и session.

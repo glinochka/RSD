@@ -1103,3 +1103,765 @@ class TestJobLifecycle:
         assert warmup_task_joins_enabled(auto) is False
         auto.module_settings["warmup"]["folder_ids"] = [3]
         assert warmup_task_joins_enabled(auto) is True
+
+
+class TestReplaceTaskPoolAccount:
+    async def _account(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        username: str,
+        phone: str,
+        in_pool: bool = True,
+        banned: bool = False,
+    ):
+        from app.alembic.models import PoolAccount, SocialAccount
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        account = SocialAccount(
+            provider="telegram",
+            phone_number=phone,
+            username=username,
+            display_name=username,
+            account_class="one_day",
+            encrypted_session="mock_encrypted_session",
+            session_file_path=f"sessions/{username}.session",
+            is_active=True,
+            is_banned=banned,
+        )
+        session.add(account)
+        await session.flush()
+        if in_pool:
+            pool = await get_or_create_default_pool(session, automation.id)
+            session.add(
+                PoolAccount(
+                    account_pool_id=pool.id,
+                    social_account_id=account.id,
+                    assigned_class="one_day",
+                    custom_automation_id=automation.id,
+                )
+            )
+            await session.flush()
+        return account
+
+    def _chat(self, automation: CustomAutomation, title: str):
+        return ChatTarget(
+            custom_automation_id=automation.id,
+            provider="telegram",
+            title=title,
+            invite_link=f"https://t.me/{title}",
+            chat_type="channel",
+            is_active=True,
+        )
+
+    def _guards(self):
+        from contextlib import ExitStack
+        from unittest.mock import AsyncMock, patch
+
+        stack = ExitStack()
+        stack.enter_context(patch(
+            "app.services.custom.job_service.log_active",
+            new=AsyncMock(),
+        ))
+        stack.enter_context(patch(
+            "app.services.custom.telegram_account_client.TelegramAccountClient.for_account",
+            side_effect=AssertionError("telegram session"),
+        ))
+        stack.enter_context(patch(
+            "app.services.custom.chat_addlist_service.join_pending_addlists",
+            side_effect=AssertionError("join_pending_addlists"),
+        ))
+        stack.enter_context(patch(
+            "app.services.custom.chat_join_service.join_task_waves",
+            side_effect=AssertionError("join_task_waves"),
+        ))
+        return stack
+
+    async def test_replace_moves_only_this_task_pool(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from copy import deepcopy
+
+        from app.alembic.models import (
+            AccountChatMembership,
+            ChatJoinStatus,
+            CustomJob,
+            MembershipPurpose,
+        )
+        from app.services.custom.chat_addlist_service import (
+            collect_plan_addlists,
+            list_task_addlists,
+            pick_task_host,
+            replace_task_pool_account,
+        )
+        from app.services.custom.chat_membership_service import get_membership, get_reader_account
+        from app.services.custom.task_dedup import account_owns_chat
+
+        assert pick_task_host(5, 5, 9, [9], set()) is None
+        assert pick_task_host(5, 5, 9, [9, 3], {3, 9}) == 3
+        assert pick_task_host(3, 5, 9, [9, 3], {9}) == 3
+
+        old = await self._account(test_session, custom_automation, username="repl_old", phone="+79993000001")
+        new = await self._account(test_session, custom_automation, username="repl_new", phone="+79993000002")
+        second = await self._account(test_session, custom_automation, username="repl_second", phone="+79993000003")
+        kept = self._chat(custom_automation, "repl_kept")
+        moved_late = self._chat(custom_automation, "repl_late")
+        shared = self._chat(custom_automation, "repl_shared")
+        second_chat = self._chat(custom_automation, "repl_second_chat")
+        reserve = self._chat(custom_automation, "repl_reserve")
+        other = self._chat(custom_automation, "repl_other")
+        test_session.add_all([kept, moved_late, shared, second_chat, reserve, other])
+        await test_session.flush()
+        moved = [moved_late.id, kept.id, shared.id]
+        now = _now()
+        for chat in (kept, moved_late, shared, other):
+            test_session.add(
+                AccountChatMembership(
+                    custom_automation_id=custom_automation.id,
+                    social_account_id=old.id,
+                    chat_target_id=chat.id,
+                    join_status=ChatJoinStatus.JOINED.value,
+                    purpose=MembershipPurpose.WATCHER.value,
+                    priority=0,
+                    join_attempts=0,
+                    joined_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        slug = "ReadyPoolSlug1"
+        empty_slug = "EmptySlugRow1"
+        stay_slug = "StaySlugRow01"
+        other_slug = "OtherSlug0001"
+        custom_automation.module_settings = {
+            "neurocommenting": {
+                "enabled": True,
+                "account_ids": [old.id, second.id],
+                "chat_ids": [moved_late.id, kept.id, shared.id, second_chat.id, reserve.id],
+                "folder_ids": [4],
+                "chat_assignments": {
+                    str(old.id): list(moved),
+                    str(second.id): [second_chat.id],
+                },
+                "reserve_chat_ids": [reserve.id],
+            },
+            "neurochatting": {
+                "enabled": True,
+                "account_ids": [old.id],
+                "chat_ids": [other.id, shared.id],
+                "chat_assignments": {str(old.id): [other.id, shared.id]},
+                "reserve_chat_ids": [],
+            },
+            "_task_joins": {
+                "neurocommenting": {
+                    "assignments": {
+                        str(old.id): list(moved),
+                        str(second.id): [second_chat.id],
+                    },
+                    "reserve": [reserve.id],
+                    "folders": {
+                        str(old.id): [
+                            {
+                                "slug": slug,
+                                "url": f"https://t.me/addlist/{slug}",
+                                "filter_id": 7,
+                                "chat_ids": list(moved),
+                                "title": "old pool",
+                            },
+                            {
+                                "slug": empty_slug,
+                                "url": f"https://t.me/addlist/{empty_slug}",
+                                "filter_id": 9,
+                                "chat_ids": [],
+                                "title": "empty slug",
+                            },
+                            {
+                                "slug": stay_slug,
+                                "url": f"https://t.me/addlist/{stay_slug}",
+                                "filter_id": 3,
+                                "chat_ids": [reserve.id],
+                                "title": "not this pool",
+                            },
+                        ],
+                    },
+                    "host_account_id": old.id,
+                    "waves": {str(old.id): {"joined": 1}},
+                    "pending_joins": 3,
+                    "joins_complete": False,
+                },
+                "neurochatting": {
+                    "assignments": {str(old.id): [other.id, shared.id]},
+                    "reserve": [],
+                    "folders": {
+                        str(old.id): [{
+                            "slug": other_slug,
+                            "url": f"https://t.me/addlist/{other_slug}",
+                            "chat_ids": [other.id, shared.id],
+                        }],
+                    },
+                    "host_account_id": old.id,
+                },
+            },
+        }
+        nc_job = CustomJob(
+            custom_automation_id=custom_automation.id,
+            category="module",
+            job_type="neurocommenting",
+            title="Нейрокомментинг",
+            status="running",
+            params={
+                "account_ids": [old.id, second.id],
+                "chat_assignments": {str(old.id): list(moved), str(second.id): [second_chat.id]},
+                "reserve_chat_ids": [reserve.id],
+            },
+            result={},
+            logs=[],
+        )
+        other_job = CustomJob(
+            custom_automation_id=custom_automation.id,
+            category="module",
+            job_type="discussion",
+            title="Нейрочаттинг",
+            status="running",
+            params={"account_ids": [old.id], "chat_assignments": {str(old.id): [other.id, shared.id]}},
+            result={},
+            logs=[],
+        )
+        test_session.add_all([nc_job, other_job])
+        await test_session.commit()
+        other_task = deepcopy(custom_automation.module_settings["neurochatting"])
+        other_plan = deepcopy(custom_automation.module_settings["_task_joins"]["neurochatting"])
+        other_job_params = deepcopy(other_job.params)
+
+        with self._guards():
+            data = await replace_task_pool_account(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                account_id=old.id,
+                replacement_account_id=new.id,
+            )
+
+        plan = custom_automation.module_settings["_task_joins"]["neurocommenting"]
+        settings = custom_automation.module_settings["neurocommenting"]
+        assert settings["account_ids"] == [new.id, second.id]
+        assert old.id not in settings["account_ids"]
+        assert settings["chat_assignments"][str(new.id)] == moved
+        assert settings["chat_assignments"][str(second.id)] == [second_chat.id]
+        assert str(old.id) not in settings["chat_assignments"]
+        assert settings["reserve_chat_ids"] == [reserve.id]
+        assert settings["chat_ids"] == [moved_late.id, kept.id, shared.id, second_chat.id, reserve.id]
+        assert settings["folder_ids"] == [4]
+        assert plan["assignments"][str(new.id)] == moved
+        assert plan["assignments"][str(second.id)] == [second_chat.id]
+        assert str(old.id) not in plan["assignments"]
+        assert plan["reserve"] == [reserve.id]
+        assert plan["host_account_id"] == second.id
+        assert plan["waves"] == {str(old.id): {"joined": 1}}
+        rows = {row["slug"]: row for row in plan["folders"][str(new.id)]}
+        assert set(rows) == {slug, empty_slug}
+        assert "filter_id" not in rows[slug]
+        assert rows[slug]["chat_ids"] == moved
+        assert "filter_id" not in rows[empty_slug]
+        assert rows[empty_slug]["chat_ids"] == []
+        stayed = plan["folders"][str(old.id)]
+        assert len(stayed) == 1
+        assert stayed[0]["slug"] == stay_slug
+        assert stayed[0]["filter_id"] == 3
+        pins = plan["replacement_pins"]
+        assert pins[str(moved_late.id)] == new.id
+        assert pins[str(kept.id)] == new.id
+        assert pins[str(shared.id)] == new.id
+        assert custom_automation.module_settings["neurochatting"] == other_task
+        assert custom_automation.module_settings["_task_joins"]["neurochatting"] == other_plan
+        assert other_job.params == other_job_params
+        assert nc_job.params["account_ids"] == [new.id, second.id]
+        assert nc_job.params["chat_assignments"][str(new.id)] == moved
+        assert nc_job.params["chat_assignments"][str(second.id)] == [second_chat.id]
+        assert nc_job.params["reserve_chat_ids"] == [reserve.id]
+        slugs = {item["slug"] for item in collect_plan_addlists(custom_automation.module_settings["_task_joins"])}
+        assert slug in slugs
+        assert empty_slug in slugs
+        assert stay_slug in slugs
+        assert other_slug in slugs
+        listed = {item["slug"]: item for item in list_task_addlists(custom_automation)}
+        assert listed[slug]["account_id"] == new.id
+        assert listed[empty_slug]["account_id"] == new.id
+        assert listed[stay_slug]["account_id"] == old.id
+        assert listed[other_slug]["account_id"] == old.id
+        assert "не запускалась" not in data["notice"]
+        for chat in (kept, moved_late):
+            assert await get_membership(test_session, chat.id, old.id) is None
+            member = await get_membership(test_session, chat.id, new.id)
+            assert member is not None
+            assert member.purpose == MembershipPurpose.ACTOR.value
+            assert member.join_status != ChatJoinStatus.JOINED.value
+            assert member.join_status != ChatJoinStatus.LEFT.value
+            assert await get_reader_account(test_session, chat) is None
+            assert account_owns_chat(custom_automation, "neurocommenting", new.id, chat.id)
+            assert not account_owns_chat(custom_automation, "neurocommenting", old.id, chat.id)
+        shared_old = await get_membership(test_session, shared.id, old.id)
+        assert shared_old is not None
+        assert shared_old.join_status == ChatJoinStatus.JOINED.value
+        shared_new = await get_membership(test_session, shared.id, new.id)
+        assert shared_new is not None
+        assert shared_new.join_status != ChatJoinStatus.JOINED.value
+        other_member = await get_membership(test_session, other.id, old.id)
+        assert other_member is not None
+        assert other_member.join_status == ChatJoinStatus.JOINED.value
+        assert account_owns_chat(custom_automation, "neurochatting", old.id, other.id)
+        assert not account_owns_chat(custom_automation, "neurocommenting", second.id, kept.id)
+        assert account_owns_chat(custom_automation, "neurocommenting", second.id, second_chat.id)
+
+    async def test_replace_without_addlist_does_not_mark_joined(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from sqlalchemy import select
+
+        from app.alembic.models import AccountChatMembership, ChatJoinStatus, MembershipPurpose
+        from app.services.custom.chat_addlist_service import (
+            NO_ADDLIST_JOIN_NOTICE,
+            replace_task_pool_account,
+        )
+        from app.services.custom.chat_membership_service import get_membership
+
+        old = await self._account(test_session, custom_automation, username="noslug_old", phone="+79993000011")
+        new = await self._account(test_session, custom_automation, username="noslug_new", phone="+79993000012")
+        chat = self._chat(custom_automation, "noslug_chat")
+        spare = self._chat(custom_automation, "noslug_spare")
+        test_session.add_all([chat, spare])
+        await test_session.flush()
+        now = _now()
+        test_session.add(
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=old.id,
+                chat_target_id=chat.id,
+                join_status=ChatJoinStatus.JOINED.value,
+                purpose=MembershipPurpose.WATCHER.value,
+                priority=0,
+                join_attempts=0,
+                joined_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        custom_automation.module_settings = {
+            "neurocommenting": {
+                "enabled": True,
+                "account_ids": [old.id],
+                "chat_ids": [chat.id, spare.id],
+                "chat_assignments": {str(old.id): [chat.id]},
+                "reserve_chat_ids": [spare.id],
+            },
+            "_task_joins": {
+                "neurocommenting": {
+                    "assignments": {str(old.id): [chat.id]},
+                    "reserve": [spare.id],
+                    "folders": {},
+                    "host_account_id": old.id,
+                },
+            },
+        }
+        await test_session.commit()
+        with self._guards():
+            data = await replace_task_pool_account(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                account_id=old.id,
+                replacement_account_id=new.id,
+            )
+        assert data["notice"] == NO_ADDLIST_JOIN_NOTICE
+        assert "addlist" in data["notice"].lower()
+        assert custom_automation.module_settings["neurocommenting"]["account_ids"] == [new.id]
+        assert custom_automation.module_settings["neurocommenting"]["reserve_chat_ids"] == [spare.id]
+        assert custom_automation.module_settings["_task_joins"]["neurocommenting"]["host_account_id"] == new.id
+        assert await get_membership(test_session, chat.id, old.id) is None
+        member = await get_membership(test_session, chat.id, new.id)
+        assert member is not None
+        assert member.join_status != ChatJoinStatus.JOINED.value
+        rows = (
+            await test_session.execute(
+                select(AccountChatMembership).where(AccountChatMembership.chat_target_id.in_([chat.id, spare.id]))
+            )
+        ).scalars().all()
+        assert rows
+        assert all(row.join_status != ChatJoinStatus.JOINED.value for row in rows)
+        assert all(row.join_status != ChatJoinStatus.LEFT.value for row in rows)
+
+    async def test_replace_rejects_and_keeps_state(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from copy import deepcopy
+
+        from app.services.custom.chat_addlist_service import replace_task_pool_account
+
+        old = await self._account(test_session, custom_automation, username="rej_old", phone="+79993000021")
+        second = await self._account(test_session, custom_automation, username="rej_second", phone="+79993000022")
+        outsider = await self._account(
+            test_session, custom_automation, username="rej_out", phone="+79993000023", in_pool=False,
+        )
+        banned = await self._account(
+            test_session, custom_automation, username="rej_ban", phone="+79993000024", banned=True,
+        )
+        chat = self._chat(custom_automation, "rej_chat")
+        test_session.add(chat)
+        await test_session.flush()
+        custom_automation.module_settings = {
+            "neurocommenting": {
+                "account_ids": [old.id, second.id],
+                "chat_assignments": {str(old.id): [chat.id], str(second.id): [chat.id]},
+                "reserve_chat_ids": [],
+            },
+            "_task_joins": {
+                "neurocommenting": {
+                    "assignments": {str(old.id): [chat.id], str(second.id): []},
+                    "reserve": [],
+                    "host_account_id": old.id,
+                },
+            },
+        }
+        await test_session.commit()
+        before = deepcopy(custom_automation.module_settings)
+        with self._guards():
+            with pytest.raises(ValueError, match="уже"):
+                await replace_task_pool_account(
+                    test_session,
+                    custom_automation,
+                    "neurocommenting",
+                    account_id=old.id,
+                    replacement_account_id=second.id,
+                )
+            with pytest.raises(ValueError, match="не из пула"):
+                await replace_task_pool_account(
+                    test_session,
+                    custom_automation,
+                    "neurocommenting",
+                    account_id=old.id,
+                    replacement_account_id=outsider.id,
+                )
+            with pytest.raises(ValueError, match="нельзя выбрать"):
+                await replace_task_pool_account(
+                    test_session,
+                    custom_automation,
+                    "neurocommenting",
+                    account_id=old.id,
+                    replacement_account_id=banned.id,
+                )
+        assert custom_automation.module_settings == before
+
+    async def test_replace_route_returns_400(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        old = await self._account(test_session, custom_automation, username="http_old", phone="+79993000031")
+        second = await self._account(test_session, custom_automation, username="http_second", phone="+79993000032")
+        chat = self._chat(custom_automation, "http_chat")
+        test_session.add(chat)
+        await test_session.flush()
+        custom_automation.module_settings = {
+            "neurocommenting": {
+                "account_ids": [old.id, second.id],
+                "chat_assignments": {str(old.id): [chat.id]},
+                "reserve_chat_ids": [],
+            },
+            "_task_joins": {
+                "neurocommenting": {
+                    "assignments": {str(old.id): [chat.id], str(second.id): []},
+                    "reserve": [],
+                },
+            },
+        }
+        await test_session.commit()
+        response = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/task-pool/replace",
+            headers={"Authorization": f"Bearer {client_token}"},
+            json={
+                "task_key": "neurocommenting",
+                "account_id": old.id,
+                "replacement_account_id": second.id,
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert "уже" in response.json()["detail"]
+        await test_session.refresh(custom_automation)
+        assert second.id in custom_automation.module_settings["neurocommenting"]["account_ids"]
+        assert old.id in custom_automation.module_settings["neurocommenting"]["account_ids"]
+
+    async def test_replace_pins_survive_joined_folder_claim(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import AccountChatMembership, ChatJoinStatus, MembershipPurpose
+        from app.services.custom.chat_addlist_service import (
+            ensure_task_join_plan,
+            replace_task_pool_account,
+        )
+
+        old = await self._account(test_session, custom_automation, username="pin_old", phone="+79993000021")
+        new = await self._account(test_session, custom_automation, username="pin_new", phone="+79993000022")
+        neighbor = await self._account(test_session, custom_automation, username="pin_neighbor", phone="+79993000023")
+        folder = ChatFolder(
+            custom_automation_id=custom_automation.id,
+            name="repl_pin_folder",
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        test_session.add(folder)
+        await test_session.flush()
+        moved_a = self._chat(custom_automation, "pin_moved_a")
+        moved_b = self._chat(custom_automation, "pin_moved_b")
+        neighbor_chat = self._chat(custom_automation, "pin_neighbor_chat")
+        for chat in (moved_a, moved_b, neighbor_chat):
+            chat.folder_id = folder.id
+        test_session.add_all([moved_a, moved_b, neighbor_chat])
+        await test_session.flush()
+        now = _now()
+        for chat in (moved_a, moved_b):
+            test_session.add(
+                AccountChatMembership(
+                    custom_automation_id=custom_automation.id,
+                    social_account_id=old.id,
+                    chat_target_id=chat.id,
+                    join_status=ChatJoinStatus.JOINED.value,
+                    purpose=MembershipPurpose.WATCHER.value,
+                    priority=0,
+                    join_attempts=0,
+                    joined_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        test_session.add(
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=neighbor.id,
+                chat_target_id=neighbor_chat.id,
+                join_status=ChatJoinStatus.JOINED.value,
+                purpose=MembershipPurpose.WATCHER.value,
+                priority=0,
+                join_attempts=0,
+                joined_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        moved = [moved_a.id, moved_b.id]
+        custom_automation.module_settings = {
+            "neurocommenting": {
+                "enabled": True,
+                "account_ids": [old.id, neighbor.id],
+                "chat_ids": [moved_a.id, moved_b.id, neighbor_chat.id],
+                "chat_assignments": {
+                    str(old.id): list(moved),
+                    str(neighbor.id): [neighbor_chat.id],
+                },
+                "reserve_chat_ids": [],
+            },
+            "_task_joins": {
+                "neurocommenting": {
+                    "assignments": {
+                        str(old.id): list(moved),
+                        str(neighbor.id): [neighbor_chat.id],
+                    },
+                    "reserve": [],
+                    "folders": {},
+                    "host_account_id": old.id,
+                },
+            },
+        }
+        await test_session.commit()
+        chat_ids = [moved_a.id, moved_b.id, neighbor_chat.id]
+
+        with self._guards():
+            await replace_task_pool_account(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                account_id=old.id,
+                replacement_account_id=new.id,
+            )
+            account_ids = list(custom_automation.module_settings["neurocommenting"]["account_ids"])
+            await ensure_task_join_plan(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                account_ids,
+                chat_ids,
+                mix=False,
+            )
+
+        plan = custom_automation.module_settings["_task_joins"]["neurocommenting"]
+        assert set(plan["assignments"][str(new.id)]) == set(moved)
+        assert moved_a.id not in plan["assignments"].get(str(neighbor.id), [])
+        assert moved_b.id not in plan["assignments"].get(str(neighbor.id), [])
+        assert neighbor_chat.id in plan["assignments"][str(neighbor.id)]
+        assert plan["replacement_pins"][str(moved_a.id)] == new.id
+        assert plan["replacement_pins"][str(moved_b.id)] == new.id
+
+        with self._guards():
+            await ensure_task_join_plan(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                account_ids,
+                chat_ids,
+                mix=True,
+            )
+
+        mixed = custom_automation.module_settings["_task_joins"]["neurocommenting"]
+        assert not mixed.get("replacement_pins")
+        assert set(mixed["assignments"][str(neighbor.id)]) == set(chat_ids)
+        assert moved_a.id not in mixed["assignments"].get(str(new.id), [])
+        assert moved_b.id not in mixed["assignments"].get(str(new.id), [])
+
+    async def test_ensure_watcher_after_replace_keeps_single_slot(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from sqlalchemy import select
+
+        from app.alembic.models import AccountChatMembership, ChatJoinStatus, MembershipPurpose
+        from app.services.custom.chat_addlist_service import (
+            ensure_task_join_plan,
+            replace_task_pool_account,
+        )
+        from app.services.custom.chat_membership_service import ensure_watcher_membership
+        from app.services.custom.chat_scope import is_public_readable
+
+        old = await self._account(test_session, custom_automation, username="watch_old", phone="+79993000031")
+        new = await self._account(test_session, custom_automation, username="watch_new", phone="+79993000032")
+        exclusive = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="closed exclusive",
+            invite_link="https://t.me/+Abcd1234secretWatch",
+            chat_type="channel",
+            is_active=True,
+        )
+        shared = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="closed shared",
+            invite_link="https://t.me/+Abcd1234secretShare",
+            chat_type="channel",
+            is_active=True,
+        )
+        test_session.add_all([exclusive, shared])
+        await test_session.flush()
+        assert not is_public_readable(exclusive)
+        assert not is_public_readable(shared)
+        now = _now()
+        for chat in (exclusive, shared):
+            test_session.add(
+                AccountChatMembership(
+                    custom_automation_id=custom_automation.id,
+                    social_account_id=old.id,
+                    chat_target_id=chat.id,
+                    join_status=ChatJoinStatus.JOINED.value,
+                    purpose=MembershipPurpose.WATCHER.value,
+                    priority=0,
+                    join_attempts=0,
+                    joined_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        custom_automation.module_settings = {
+            "neurocommenting": {
+                "enabled": True,
+                "account_ids": [old.id],
+                "chat_ids": [exclusive.id, shared.id],
+                "chat_assignments": {str(old.id): [exclusive.id, shared.id]},
+                "reserve_chat_ids": [],
+            },
+            "neurochatting": {
+                "enabled": True,
+                "account_ids": [old.id],
+                "chat_ids": [shared.id],
+                "chat_assignments": {str(old.id): [shared.id]},
+                "reserve_chat_ids": [],
+            },
+            "_task_joins": {
+                "neurocommenting": {
+                    "assignments": {str(old.id): [exclusive.id, shared.id]},
+                    "reserve": [],
+                    "folders": {},
+                    "host_account_id": old.id,
+                },
+                "neurochatting": {
+                    "assignments": {str(old.id): [shared.id]},
+                    "reserve": [],
+                    "folders": {},
+                    "host_account_id": old.id,
+                },
+            },
+        }
+        await test_session.commit()
+
+        with self._guards():
+            await replace_task_pool_account(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                account_id=old.id,
+                replacement_account_id=new.id,
+            )
+            settings = custom_automation.module_settings["neurocommenting"]
+            await ensure_task_join_plan(
+                test_session,
+                custom_automation,
+                "neurocommenting",
+                list(settings["account_ids"]),
+                [exclusive.id, shared.id],
+                mix=False,
+            )
+            created = await ensure_watcher_membership(
+                test_session, custom_automation.id, exclusive
+            )
+            shared_created = await ensure_watcher_membership(
+                test_session, custom_automation.id, shared
+            )
+
+        assert created == 0
+        assert shared_created == 0
+        exclusive_rows = (
+            await test_session.execute(
+                select(AccountChatMembership).where(
+                    AccountChatMembership.chat_target_id == exclusive.id
+                )
+            )
+        ).scalars().all()
+        occupied = [
+            row for row in exclusive_rows
+            if row.join_status not in {ChatJoinStatus.LEFT.value, ChatJoinStatus.BANNED.value}
+        ]
+        assert len(occupied) == 1
+        assert occupied[0].social_account_id == new.id
+        assert all(row.social_account_id != old.id for row in exclusive_rows)
+        shared_rows = (
+            await test_session.execute(
+                select(AccountChatMembership).where(
+                    AccountChatMembership.chat_target_id == shared.id
+                )
+            )
+        ).scalars().all()
+        shared_old = [
+            row for row in shared_rows
+            if row.social_account_id == old.id and row.join_status == ChatJoinStatus.JOINED.value
+        ]
+        assert len(shared_old) == 1
+        assert shared_old[0].purpose == MembershipPurpose.WATCHER.value

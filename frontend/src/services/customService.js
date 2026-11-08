@@ -356,6 +356,22 @@ const customService = {
     return handleResponse(response);
   },
 
+  async replaceTaskPoolAccount(automationId, { taskKey, accountId, replacementAccountId } = {}) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_POOL_REPLACE(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          task_key: taskKey,
+          account_id: accountId,
+          replacement_account_id: replacementAccountId,
+        }),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async saveTaskDistribute(automationId, { taskKey, task_key: taskKeySnake, assignments } = {}) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TASK_DISTRIBUTE(automationId)}`, {
       method: 'POST',

@@ -66,6 +66,7 @@ from .schemas import (
     TaskAddlistListResponse,
     TaskDistributeRequest,
     TaskDistributeResponse,
+    TaskPoolReplaceRequest,
     TaskPoolRequest,
     TaskPoolResponse,
     NeurocommentingModuleResponse,
@@ -723,6 +724,35 @@ async def save_automation_task_pool(
             chat_ids=payload.chat_ids,
             mode=mode,
         )
+        return TaskPoolResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/task-pool/replace", response_model=TaskPoolResponse)
+async def replace_automation_task_pool_account(
+    automation_id: int,
+    payload: TaskPoolReplaceRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_addlist_service import replace_task_pool_account
+
+    del automation
+    task_key = str(payload.task_key or "").strip()
+    if not task_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Укажите модуль")
+    async with async_session_maker() as session:
+        row = await session.get(CustomAutomation, automation_id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        try:
+            data = await replace_task_pool_account(
+                session,
+                row,
+                task_key,
+                account_id=payload.account_id,
+                replacement_account_id=payload.replacement_account_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return TaskPoolResponse.model_validate(data)
 
 

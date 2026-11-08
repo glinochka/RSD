@@ -1265,6 +1265,12 @@ class TaskPoolRequest(BaseModel):
     mode: str = "fill"
 
 
+class TaskPoolReplaceRequest(BaseModel):
+    task_key: str
+    account_id: int
+    replacement_account_id: int
+
+
 class TaskPoolResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -1286,6 +1292,7 @@ class TaskPoolResponse(BaseModel):
     live: bool = False
     assigned_count: int = 0
     reserve_count: int = 0
+    notice: str = ""
 
 
 class NeurocommentingSettings(BaseModel):

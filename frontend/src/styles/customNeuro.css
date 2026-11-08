@@ -798,6 +798,22 @@
   background: #f8fafc;
 }
 
+.nc-pool-account-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nc-pool-account-head .nc-pool-account-btn {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.nc-pool-account-head .acc-icon-btn {
+  flex-shrink: 0;
+}
+
 .nc-pool-account-btn {
   width: 100%;
   display: flex;

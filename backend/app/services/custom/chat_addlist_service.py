@@ -26,12 +26,14 @@ from ...alembic.models import (
     ChatTarget,
     CustomAutomation,
     MembershipPurpose,
+    PoolAccount,
     SocialAccount,
 )
 from .chat_membership_service import (
     ACTION_JOIN_PRIORITY,
     ACTOR_PURPOSE,
     account_is_joined,
+    drop_live_reader_slot,
     get_membership,
 )
 from .chat_target_dedup import find_existing_chat_target
@@ -1193,6 +1195,9 @@ async def ensure_task_join_plan(
         list(chat_map.keys()),
         max_per_account=TASK_CHATS_PER_ACCOUNT,
     )
+    stored_pins = {} if mix else replacement_pin_map(stored_task)
+    if stored_pins:
+        previous = apply_replacement_pins(previous, stored_pins, workers)
     assignment, reserve = split_task_assignment(
         workers,
         list(chat_map.keys()),
@@ -1225,7 +1230,7 @@ async def ensure_task_join_plan(
     settings["reserve_chat_ids"] = reserve
     blob[key] = settings
     automation.module_settings = blob
-    plans[task_key] = {
+    plan_row = {
         "assignments": {str(aid): ids for aid, ids in assignment.items()},
         "reserve": reserve,
         "folders": stored_folders,
@@ -1237,6 +1242,10 @@ async def ensure_task_join_plan(
         "manual": False if mix else bool((stored_task or {}).get("manual")),
         "updated_at": _utc_now().isoformat(),
     }
+    pin_payload = {} if mix else replacement_pins_payload(stored_pins)
+    if pin_payload:
+        plan_row["replacement_pins"] = pin_payload
+    plans[task_key] = plan_row
     _store_plans(automation, plans)
     await session.commit()
     return {"joined": 0, "folders": 0, "assignment": assignment, "reserve": reserve}
@@ -2346,6 +2355,337 @@ async def serialize_task_pool(
         "assigned_count": len(assigned_ids),
         "reserve_count": len(reserve_ids),
     }
+
+
+NO_ADDLIST_JOIN_NOTICE = "Addlist не было, пачка вступлений не запускалась."
+
+
+def pick_task_host(
+    current_host: Any,
+    old_id: int,
+    new_id: int,
+    account_ids: list[int],
+    selectable_ids: set[int],
+) -> int | None:
+    """Move host off the replaced account without opening a session."""
+    try:
+        host = int(current_host)
+    except (TypeError, ValueError):
+        host = 0
+    if host != int(old_id):
+        return host or None
+    selectable = {int(item) for item in selectable_ids}
+    for aid in account_ids:
+        if aid in {int(old_id), int(new_id)}:
+            continue
+        if aid in selectable:
+            return int(aid)
+    if int(new_id) in selectable:
+        return int(new_id)
+    return None
+
+
+def replacement_pin_map(spec: dict[str, Any] | None) -> dict[int, int]:
+    """Chats a replacement moved onto an account. Mix is allowed to drop these."""
+    raw = spec.get("replacement_pins") if isinstance(spec, dict) else None
+    out: dict[int, int] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, value in raw.items():
+        try:
+            chat_id = int(key)
+            account_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if chat_id > 0 and account_id > 0:
+            out[chat_id] = account_id
+    return out
+
+
+def replacement_pins_payload(pins: dict[int, int] | None) -> dict[str, int]:
+    return {
+        str(int(cid)): int(aid)
+        for cid, aid in (pins or {}).items()
+        if int(cid) > 0 and int(aid) > 0
+    }
+
+
+def apply_replacement_pins(
+    previous: dict[int, list[int]] | None,
+    pins: dict[int, int] | None,
+    account_ids: list[int],
+) -> dict[int, list[int]]:
+    """Put replacement chats back on the new account after a folder claim.
+
+    Pinned ids go first so the per-account cap keeps them ahead of leftovers.
+    """
+    allowed = {int(aid) for aid in account_ids or [] if int(aid) > 0}
+    kept = {
+        int(cid): int(aid)
+        for cid, aid in (pins or {}).items()
+        if int(cid) > 0 and int(aid) in allowed
+    }
+    by_account: dict[int, list[int]] = {}
+    for chat_id, account_id in kept.items():
+        bucket = by_account.setdefault(account_id, [])
+        if chat_id not in bucket:
+            bucket.append(chat_id)
+    pinned_ids = set(kept)
+    out: dict[int, list[int]] = {}
+    for aid, ids in (previous or {}).items():
+        out[int(aid)] = [int(cid) for cid in (ids or []) if int(cid) not in pinned_ids]
+    for aid, ids in by_account.items():
+        rest = [cid for cid in out.get(aid, []) if cid not in ids]
+        out[aid] = [*ids, *rest]
+    return out
+
+
+def retarget_replacement_pins(
+    spec: dict[str, Any] | None,
+    old_id: int,
+    new_id: int,
+    moved: list[int],
+) -> dict[str, int]:
+    pins = replacement_pin_map(spec)
+    moved_ids = [int(cid) for cid in moved if int(cid) > 0]
+    moved_set = set(moved_ids)
+    for chat_id, account_id in list(pins.items()):
+        if chat_id in moved_set or int(account_id) == int(old_id):
+            pins.pop(chat_id, None)
+    for chat_id in moved_ids:
+        pins[chat_id] = int(new_id)
+    return replacement_pins_payload(pins)
+
+
+def reassign_addlist_folders(
+    folders: dict[str, Any] | None,
+    old_id: int,
+    new_id: int,
+    chat_ids: list[int],
+) -> tuple[dict[str, Any], bool]:
+    """Move slug rows that cover this pool. The old dialog filter id stays behind.
+
+    A slug with no chat ids still moves: it belongs to the replaced account.
+    Rows that do not cover the moved pool stay on the old account, filter id included.
+    """
+    source = folders if isinstance(folders, dict) else {}
+    old_key = str(int(old_id))
+    new_key = str(int(new_id))
+    wanted = {int(cid) for cid in chat_ids if int(cid) > 0}
+    moved_rows: list[dict[str, Any]] = []
+    stayed: list[dict[str, Any]] = []
+    for row in source.get(old_key) or []:
+        if not isinstance(row, dict):
+            continue
+        slug = str(row.get("slug") or "").strip()
+        ids = _int_list(row.get("chat_ids"))
+        if slug and (not ids or wanted.intersection(ids)):
+            moved_row = dict(row)
+            moved_row.pop("filter_id", None)
+            moved_rows.append(moved_row)
+        else:
+            stayed.append(dict(row))
+    out: dict[str, Any] = {}
+    for key, rows in source.items():
+        if str(key) == old_key:
+            continue
+        copied: list[Any] = []
+        for item in rows or []:
+            copied.append(dict(item) if isinstance(item, dict) else item)
+        out[str(key)] = copied
+    if stayed:
+        out[old_key] = stayed
+    if not moved_rows:
+        return out, False
+    existing = [item for item in (out.get(new_key) or []) if isinstance(item, dict)]
+    seen = {str(item.get("slug") or "") for item in existing}
+    for row in moved_rows:
+        slug = str(row.get("slug") or "")
+        if slug and slug in seen:
+            continue
+        existing.append(row)
+        if slug:
+            seen.add(slug)
+    out[new_key] = existing
+    return out, True
+
+
+def _task_assignment_map(spec: dict[str, Any], settings: dict[str, Any]) -> dict[int, list[int]]:
+    raw = spec.get("assignments") if isinstance(spec.get("assignments"), dict) else None
+    if not raw:
+        raw = settings.get("chat_assignments") if isinstance(settings.get("chat_assignments"), dict) else {}
+    out: dict[int, list[int]] = {}
+    for key, value in (raw or {}).items():
+        try:
+            aid = int(key)
+        except (TypeError, ValueError):
+            continue
+        if aid > 0:
+            out[aid] = _int_list(value)
+    return out
+
+
+def _swap_account_id(account_ids: list[int], old_id: int, new_id: int) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    replaced = False
+    for aid in account_ids:
+        nxt = new_id if int(aid) == int(old_id) else int(aid)
+        if nxt == int(old_id) or nxt <= 0 or nxt in seen:
+            if int(aid) == int(old_id):
+                replaced = True
+            continue
+        if int(aid) == int(old_id):
+            replaced = True
+        seen.add(nxt)
+        out.append(nxt)
+    if not replaced and int(new_id) not in seen and int(new_id) > 0:
+        out.append(int(new_id))
+    return out
+
+
+def chats_assigned_elsewhere(automation: CustomAutomation, account_id: int, *, except_task: str) -> set[int]:
+    """Chats this account still owns in some other task. Those slots stay."""
+    blob = getattr(automation, "module_settings", None) or {}
+    owned: set[int] = set()
+    plans = blob.get(TASK_JOINS_KEY) if isinstance(blob.get(TASK_JOINS_KEY), dict) else {}
+    for key, spec in plans.items():
+        if str(key) == except_task or str(key) in _SHARED_PLAN_KEYS or not isinstance(spec, dict):
+            continue
+        owned.update(_int_list((spec.get("assignments") or {}).get(str(account_id))))
+    for task_key, settings_key in _TASK_SETTINGS_KEY.items():
+        if task_key == except_task:
+            continue
+        settings = blob.get(settings_key) if isinstance(blob.get(settings_key), dict) else {}
+        owned.update(_int_list((settings.get("chat_assignments") or {}).get(str(account_id))))
+    return owned
+
+
+async def _automation_pool_ids(session: AsyncSession, automation_id: int) -> set[int]:
+    rows = (
+        await session.execute(
+            select(PoolAccount.social_account_id).where(
+                PoolAccount.custom_automation_id == automation_id,
+                PoolAccount.removed_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    return {int(item) for item in rows}
+
+
+async def replace_task_pool_account(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    task_key: str,
+    *,
+    account_id: int,
+    replacement_account_id: int,
+) -> dict[str, Any]:
+    """Give one free pool account the replaced account's chats in this task only.
+
+    Does not remix the pool, mint an addlist, open a Telegram session, or join.
+    """
+    key = str(task_key or "").strip()
+    if not key:
+        raise ValueError("Укажите модуль")
+    try:
+        old_id = int(account_id)
+        new_id = int(replacement_account_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Укажите аккаунты") from exc
+    if old_id <= 0 or new_id <= 0:
+        raise ValueError("Укажите аккаунты")
+    if old_id == new_id:
+        raise ValueError("Нельзя заменить аккаунт на самого себя")
+
+    settings_key = _TASK_SETTINGS_KEY.get(key, key)
+    settings = dict(module_settings_for_task(automation, key))
+    plans = _plans_blob(automation)
+    spec = dict(plans.get(key) or {}) if isinstance(plans.get(key), dict) else {}
+    assignments = _task_assignment_map(spec, settings)
+    current_ids = _int_list(settings.get("account_ids"))
+    if old_id not in assignments and old_id not in current_ids:
+        raise ValueError("Этого аккаунта нет в задаче")
+    if new_id in assignments or new_id in current_ids:
+        raise ValueError("Аккаунт уже в этой задаче")
+    pool_ids = await _automation_pool_ids(session, automation.id)
+    if new_id not in pool_ids:
+        raise ValueError("Аккаунт не из пула этой автоматизации")
+    replacement = await session.get(SocialAccount, new_id)
+    if not pool_actor_selectable(replacement):
+        raise ValueError("Аккаунт нельзя выбрать для замены")
+
+    moved = list(assignments.get(old_id) or [])
+    next_assign: dict[int, list[int]] = {}
+    for aid, ids in assignments.items():
+        if aid == old_id:
+            next_assign[new_id] = list(moved)
+            continue
+        next_assign[aid] = list(ids)
+    if new_id not in next_assign:
+        next_assign[new_id] = list(moved)
+    base_ids = current_ids or list(assignments.keys())
+    next_accounts = _swap_account_id(base_ids, old_id, new_id)
+    if "reserve" in spec:
+        reserve = _int_list(spec.get("reserve"))
+    else:
+        reserve = _int_list(settings.get("reserve_chat_ids"))
+    still_owned = chats_assigned_elsewhere(automation, old_id, except_task=key)
+    for cid in moved:
+        if cid in still_owned:
+            continue
+        await drop_live_reader_slot(session, cid, old_id)
+    await session.flush()
+    if moved:
+        await _upsert_actor_memberships(session, automation.id, {new_id: moved})
+    joined = await load_joined_assignment(
+        session,
+        automation.id,
+        list(next_assign.keys()),
+        [cid for ids in next_assign.values() for cid in ids],
+    )
+    joined_pairs = {(int(aid), int(cid)) for aid, ids in joined.items() for cid in ids}
+    pending_left = sum(
+        1
+        for aid, ids in next_assign.items()
+        for cid in ids
+        if (int(aid), int(cid)) not in joined_pairs
+    )
+    next_folders, moved_addlist = reassign_addlist_folders(
+        spec.get("folders") if isinstance(spec.get("folders"), dict) else {},
+        old_id,
+        new_id,
+        moved,
+    )
+    roster_rows = (
+        await session.execute(select(SocialAccount).where(SocialAccount.id.in_(next_accounts or [0])))
+    ).scalars().all()
+    selectable = {int(row.id) for row in roster_rows if pool_actor_selectable(row)}
+    host = pick_task_host(spec.get("host_account_id"), old_id, new_id, next_accounts, selectable)
+    spec["assignments"] = {str(aid): list(ids) for aid, ids in next_assign.items()}
+    spec["reserve"] = list(reserve)
+    spec["folders"] = next_folders
+    spec["replacement_pins"] = retarget_replacement_pins(spec, old_id, new_id, moved)
+    spec["host_account_id"] = host
+    spec["pending_joins"] = pending_left
+    spec["joins_complete"] = pending_left == 0 and bool(next_assign)
+    spec["updated_at"] = _utc_now().isoformat()
+    settings["account_ids"] = next_accounts
+    settings["chat_assignments"] = {str(aid): list(ids) for aid, ids in next_assign.items()}
+    settings["reserve_chat_ids"] = list(reserve)
+    blob = dict(automation.module_settings or {})
+    blob[settings_key] = settings
+    automation.module_settings = blob
+    plans[key] = spec
+    _store_plans(automation, plans)
+    await _sync_live_job_pool(session, automation, key)
+    await session.commit()
+    data = await serialize_task_pool(session, automation, key)
+    if moved_addlist:
+        data["notice"] = "Пул перенесён. Вступление по уже собранному addlist сделает обычная волна."
+    else:
+        data["notice"] = NO_ADDLIST_JOIN_NOTICE
+    return data
 
 
 async def expand_task_pool(

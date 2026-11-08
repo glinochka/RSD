@@ -373,6 +373,23 @@ async def release_membership(
     membership.updated_at = now
 
 
+async def drop_live_reader_slot(
+    session: AsyncSession,
+    chat_target_id: int,
+    account_id: int,
+) -> bool:
+    """Remove this account's live slot so another account can become the reader.
+
+    The row is deleted. LEFT is not set: the leave worker sends LeaveChannel
+    for a watcher it still considers occupied, and this account stays in Telegram.
+    """
+    membership = await get_membership(session, chat_target_id, account_id)
+    if membership is None or membership.join_status not in _OCCUPIED_STATUSES:
+        return False
+    await session.delete(membership)
+    return True
+
+
 async def release_memberships_for_chat(
     session: AsyncSession,
     chat_target: ChatTarget,
@@ -678,6 +695,19 @@ async def _chat_has_active_watcher(session: AsyncSession, chat_target_id: int) -
     return found is not None
 
 
+async def _chat_has_held_slot(session: AsyncSession, chat_target_id: int) -> bool:
+    """A pending actor already holds the chat. Do not seat a second watcher."""
+    found = await session.scalar(
+        select(AccountChatMembership.id)
+        .where(
+            AccountChatMembership.chat_target_id == chat_target_id,
+            AccountChatMembership.join_status.in_(list(_ACTIVE_WATCHER_STATUSES)),
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 def live_joined_chat_ids(automation_id: int):
     return (
         select(AccountChatMembership.chat_target_id)
@@ -785,6 +815,8 @@ async def ensure_watcher_membership(
     if await _chat_has_active_watcher(session, chat_target.id):
         return 0
     if await _promote_live_member_to_watcher(session, chat_target, exclude_account_ids=excluded):
+        return 0
+    if await _chat_has_held_slot(session, chat_target.id):
         return 0
     # Sharding should have already assigned someone.  If not, assign via least-loaded fallback.
     priority = WATCHER_REPLACE_PRIORITY if replace else 0
