@@ -18,11 +18,16 @@ from .schemas import (
     ContentFactoryYoutubeOauthStartRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import CustomAutomation
+from ..alembic.models import CustomAutomation, CustomProxy
 from ..config import settings as app_settings
 from ..services.custom.content_factory_antifraud import factory_return_url
 from ..services.custom.content_factory_media import factory_grok_bot_id
 from ..services.custom.content_factory_pipeline import generate_now, tick
+from ..services.custom.content_factory_proxy import (
+    ensure_factory_proxy,
+    handshake_proxy,
+    httpx_proxy_url,
+)
 from ..services.custom.content_factory_publishers import (
     oauth_configured,
     youtube_exchange_code,
@@ -52,6 +57,12 @@ from ..utils.crypto import decrypt_token, encrypt_token
 
 logger = getLogger(__name__)
 _USED_OAUTH_STATE: dict[str, float] = {}
+
+
+async def _row_proxy(session, account):
+    if not account.proxy_id or account.proxy_problem:
+        return None
+    return await session.get(CustomProxy, int(account.proxy_id))
 
 
 def _consume_oauth_state(state: str, exp: float | None) -> None:
@@ -165,10 +176,16 @@ async def get_content_factory_accounts(
         settings = await get_or_create_settings(session, automation.id)
         accounts = await list_accounts(session, automation.id)
         events_map = await recent_warmup_events_map(session, [item.id for item in accounts])
+        proxies = {item.id: await ensure_factory_proxy(session, item) for item in accounts}
         await session.commit()
         return {
             "items": [
-                serialize_account(item, settings, warmup_events=events_map.get(item.id) or [])
+                serialize_account(
+                    item,
+                    settings,
+                    warmup_events=events_map.get(item.id) or [],
+                    proxy=proxies.get(item.id),
+                )
                 for item in accounts
             ],
             "youtube_oauth_ready": oauth_configured(),
@@ -195,9 +212,10 @@ async def create_content_factory_account(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         settings = await get_or_create_settings(session, automation.id)
+        proxy = await _row_proxy(session, account)
         await session.commit()
         await session.refresh(account)
-        return serialize_account(account, settings)
+        return serialize_account(account, settings, proxy=proxy)
 
 
 @router.patch("/automations/{automation_id}/content-factory/accounts/{account_id}")
@@ -218,9 +236,10 @@ async def patch_content_factory_account(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
         settings = await get_or_create_settings(session, automation.id)
+        proxy = await _row_proxy(session, account)
         await session.commit()
         await session.refresh(account)
-        return serialize_account(account, settings)
+        return serialize_account(account, settings, proxy=proxy)
 
 
 @router.delete("/automations/{automation_id}/content-factory/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -243,6 +262,7 @@ async def start_youtube_oauth(
     automation_id: int,
     payload: ContentFactoryYoutubeOauthStartRequest,
     automation: CustomAutomation = Depends(get_current_custom_automation),
+    account_id: Optional[int] = Query(None),
 ):
     if not oauth_configured():
         raise HTTPException(
@@ -258,6 +278,8 @@ async def start_youtube_oauth(
         ),
         "exp": (datetime.now(timezone.utc) + timedelta(minutes=20)).timestamp(),
     }
+    if account_id:
+        state_payload["account_id"] = int(account_id)
     state = encrypt_token(json.dumps(state_payload, ensure_ascii=False))
     redirect_uri = (app_settings.YOUTUBE_OAUTH_REDIRECT_URI or "").strip() or None
     try:
@@ -291,22 +313,51 @@ async def youtube_oauth_callback(
     except (TypeError, ValueError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный OAuth state")
     _consume_oauth_state(state, float(exp) if exp is not None else None)
-    try:
-        tokens = await youtube_exchange_code(code=code)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    display_name = "YouTube"
-    external_id = str(tokens.get("channel_id") or "")
-    try:
-        health = await get_youtube_client().health_check(token_bundle=tokens)
-        if health.get("ok"):
-            display_name = str((health.get("details") or {}).get("title") or display_name)
-            external_id = str(health.get("external_id") or external_id)
-        if isinstance(health.get("token_bundle"), dict):
-            tokens = {**tokens, **health["token_bundle"]}
-    except Exception as exc:
-        logger.info("YouTube health_check after OAuth failed: %s", exc)
+    return_url = factory_return_url(
+        str(data.get("return_url") or "").strip() or None,
+        automation_id,
+        base_url=app_settings.BASE_URL or "",
+    )
+    sep = "&" if "?" in return_url else "?"
+    known_account_id = None
+    raw_account_id = data.get("account_id")
+    if raw_account_id not in (None, ""):
+        try:
+            known_account_id = int(raw_account_id)
+        except (TypeError, ValueError):
+            known_account_id = -1
     async with async_session_maker() as session:
+        proxy = await handshake_proxy(session, automation_id, account_id=known_account_id)
+        proxy_url = httpx_proxy_url(proxy)
+        if proxy is None or not proxy_url:
+            await session.rollback()
+            return RedirectResponse(f"{return_url}{sep}youtube=no_proxy")
+        try:
+            tokens = await youtube_exchange_code(code=code, proxy_url=proxy_url)
+        except Exception as exc:
+            await session.rollback()
+            detail = str(exc).strip() or "YouTube не выдал токен"
+            lowered = detail.lower()
+            if any(marker in lowered for marker in ("ya29.", "client_secret", "refresh_token=", "access_token=")):
+                detail = "YouTube не выдал токен через прокси аккаунта"
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail[:300])
+        display_name = "YouTube"
+        external_id = ""
+        link_error = None
+        try:
+            health = await get_youtube_client().health_check(token_bundle=tokens, proxy=proxy_url)
+            if health.get("ok"):
+                display_name = str((health.get("details") or {}).get("title") or display_name)
+                external_id = str(health.get("external_id") or "")
+                if external_id == "youtube":
+                    external_id = ""
+            if isinstance(health.get("token_bundle"), dict):
+                tokens = {**tokens, **health["token_bundle"]}
+            if not str(tokens.get("refresh_token") or "").strip():
+                link_error = "YouTube не отдал refresh. Access один, обновить его будет нечем."
+        except Exception:
+            logger.info("YouTube health_check after OAuth failed")
+            link_error = "YouTube не подтвердил канал через прокси аккаунта."
         account = await connect_account(
             session,
             automation_id=automation_id,
@@ -320,6 +371,9 @@ async def youtube_oauth_callback(
                 "expires_at": str(tokens.get("expires_at") or ""),
                 "token_type": str(tokens.get("token_type") or "Bearer"),
             },
+            preferred_proxy_id=proxy.id,
+            verify=False,
+            link_error=link_error,
         )
         await session.commit()
         account_id = account.id

@@ -132,11 +132,11 @@ export const CF_VIDEO_FILTERS = [
 ];
 
 export const CF_CREDENTIAL_FIELDS = {
-  youtube: 'refresh token или access token',
-  instagram: 'access token и Instagram User ID',
-  tiktok: 'access token Content Posting API',
-  pinterest: 'access token и board_id',
-  vk: 'пользовательский токен с правом на клипы и id сообщества',
+  youtube: 'refresh token. Один access без refresh на строке виден отдельно и сам не продлевается',
+  instagram: 'access token и Instagram User ID. Refresh эта площадка в подключении не отдаёт',
+  tiktok: 'access token. Если TikTok отдал refresh, вставьте его тоже',
+  pinterest: 'access token и board_id. Если Pinterest отдал refresh, вставьте его тоже',
+  vk: 'пользовательский токен с правом на клипы и id сообщества. Refresh VK ID, если он есть',
 };
 
 export const CF_MUSIC_MODES = [

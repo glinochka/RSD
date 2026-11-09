@@ -2547,6 +2547,10 @@ class PoolAccount(Base):
     proxy_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_proxies.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    proxy_set_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    proxy_problem: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -3341,6 +3345,12 @@ class CustomContentFactoryAccount(Base):
     status: Mapped[str] = mapped_column(String(32), default="connected", server_default="connected", nullable=False, index=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     credentials_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proxy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_proxies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    proxy_problem: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     warmup_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     warmup_actions_done: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
@@ -3355,6 +3365,7 @@ class CustomContentFactoryAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="content_factory_accounts")
+    proxy: Mapped["CustomProxy | None"] = relationship(foreign_keys=[proxy_id])
     posts: Mapped[list["CustomContentFactoryPost"]] = relationship(
         back_populates="account",
         cascade="all, delete-orphan",

@@ -779,8 +779,8 @@ async def execute_with_telegram_retry(
                 from .proxy_service import recover_dead_proxy
 
                 rotated = await recover_dead_proxy(session, account)
+                await session.commit()
                 if rotated is not None:
-                    await session.commit()
                     await session.refresh(account)
                 schedule_account_retry(account)
                 await _log_error(str(exc))

@@ -16,6 +16,7 @@ from ...alembic.models import (
     CustomContentFactoryTokenUsage,
     CustomContentFactoryVideo,
     CustomContentFactoryWarmupEvent,
+    CustomProxy,
 )
 from ...utils.crypto import decrypt_token, encrypt_token
 from ...config import settings as app_settings
@@ -25,7 +26,9 @@ from .content_factory_antifraud import (
     VIDEO_IN_FLIGHT,
     VISUAL_STYLES,
     compute_health_score,
+    credential_status,
     in_posting_window,
+    present_health_score,
     local_today,
     next_enqueue_at,
     now_utc,
@@ -33,6 +36,14 @@ from .content_factory_antifraud import (
     validate_platform_credentials,
     warmup_progress,
 )
+from .content_factory_proxy import (
+    PROXY_MISSING,
+    bind_preferred_proxy,
+    ensure_factory_proxy,
+    httpx_proxy_url,
+    proxy_public_label,
+)
+from .content_factory_publishers import check_platform_link, merge_platform_credentials
 
 SECRET_FIELDS = (
     "openai_api_key",
@@ -264,6 +275,7 @@ def serialize_account(
     settings: CustomContentFactorySettings,
     *,
     warmup_events: list[CustomContentFactoryWarmupEvent] | None = None,
+    proxy: CustomProxy | None = None,
 ) -> dict[str, Any]:
     progress = warmup_progress(
         started_at=row.warmup_started_at,
@@ -274,12 +286,19 @@ def serialize_account(
     )
     creds = decrypt_json(row.credentials_enc)
     events = list(warmup_events or [])[:5]
-    score = compute_health_score(
-        status=row.status,
-        warmup_complete=bool(progress.get("complete")),
-        last_error=row.last_error,
-        risk_flags=list(row.risk_flags or []),
-        recent_views=0,
+    tokens = credential_status(row.platform, creds)
+    loaded = proxy if proxy is not None else row.__dict__.get("proxy")
+    proxy_ok = bool(row.proxy_id) and not row.proxy_problem and loaded is not None
+    score = present_health_score(
+        compute_health_score(
+            status=row.status,
+            warmup_complete=bool(progress.get("complete")),
+            last_error=row.last_error,
+            risk_flags=list(row.risk_flags or []),
+            recent_views=0,
+        ),
+        credential_mode=str(tokens["credential_mode"]),
+        proxy_ok=proxy_ok,
     )
     return {
         "id": row.id,
@@ -290,6 +309,10 @@ def serialize_account(
         "status": row.status,
         "is_enabled": bool(row.is_enabled),
         "has_credentials": bool(creds),
+        "credential_mode": tokens["credential_mode"],
+        "credential_note": tokens["credential_note"],
+        "proxy_ok": proxy_ok,
+        "proxy_label": proxy_public_label(loaded if proxy_ok else None, ok=proxy_ok),
         "warmup": progress,
         "warmup_events": [serialize_warmup_event(item) for item in events[:5]],
         "last_posted_at": _dt(row.last_posted_at),
@@ -373,6 +396,7 @@ def serialize_video(row: CustomContentFactoryVideo, include_posts: bool = True) 
 async def list_accounts(session: AsyncSession, automation_id: int) -> list[CustomContentFactoryAccount]:
     result = await session.execute(
         select(CustomContentFactoryAccount)
+        .options(selectinload(CustomContentFactoryAccount.proxy))
         .where(CustomContentFactoryAccount.custom_automation_id == automation_id)
         .order_by(CustomContentFactoryAccount.created_at.desc())
     )
@@ -397,6 +421,9 @@ async def connect_account(
     external_id: str,
     credentials: dict[str, Any],
     start_warming: bool = True,
+    preferred_proxy_id: int | None = None,
+    verify: bool = True,
+    link_error: str | None = None,
 ) -> CustomContentFactoryAccount:
     if platform not in PLATFORMS:
         raise ValueError(f"Неподдерживаемая площадка: {platform}")
@@ -411,6 +438,7 @@ async def connect_account(
             )
         )
         if existing:
+            cleaned = merge_platform_credentials(decrypt_json(existing.credentials_enc), cleaned)
             existing.credentials_enc = encrypt_json(cleaned)
             if display_name or handle:
                 existing.display_name = (display_name or handle or existing.display_name or platform)[:200]
@@ -421,6 +449,13 @@ async def connect_account(
             if existing.status == "disconnected":
                 existing.status = "warming" if start_warming else "connected"
             existing.updated_at = now_utc()
+            await _attach_proxy_and_check(
+                session,
+                existing,
+                preferred_proxy_id=preferred_proxy_id if not existing.proxy_id else None,
+                verify=verify,
+                link_error=link_error,
+            )
             await session.flush()
             return existing
     account = CustomContentFactoryAccount(
@@ -442,7 +477,58 @@ async def connect_account(
         start_warmup(account)
     session.add(account)
     await session.flush()
+    await _attach_proxy_and_check(
+        session,
+        account,
+        preferred_proxy_id=preferred_proxy_id,
+        verify=verify,
+        link_error=link_error,
+    )
+    await session.flush()
     return account
+
+
+async def _attach_proxy_and_check(
+    session: AsyncSession,
+    account: CustomContentFactoryAccount,
+    *,
+    preferred_proxy_id: int | None,
+    verify: bool,
+    link_error: str | None,
+) -> None:
+    if preferred_proxy_id and not account.proxy_id:
+        proxy = await bind_preferred_proxy(session, account, int(preferred_proxy_id))
+    else:
+        proxy = await ensure_factory_proxy(session, account)
+    if link_error:
+        account.last_error = str(link_error)[:500]
+        return
+    if not verify or proxy is None or account.proxy_problem:
+        return
+    url = httpx_proxy_url(proxy)
+    if not url:
+        account.proxy_problem = True
+        if not account.last_error:
+            account.last_error = PROXY_MISSING
+        return
+    refreshed, error, extra = await check_platform_link(
+        account.platform,
+        decrypt_json(account.credentials_enc),
+        proxy_url=url,
+    )
+    account.credentials_enc = encrypt_json(
+        merge_platform_credentials(decrypt_json(account.credentials_enc), refreshed)
+    )
+    if extra.get("external_id") and not account.external_id:
+        account.external_id = str(extra["external_id"])[:191]
+    if extra.get("display_name") and account.display_name in {"", account.platform}:
+        account.display_name = str(extra["display_name"])[:200]
+    if extra.get("handle") and not account.handle:
+        account.handle = str(extra["handle"])[:128]
+    if error:
+        account.last_error = error[:500]
+    elif account.last_error == PROXY_MISSING:
+        account.last_error = None
 
 
 async def update_account(
@@ -462,10 +548,8 @@ async def update_account(
         account.is_enabled = bool(payload["is_enabled"])
     credentials = payload.get("credentials")
     if isinstance(credentials, dict) and any(str(value or "").strip() for value in credentials.values()):
-        merged = decrypt_json(account.credentials_enc)
-        for key, value in credentials.items():
-            if str(value or "").strip():
-                merged[str(key)] = str(value).strip()
+        incoming = {str(key): str(value).strip() for key, value in credentials.items() if str(value or "").strip()}
+        merged = merge_platform_credentials(decrypt_json(account.credentials_enc), incoming)
         account.credentials_enc = encrypt_json(merged)
     if payload.get("pause"):
         account.status = "paused"

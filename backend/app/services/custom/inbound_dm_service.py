@@ -330,9 +330,9 @@ async def _process_account(
             if not looks_like_proxy_dead(exc):
                 raise
             rotated = await recover_dead_proxy(session, account)
+            await session.commit()
             if rotated is None:
                 raise
-            await session.commit()
             await session.refresh(account)
             await asyncio.sleep(2)
             async with TelegramAccountClient.for_account(account) as client:

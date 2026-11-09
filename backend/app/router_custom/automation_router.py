@@ -2016,6 +2016,7 @@ def _account_response(
         flood_quarantined_until=getattr(social_account, "flood_quarantined_until", None),
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
+        proxy_problem=bool(getattr(pool_account, "proxy_problem", False)),
         telegram_session_count=getattr(social_account, "telegram_session_count", None),
         origin=getattr(social_account, "origin", None) or "farm",
         **intercept_public_state(social_account),

@@ -668,3 +668,426 @@ def test_music_bed_is_an_original_wav(tmp_path):
     text = voiceover_lines(_Video())
     assert text.startswith("Стоп")
     assert text.count("Кадр про новость") == 1
+
+
+def test_access_only_is_not_painted_healthy():
+    from app.services.custom.content_factory_antifraud import credential_status, present_health_score
+    from app.services.custom.content_factory_publishers import merge_platform_credentials
+
+    instagram = credential_status("instagram", {"access_token": "tok", "ig_user_id": "1789"})
+    assert instagram["credential_mode"] == "access_only"
+    assert "refresh не отдаёт" in instagram["credential_note"]
+    assert present_health_score(78, credential_mode="access_only", proxy_ok=True) <= 49
+
+    youtube = credential_status("youtube", {"refresh_token": "refresh.from.platform", "access_token": "ya"})
+    assert youtube["credential_mode"] == "refresh"
+    saved = merge_platform_credentials(
+        {"access_token": "old", "refresh_token": "refresh.from.platform"},
+        {"access_token": "ya29.new"},
+    )
+    assert saved["refresh_token"] == "refresh.from.platform"
+    assert saved["access_token"] == "ya29.new"
+
+
+@pytest.mark.asyncio
+async def test_factory_proxy_is_own_and_blocks_direct_publish(
+    test_session: AsyncSession,
+    custom_automation: CustomAutomation,
+    monkeypatch,
+):
+    from datetime import datetime, timedelta
+
+    from app.alembic.models import AccountPool, CustomProxy, PoolAccount, SocialAccount
+    from app.services.custom.content_factory_proxy import handshake_proxy, httpx_proxy_url, proxy_url_for_account
+    from app.services.custom.content_factory_publishers import PublisherError, publish_to_platform
+    from app.services.custom.content_factory_service import connect_account, decrypt_json
+    from app.services.custom.proxy_service import proxy_fingerprint
+    from app.services.youtube_client import YouTubeClient
+
+    alive = {"ok": True}
+
+    async def _probe(host, port, timeout=3.0):
+        return alive["ok"]
+
+    async def _no_link(platform, credentials, *, proxy_url):
+        return dict(credentials or {}), None, {}
+
+    monkeypatch.setattr("app.services.custom.content_factory_proxy.probe_proxy_tcp", _probe)
+    monkeypatch.setattr("app.services.custom.content_factory_service.check_platform_link", _no_link)
+
+    now = datetime.utcnow()
+
+    def add_proxy(host, *, dedicated=False):
+        row = CustomProxy(
+            custom_automation_id=custom_automation.id,
+            scheme="socks5",
+            host=host,
+            port=1080,
+            fingerprint=proxy_fingerprint("socks5", host, 1080, None),
+            is_dedicated=dedicated,
+            is_active=True,
+            is_healthy=True,
+            created_at=now,
+            updated_at=now,
+        )
+        test_session.add(row)
+        return row
+
+    set_a = add_proxy("10.7.0.1")
+    set_b = add_proxy("10.7.0.2")
+    current = add_proxy("10.7.0.3")
+    add_proxy("10.7.0.4", dedicated=True)
+    free_e = add_proxy("10.7.0.5")
+    free_f = add_proxy("10.7.0.6")
+    free_g = add_proxy("10.7.0.7")
+    await test_session.flush()
+
+    social = SocialAccount(
+        provider="telegram",
+        phone_number="+79990001122",
+        username="tg_proxy_holder",
+        encrypted_session="session",
+        created_at=now,
+        updated_at=now,
+    )
+    test_session.add(social)
+    await test_session.flush()
+    pool = AccountPool(
+        custom_automation_id=custom_automation.id,
+        name="Ферма",
+        created_at=now,
+        updated_at=now,
+    )
+    test_session.add(pool)
+    await test_session.flush()
+    test_session.add(
+        PoolAccount(
+            custom_automation_id=custom_automation.id,
+            account_pool_id=pool.id,
+            social_account_id=social.id,
+            proxy_id=current.id,
+            proxy_set_ids=[set_a.id, set_b.id],
+            roles=[],
+            added_at=now,
+        )
+    )
+    await test_session.flush()
+
+    first = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="instagram",
+        display_name="Первый",
+        handle="@one",
+        external_id="1789001",
+        credentials={"access_token": "tok-1", "ig_user_id": "1789001"},
+    )
+    second = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="tiktok",
+        display_name="Второй",
+        handle="@two",
+        external_id="tt-2",
+        credentials={"access_token": "tok-2", "refresh_token": "refresh.from.tiktok"},
+    )
+    await test_session.flush()
+
+    occupied = {set_a.id, set_b.id, current.id}
+    assert first.proxy_id != second.proxy_id
+    assert first.proxy_id in {free_e.id, free_f.id}
+    assert second.proxy_id in {free_e.id, free_f.id}
+    assert first.proxy_id not in occupied
+    assert second.proxy_id not in occupied
+    assert first.proxy_problem is False
+    assert decrypt_json(second.credentials_enc)["refresh_token"] == "refresh.from.tiktok"
+
+    owned = first.proxy_id
+    alive["ok"] = False
+    assert await proxy_url_for_account(test_session, first) == ""
+    assert first.proxy_id == owned
+    assert first.proxy_problem is True
+    assert second.proxy_id != owned
+
+    opened = []
+
+    class _BlockedClient:
+        def __init__(self, *args, **kwargs):
+            opened.append(kwargs)
+
+    monkeypatch.setattr("app.services.custom.content_factory_publishers.httpx.AsyncClient", _BlockedClient)
+    with pytest.raises(PublisherError, match="Нет прокси"):
+        await publish_to_platform(
+            platform="instagram",
+            credentials={"access_token": "tok-1", "ig_user_id": "1789001"},
+            video_url="https://cdn.example/clip.mp4",
+            title="Клип",
+            caption="Текст",
+            sandbox=False,
+            video_id=1,
+            account_id=first.id,
+            proxy_url=None,
+        )
+    assert opened == []
+
+    alive["ok"] = True
+    own_url = await proxy_url_for_account(test_session, first)
+    other_url = httpx_proxy_url(await test_session.get(CustomProxy, second.proxy_id))
+    assert own_url
+    assert own_url != other_url
+    assert first.proxy_id == owned
+
+    class _Response:
+        status_code = 200
+        is_success = True
+        text = '{"id":"container-1"}'
+        content = b'{"id":"container-1"}'
+
+        def json(self):
+            return {"id": "container-1"}
+
+    class _ProxyClient:
+        def __init__(self, *args, **kwargs):
+            opened.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, data=None, **kwargs):
+            return _Response()
+
+    monkeypatch.setattr("app.services.custom.content_factory_publishers.httpx.AsyncClient", _ProxyClient)
+    posted = await publish_to_platform(
+        platform="instagram",
+        credentials={"access_token": "tok-1", "ig_user_id": "1789001"},
+        video_url="https://cdn.example/clip.mp4",
+        title="Клип",
+        caption="Текст",
+        sandbox=False,
+        video_id=1,
+        account_id=first.id,
+        proxy_url=own_url,
+    )
+    assert posted["status"] == "processing"
+    assert opened[0]["proxy"] == own_url
+    assert opened[0]["trust_env"] is False
+    assert first.status == "warming"
+
+    calls = []
+
+    class _TokenResponse:
+        status_code = 200
+        is_success = True
+        text = "{}"
+        content = b"{}"
+
+        def json(self):
+            return {"access_token": "ya29.refreshed", "expires_in": 3600, "token_type": "Bearer"}
+
+    class _TokenClient:
+        def __init__(self, *args, **kwargs):
+            calls.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, method, url, **kwargs):
+            return _TokenResponse()
+
+    monkeypatch.setattr("app.services.youtube_client.httpx.AsyncClient", _TokenClient)
+    client = YouTubeClient(client_id="client-id", client_secret="client-secret", redirect_uri="https://app.example/callback")
+    bundle = await client.ensure_fresh_access_token(
+        token_bundle={
+            "access_token": "expired",
+            "refresh_token": "refresh.from.platform",
+            "expires_at": (datetime.utcnow() - timedelta(minutes=5)).isoformat(),
+        },
+        proxy=own_url,
+    )
+    assert calls[0]["proxy"] == own_url
+    assert calls[0]["trust_env"] is False
+    assert bundle["access_token"] == "ya29.refreshed"
+    assert bundle["refresh_token"] == "refresh.from.platform"
+
+    kept = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="tiktok",
+        display_name="Второй",
+        handle="@two",
+        external_id="tt-2",
+        credentials={"access_token": "tok-2-new"},
+    )
+    saved = decrypt_json(kept.credentials_enc)
+    assert saved["refresh_token"] == "refresh.from.tiktok"
+    assert saved["access_token"] == "tok-2-new"
+    assert kept.proxy_id == second.proxy_id
+    assert kept.status != "restricted"
+
+    youtube = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="youtube",
+        display_name="Канал",
+        handle="@yt",
+        external_id="yt-9",
+        credentials={"access_token": "ya-old", "refresh_token": "refresh.from.platform"},
+    )
+    assert youtube.proxy_id == free_g.id
+    assert decrypt_json(youtube.credentials_enc)["refresh_token"] == "refresh.from.platform"
+    assert await handshake_proxy(test_session, custom_automation.id) is None
+    own = await handshake_proxy(test_session, custom_automation.id, account_id=youtube.id)
+    assert own is not None
+    assert own.id == youtube.proxy_id
+    alive["ok"] = False
+    assert await handshake_proxy(test_session, custom_automation.id, account_id=youtube.id) is None
+    assert youtube.proxy_id == free_g.id
+
+
+@pytest.mark.asyncio
+async def test_second_youtube_login_does_not_take_existing_proxy(
+    test_session: AsyncSession,
+    custom_automation: CustomAutomation,
+    monkeypatch,
+):
+    from datetime import datetime
+
+    from sqlalchemy import func, select
+
+    from app.alembic.models import CustomContentFactoryAccount, CustomProxy
+    from app.services.custom.content_factory_proxy import handshake_proxy
+    from app.services.custom.content_factory_service import connect_account
+    from app.services.custom.proxy_service import proxy_fingerprint
+
+    alive = {"ok": True}
+
+    async def _probe(host, port, timeout=3.0):
+        return alive["ok"]
+
+    async def _no_link(platform, credentials, *, proxy_url):
+        return dict(credentials or {}), None, {}
+
+    monkeypatch.setattr("app.services.custom.content_factory_proxy.probe_proxy_tcp", _probe)
+    monkeypatch.setattr("app.services.custom.content_factory_service.check_platform_link", _no_link)
+
+    now = datetime.utcnow()
+
+    def add_proxy(host):
+        row = CustomProxy(
+            custom_automation_id=custom_automation.id,
+            scheme="socks5",
+            host=host,
+            port=1080,
+            fingerprint=proxy_fingerprint("socks5", host, 1080, None),
+            is_dedicated=False,
+            is_active=True,
+            is_healthy=True,
+            created_at=now,
+            updated_at=now,
+        )
+        test_session.add(row)
+        return row
+
+    owned = add_proxy("10.8.0.1")
+    await test_session.flush()
+    first = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="youtube",
+        display_name="Первый канал",
+        handle="@yt-1",
+        external_id="yt-1",
+        credentials={"access_token": "ya-1", "refresh_token": "refresh-1"},
+    )
+    assert first.proxy_id == owned.id
+
+    assert await handshake_proxy(test_session, custom_automation.id) is None
+    youtube_count = await test_session.scalar(
+        select(func.count()).select_from(CustomContentFactoryAccount).where(
+            CustomContentFactoryAccount.custom_automation_id == custom_automation.id,
+            CustomContentFactoryAccount.platform == "youtube",
+        )
+    )
+    assert youtube_count == 1
+    repeat = await handshake_proxy(test_session, custom_automation.id, account_id=first.id)
+    assert repeat is not None
+    assert repeat.id == first.proxy_id
+
+    free = add_proxy("10.8.0.2")
+    await test_session.flush()
+    fresh = await handshake_proxy(test_session, custom_automation.id)
+    assert fresh is not None
+    assert fresh.id == free.id
+    assert fresh.id != first.proxy_id
+    second = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="youtube",
+        display_name="Второй канал",
+        handle="@yt-2",
+        external_id="yt-2",
+        credentials={"access_token": "ya-2", "refresh_token": "refresh-2"},
+        preferred_proxy_id=fresh.id,
+    )
+    assert second.id != first.id
+    assert second.proxy_id == fresh.id
+    assert second.proxy_id != first.proxy_id
+
+    again = await handshake_proxy(test_session, custom_automation.id, account_id=first.id)
+    assert again is not None
+    assert again.id == first.proxy_id
+    assert await handshake_proxy(test_session, custom_automation.id) is None
+    owned_id = first.proxy_id
+    alive["ok"] = False
+    assert await handshake_proxy(test_session, custom_automation.id, account_id=first.id) is None
+    assert first.proxy_id == owned_id
+    assert second.proxy_id == free.id
+
+
+@pytest.mark.asyncio
+async def test_instagram_refresh_stays_on_account_proxy(monkeypatch):
+    from app.services.custom.content_factory_publishers import _rotate_instagram, _use_proxy
+
+    seen = []
+
+    class _Response:
+        status_code = 200
+        is_success = True
+        content = b"{}"
+
+        def json(self):
+            return {"access_token": "ig-long", "expires_in": 5184000}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, params=None, **kwargs):
+            seen.append({"url": url})
+            return _Response()
+
+    monkeypatch.setattr("app.services.custom.content_factory_publishers.httpx.AsyncClient", _Client)
+    token = _use_proxy("socks5://10.7.0.8:1080")
+    try:
+        updated = await _rotate_instagram({"access_token": "ig-short", "ig_user_id": "1789"}, force=True)
+    finally:
+        from app.services.custom.content_factory_publishers import _proxy_url
+
+        _proxy_url.reset(token)
+    assert updated["access_token"] == "ig-long"
+    assert updated["expires_at"]
+    assert updated["token_type"] == "ig_refresh"
+    assert seen[0]["proxy"] == "socks5://10.7.0.8:1080"
+    assert seen[0]["trust_env"] is False

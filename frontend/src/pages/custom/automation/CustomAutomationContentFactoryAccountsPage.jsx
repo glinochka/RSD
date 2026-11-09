@@ -42,13 +42,19 @@ const CustomAutomationContentFactoryAccountsPage = () => {
   }, [loadAccounts]);
 
   useEffect(() => {
-    if (searchParams.get('youtube') === 'connected') {
-      setMessage('YouTube подключён и поставлен на прогрев');
-      const next = new URLSearchParams(searchParams);
-      next.delete('youtube');
-      next.delete('account_id');
-      setSearchParams(next, { replace: true });
+    const youtube = searchParams.get('youtube');
+    if (youtube !== 'connected' && youtube !== 'no_proxy') {
+      return;
     }
+    if (youtube === 'connected') {
+      setMessage('YouTube подключён и поставлен на прогрев');
+    } else {
+      setError('Нет свободного прокси. Запрос к YouTube не отправлялся.');
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('youtube');
+    next.delete('account_id');
+    setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
   const credentialsFor = () => {
@@ -229,18 +235,17 @@ const CustomAutomationContentFactoryAccountsPage = () => {
               autoComplete="off"
             />
           </div>
-          {form.platform === 'youtube' ? (
-            <div className="form-group">
-              <label htmlFor="cf-refresh">Refresh token</label>
-              <input
-                id="cf-refresh"
-                type="password"
-                value={form.refresh_token}
-                onChange={(event) => setForm((current) => ({ ...current, refresh_token: event.target.value }))}
-                autoComplete="off"
-              />
-            </div>
-          ) : null}
+          <div className="form-group">
+            <label htmlFor="cf-refresh">Refresh token</label>
+            <input
+              id="cf-refresh"
+              type="password"
+              value={form.refresh_token}
+              onChange={(event) => setForm((current) => ({ ...current, refresh_token: event.target.value }))}
+              autoComplete="off"
+              placeholder={form.platform === 'youtube' ? 'Обязателен, чтобы обновлять access' : 'Если площадка его отдала'}
+            />
+          </div>
           {form.platform === 'instagram' ? (
             <div className="form-group">
               <label htmlFor="cf-ig">Instagram User ID</label>
@@ -300,10 +305,14 @@ const CustomAutomationContentFactoryAccountsPage = () => {
                       <h3>{account.display_name || account.handle || account.platform}</h3>
                       <p>{account.platform} {account.handle ? `· ${account.handle}` : ''}</p>
                     </div>
-                    <span className={`cf-tag${account.status === 'shadow_risk' ? ' cf-tag--danger' : account.status === 'ready' ? ' cf-tag--ok' : ' cf-tag--warn'}`}>
+                    <span className={`cf-tag${account.status === 'shadow_risk' || account.status === 'restricted' ? ' cf-tag--danger' : !account.proxy_ok || account.credential_mode === 'access_only' || account.credential_mode === 'missing' ? ' cf-tag--warn' : account.status === 'ready' ? ' cf-tag--ok' : ' cf-tag--warn'}`}>
                       {accountStatusLabel(account.status)}
                     </span>
                   </div>
+                  <p className={account.proxy_ok ? 'cf-muted' : 'form-hint form-hint--error'}>
+                    Прокси: {account.proxy_label || 'Нет прокси'}
+                  </p>
+                  {account.credential_note ? <p className="cf-muted">{account.credential_note}</p> : null}
                   <p className="cf-muted">Прогрев {percent}% · {account.warmup?.actions_done || 0}/{account.warmup?.actions_required || 0} действий · осталось дней: {account.warmup?.days_left ?? '—'}</p>
                   <div className="cf-bar"><span style={{ width: `${percent}%` }} /></div>
                   <div className="cf-meta">

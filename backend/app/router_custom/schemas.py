@@ -464,6 +464,7 @@ class AccountResponse(BaseModel):
     flood_quarantined_until: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
+    proxy_problem: bool = False
     telegram_session_count: Optional[int] = None
     origin: str = "farm"
     intercept_stage: Optional[str] = None

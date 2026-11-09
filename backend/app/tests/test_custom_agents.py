@@ -6739,14 +6739,14 @@ class TestAccountProxies:
         assert plain["username"] is None
         assert plain["scheme"] == "socks5"
 
-        http = parse_proxy_line("http://modeler_zzGSY9:76SBBHzDc16s@139.144.4.230:11625")
+        http = parse_proxy_line("http://sample_user:sample_pass@10.4.4.10:11625")
         assert http["scheme"] == "http"
-        assert http["host"] == "139.144.4.230"
+        assert http["host"] == "10.4.4.10"
         assert http["port"] == 11625
-        assert http["username"] == "modeler_zzGSY9"
+        assert http["username"] == "sample_user"
         assert http["ip_version"] == 4
 
-        socks = parse_proxy_line("socks5://modeler_zzGSY9:76SBBHzDc16s@139.144.4.230:21625")
+        socks = parse_proxy_line("socks5://sample_user:sample_pass@10.4.4.10:21625")
         assert socks["scheme"] == "socks5"
         assert socks["port"] == 21625
 
@@ -6892,14 +6892,47 @@ class TestAccountProxies:
         }
         ru_pool = await test_session.scalar(select(PoolAccount).where(PoolAccount.social_account_id == ru.id))
         assert ru_pool.proxy_id == by_country["FI"].id
+        assert set(ru_pool.proxy_set_ids or []) == {by_country["FI"].id, by_country["IN"].id}
+
+        from datetime import datetime
+
+        from app.services.custom.proxy_service import proxy_fingerprint
+
+        now = datetime.utcnow()
+        for host, country in (("10.9.9.3", "FI"), ("10.9.9.4", "US")):
+            test_session.add(
+                CustomProxy(
+                    custom_automation_id=custom_automation.id,
+                    scheme="socks5",
+                    host=host,
+                    port=1080,
+                    fingerprint=proxy_fingerprint("socks5", host, 1080, None),
+                    country_code=country,
+                    is_dedicated=False,
+                    is_active=True,
+                    is_healthy=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await test_session.commit()
 
         _proxy_id, payload = await resolve_connect_proxy(
             test_session, custom_automation.id, phone="+79994445566"
         )
-        assert payload["addr"] == "10.9.9.2"
-
+        assert payload["addr"] == "10.9.9.3"
         dominant = await pick_least_loaded_proxy(test_session, custom_automation.id)
+        assert dominant.host == "10.9.9.3"
         assert dominant.country_code == "FI"
+
+        free_rows = (
+            await test_session.execute(
+                select(CustomProxy).where(CustomProxy.host.in_(["10.9.9.3", "10.9.9.4"]))
+            )
+        ).scalars().all()
+        for row in free_rows:
+            await test_session.delete(row)
+        await test_session.commit()
 
         extra = await self._add_account(
             test_session, custom_automation, username="geo_unlocked", phone="+79997778899"
@@ -6914,7 +6947,8 @@ class TestAccountProxies:
             preferred_proxy_id=by_country["IN"].id,
             lock_preferred=False,
         )
-        assert chosen.country_code == "FI"
+        assert chosen is None
+        assert extra_pool.proxy_id is None
 
         from app.services.custom.proxy_service import bind_account_proxy
 
@@ -6923,6 +6957,133 @@ class TestAccountProxies:
         moved = await rebind_account_proxy_if_far(test_session, ru_pool, ru)
         assert moved is not None
         assert moved.country_code == "FI"
+
+    async def test_busy_socket_keeps_live_proxy_out_of_other_set(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from datetime import datetime
+        from unittest.mock import AsyncMock
+
+        from app.alembic.models import CustomProxy, PoolAccount
+        from app.services.custom import proxy_service as ps
+        from app.services.custom.proxy_service import (
+            ProxyChoiceError,
+            bind_account_proxy,
+            pick_least_loaded_proxy,
+            proxy_fingerprint,
+            replace_proxy_list,
+            resolve_connect_proxy,
+        )
+
+        monkeypatch.setattr(ps, "probe_proxy_tcp", AsyncMock(return_value=True))
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.9.9.1:1080 IN\n10.9.9.2:1080 FI",
+        )
+        await test_session.commit()
+        sitting = await self._add_account(
+            test_session, custom_automation, username="busy_a", phone="+79991110001"
+        )
+        other = await self._add_account(
+            test_session, custom_automation, username="busy_b", phone="+79991110002"
+        )
+        by_country = {
+            row.country_code: row
+            for row in (
+                await test_session.execute(
+                    select(CustomProxy).where(CustomProxy.custom_automation_id == custom_automation.id)
+                )
+            ).scalars().all()
+        }
+        india = by_country["IN"]
+        finland = by_country["FI"]
+        sitting_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == sitting.id)
+        )
+        bind_account_proxy(sitting_pool, sitting, india)
+        sitting_pool.proxy_set_ids = []
+        await test_session.commit()
+
+        async def drop(account):
+            return account.id != sitting.id
+
+        monkeypatch.setattr(ps, "_drop_live_session", drop)
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.9.9.1:1080 IN\n10.9.9.2:1080 FI",
+        )
+        await test_session.flush()
+        await test_session.refresh(sitting_pool)
+        other_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == other.id)
+        )
+        assert sitting_pool.proxy_id == india.id
+        assert list(sitting_pool.proxy_set_ids or []) == []
+        assert india.id not in set(other_pool.proxy_set_ids or [])
+        assert other_pool.proxy_id == finland.id
+
+        now = datetime.utcnow()
+        backup = CustomProxy(
+            custom_automation_id=custom_automation.id,
+            scheme="socks5",
+            host="10.7.7.1",
+            port=1080,
+            fingerprint=proxy_fingerprint("socks5", "10.7.7.1", 1080, None),
+            country_code="IN",
+            is_dedicated=False,
+            is_active=True,
+            is_healthy=True,
+            created_at=now,
+            updated_at=now,
+        )
+        free_fi = CustomProxy(
+            custom_automation_id=custom_automation.id,
+            scheme="socks5",
+            host="10.7.7.2",
+            port=1080,
+            fingerprint=proxy_fingerprint("socks5", "10.7.7.2", 1080, None),
+            country_code="FI",
+            is_dedicated=False,
+            is_active=True,
+            is_healthy=True,
+            created_at=now,
+            updated_at=now,
+        )
+        free_us = CustomProxy(
+            custom_automation_id=custom_automation.id,
+            scheme="socks5",
+            host="10.7.7.3",
+            port=1080,
+            fingerprint=proxy_fingerprint("socks5", "10.7.7.3", 1080, None),
+            country_code="US",
+            is_dedicated=False,
+            is_active=True,
+            is_healthy=True,
+            created_at=now,
+            updated_at=now,
+        )
+        test_session.add(backup)
+        test_session.add(free_fi)
+        test_session.add(free_us)
+        await test_session.flush()
+        other_pool.proxy_set_ids = [other_pool.proxy_id, backup.id]
+        await test_session.flush()
+
+        picked = await pick_least_loaded_proxy(test_session, custom_automation.id)
+        assert picked.id == free_fi.id
+        _proxy_id, payload = await resolve_connect_proxy(
+            test_session, custom_automation.id, phone="+79990001122"
+        )
+        assert payload["addr"] == "10.7.7.2"
+        assert _proxy_id != backup.id
+        assert _proxy_id != india.id
+        with pytest.raises(ProxyChoiceError, match="закрепл"):
+            await resolve_connect_proxy(test_session, custom_automation.id, proxy_id=backup.id)
 
     async def test_untagged_proxy_beats_far_india_for_ru(
         self,
@@ -6994,12 +7155,12 @@ class TestAccountProxies:
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["proxy_count"] == 2
-        assert data["accounts_with_proxy"] == 5
+        assert data["accounts_with_proxy"] == 2
         counts = sorted(item["account_count"] for item in data["proxy_distribution"])
-        assert counts == [2, 3]
-        assert data["proxy_purity"] == 40
+        assert counts == [1, 1]
+        assert data["proxy_purity"] == 100
         assert data["proxy_unique_used"] == 2
-        assert data["proxy_peak_load"] == 3
+        assert data["proxy_peak_load"] == 1
         assert "10.1.1.1:1080" in (data["proxy_list_text"] or "")
 
         automation_id = custom_automation.id
@@ -7015,17 +7176,21 @@ class TestAccountProxies:
                 select(PoolAccount).where(PoolAccount.custom_automation_id == automation_id)
             )
         ).scalars().all()
-        assigned = [row.proxy_id for row in links]
-        assert None not in assigned
+        assigned = [row.proxy_id for row in links if row.proxy_id]
+        assert len(assigned) == 2
         assert set(assigned) == {proxies[0].id, proxies[1].id}
+        owned = [set(row.proxy_set_ids or []) for row in links if row.proxy_set_ids]
+        assert len(owned) == 2
+        assert owned[0].isdisjoint(owned[1])
 
         listed = await client.get(
             f"/api/custom/automations/{automation_id}/accounts",
             headers=headers,
         )
         assert listed.status_code == 200
-        labels = {item["proxy_label"] for item in listed.json()["items"]}
+        labels = {item["proxy_label"] for item in listed.json()["items"] if item.get("proxy_label")}
         assert labels == {"socks5://10.1.1.1:1080", "socks5://10.1.1.2:1080"}
+        assert all(item.get("proxy_problem") is False for item in listed.json()["items"])
 
         invalid = await client.patch(
             f"/api/custom/automations/{automation_id}/settings",
@@ -7042,20 +7207,24 @@ class TestAccountProxies:
         from app.services.account_pool_service import _create_social_account, get_or_create_default_pool
         from app.services.custom.proxy_service import replace_proxy_list, telethon_proxy_from_account
 
-        for index in range(2):
-            await self._add_account(
-                test_session,
-                custom_automation,
-                username=f"seed_{index}",
-                phone=f"+7999300000{index}",
-            )
+        await self._add_account(
+            test_session,
+            custom_automation,
+            username="seed_0",
+            phone="+79993000000",
+        )
         await replace_proxy_list(
             test_session,
             custom_automation,
-            "10.2.2.1:1080\n10.2.2.2:1080",
+            "\n".join(f"10.2.2.{index}:1080" for index in range(1, 6)),
         )
         await test_session.commit()
         pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        seed_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.custom_automation_id == custom_automation.id)
+        )
+        seed_set = set(seed_pool.proxy_set_ids or [])
+        assert len(seed_set) == 4
         created = await _create_social_account(
             test_session,
             custom_automation.id,
@@ -7070,22 +7239,17 @@ class TestAccountProxies:
         await test_session.commit()
         await test_session.refresh(created)
         payload = created.telegram_proxy or {}
-        assert payload.get("host") in {"10.2.2.1", "10.2.2.2"}
+        assert payload.get("host", "").startswith("10.2.2.")
         telethon = telethon_proxy_from_account(created)
         assert telethon is not None
         assert telethon["proxy_type"] == "socks5"
         assert telethon["addr"] == payload["host"]
         assert telethon["port"] == 1080
-
-        counts = {}
-        rows = (
-            await test_session.execute(
-                select(PoolAccount).where(PoolAccount.custom_automation_id == custom_automation.id)
-            )
-        ).scalars().all()
-        for row in rows:
-            counts[row.proxy_id] = counts.get(row.proxy_id, 0) + 1
-        assert sorted(counts.values()) == [1, 2]
+        created_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == created.id)
+        )
+        assert set(created_pool.proxy_set_ids or []).isdisjoint(seed_set)
+        assert created_pool.proxy_id not in seed_set
 
     async def test_dedicated_proxy_survives_pool_replace(
         self,
@@ -7131,6 +7295,233 @@ class TestAccountProxies:
         assert payload["proxy_count"] == 1
         assert payload["accounts_with_proxy"] == 1
         assert payload["proxy_distribution"][0]["host"] == "10.1.1.1"
+
+    async def test_upload_choice_is_primary_and_keeps_a_free_backup(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.proxy_service import (
+            assign_proxy_to_new_account,
+            replace_proxy_list,
+            resolve_account_proxy_choice,
+        )
+
+        lines = "\n".join(f"10.8.1.{index}:1080" for index in range(1, 5))
+        await replace_proxy_list(test_session, custom_automation, lines)
+        await test_session.commit()
+        owner = await self._add_account(
+            test_session, custom_automation, username="upload_owner", phone="+79997000001"
+        )
+        other = await self._add_account(
+            test_session, custom_automation, username="upload_other", phone="+79997000002"
+        )
+        dedicated = await resolve_account_proxy_choice(
+            test_session,
+            custom_automation.id,
+            proxy_line="10.9.8.8:1080:user:secret",
+        )
+        assert dedicated.is_dedicated is True
+        owner_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == owner.id)
+        )
+        chosen = await assign_proxy_to_new_account(
+            test_session,
+            owner_pool,
+            owner,
+            preferred_proxy_id=dedicated.id,
+            lock_preferred=True,
+        )
+        assert chosen is not None
+        assert chosen.id == dedicated.id
+        assert owner_pool.proxy_id == dedicated.id
+        assert owner_pool.proxy_set_ids[0] == dedicated.id
+        assert len(owner_pool.proxy_set_ids) == 3
+        assert owner_pool.proxy_problem is False
+        owner_set = set(owner_pool.proxy_set_ids)
+        assert dedicated.id in owner_set
+        assert len(owner_set) == 3
+
+        other_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == other.id)
+        )
+        other_chosen = await assign_proxy_to_new_account(test_session, other_pool, other)
+        assert other_chosen is not None
+        assert set(other_pool.proxy_set_ids or []).isdisjoint(owner_set)
+        assert other_pool.proxy_id not in owner_set
+
+        saved = list(owner_pool.proxy_set_ids)
+        await test_session.commit()
+        await replace_proxy_list(test_session, custom_automation, lines)
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        assert list(owner_pool.proxy_set_ids) == saved
+        assert owner_pool.proxy_id == dedicated.id
+
+    async def test_upload_keeps_set_when_socket_busy(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from app.alembic.models import CustomProxy
+        from app.services.custom import proxy_service as ps
+        from app.services.custom.proxy_service import (
+            assign_proxy_to_new_account,
+            bind_account_proxy,
+            replace_proxy_list,
+            resolve_account_proxy_choice,
+        )
+
+        lines = "\n".join(f"10.8.2.{index}:1080" for index in range(1, 5))
+        await replace_proxy_list(test_session, custom_automation, lines)
+        await test_session.commit()
+        owner = await self._add_account(
+            test_session, custom_automation, username="upload_busy", phone="+79997000011"
+        )
+        other = await self._add_account(
+            test_session, custom_automation, username="upload_busy_other", phone="+79997000012"
+        )
+        rows = (
+            await test_session.execute(
+                select(CustomProxy)
+                .where(CustomProxy.custom_automation_id == custom_automation.id)
+                .order_by(CustomProxy.host.asc())
+            )
+        ).scalars().all()
+        current, backup, *_free = rows
+        owner_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == owner.id)
+        )
+        bind_account_proxy(owner_pool, owner, current)
+        owner_pool.proxy_set_ids = [current.id, backup.id]
+        owner_pool.proxy_problem = False
+        await test_session.commit()
+
+        fresh = await resolve_account_proxy_choice(
+            test_session,
+            custom_automation.id,
+            proxy_line="10.9.7.7:1080:user:secret",
+        )
+
+        async def drop(account):
+            return account.id != owner.id
+
+        monkeypatch.setattr(ps, "_drop_live_session", drop)
+        chosen = await assign_proxy_to_new_account(
+            test_session,
+            owner_pool,
+            owner,
+            preferred_proxy_id=fresh.id,
+            lock_preferred=True,
+        )
+        assert chosen is None
+        assert owner_pool.proxy_id == current.id
+        assert list(owner_pool.proxy_set_ids) == [current.id, backup.id]
+        assert fresh.id not in set(owner_pool.proxy_set_ids)
+        assert owner_pool.proxy_problem is False
+        assert (owner.telegram_proxy or {}).get("host") == current.host
+
+        other_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == other.id)
+        )
+        other_chosen = await assign_proxy_to_new_account(test_session, other_pool, other)
+        assert other_chosen is not None
+        assert set(other_pool.proxy_set_ids or []).isdisjoint({current.id, backup.id})
+        assert other_pool.proxy_id not in {current.id, backup.id}
+
+    async def test_factory_proxy_stays_out_of_telegram_set(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from datetime import datetime
+        from unittest.mock import AsyncMock
+
+        from app.alembic.models import CustomContentFactoryAccount, CustomProxy
+        from app.services.custom import proxy_service as ps
+        from app.services.custom.proxy_service import (
+            ProxyChoiceError,
+            assign_proxy_to_new_account,
+            pick_least_loaded_proxy,
+            replace_proxy_list,
+            resolve_connect_proxy,
+        )
+
+        monkeypatch.setattr(ps, "probe_proxy_tcp", AsyncMock(return_value=True))
+        lines = "\n".join(f"10.6.1.{index}:1080" for index in range(1, 5))
+        await replace_proxy_list(test_session, custom_automation, lines)
+        await test_session.commit()
+        rows = (
+            await test_session.execute(
+                select(CustomProxy)
+                .where(CustomProxy.custom_automation_id == custom_automation.id)
+                .order_by(CustomProxy.host.asc())
+            )
+        ).scalars().all()
+        factory_proxy = rows[0]
+        now = datetime.utcnow()
+        factory = CustomContentFactoryAccount(
+            custom_automation_id=custom_automation.id,
+            platform="youtube",
+            display_name="yt",
+            handle="yt",
+            external_id="yt-1",
+            proxy_id=factory_proxy.id,
+            created_at=now,
+            updated_at=now,
+        )
+        test_session.add(factory)
+        await test_session.commit()
+
+        picked = await pick_least_loaded_proxy(test_session, custom_automation.id)
+        assert picked is not None
+        assert picked.id != factory_proxy.id
+        _proxy_id, payload = await resolve_connect_proxy(
+            test_session, custom_automation.id, phone="+79998000001"
+        )
+        assert payload["addr"] != factory_proxy.host
+        with pytest.raises(ProxyChoiceError, match="закрепл"):
+            await resolve_connect_proxy(
+                test_session, custom_automation.id, proxy_id=factory_proxy.id
+            )
+
+        owner = await self._add_account(
+            test_session, custom_automation, username="tg_beside_factory", phone="+79998000002"
+        )
+        owner_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == owner.id)
+        )
+        chosen = await assign_proxy_to_new_account(test_session, owner_pool, owner)
+        assert chosen is not None
+        assert chosen.id != factory_proxy.id
+        assert factory_proxy.id not in set(owner_pool.proxy_set_ids or [])
+        assert owner_pool.proxy_id != factory_proxy.id
+        assert owner_pool.proxy_problem is False
+        assert 2 <= len(owner_pool.proxy_set_ids) <= 4
+
+        await replace_proxy_list(test_session, custom_automation, lines)
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        await test_session.refresh(factory)
+        assert factory_proxy.id not in set(owner_pool.proxy_set_ids or [])
+        assert owner_pool.proxy_id != factory_proxy.id
+
+        factory.proxy_id = None
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        other = await self._add_account(
+            test_session, custom_automation, username="tg_after_factory", phone="+79998000003"
+        )
+        other_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == other.id)
+        )
+        freed = await assign_proxy_to_new_account(test_session, other_pool, other)
+        assert freed is not None
+        assert freed.id == factory_proxy.id
+        assert factory_proxy.id in set(other_pool.proxy_set_ids or [])
+        assert factory_proxy.id not in set(owner_pool.proxy_set_ids or [])
 
     async def test_dead_proxy_rotates_to_next_living(
         self,
@@ -7278,6 +7669,136 @@ class TestAccountProxies:
         )
         with pytest.raises(ProxyChoiceError, match="недоступен"):
             await resolve_connect_proxy(test_session, custom_automation.id, proxy_id=dead_id)
+
+    async def test_dead_primary_stays_inside_own_proxy_set(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        monkeypatch,
+    ):
+        from datetime import timedelta
+        from unittest.mock import AsyncMock
+
+        from app.alembic.models import CustomProxy
+        from app.services.custom import proxy_service
+        from app.services.custom.proxy_service import (
+            bind_account_proxy,
+            rebind_account_proxy_if_far,
+            rebalance_proxies,
+            record_proxy_success,
+            recover_dead_proxy,
+            replace_proxy_list,
+        )
+
+        proxy_service._last_rotate_at.clear()
+        monkeypatch.setattr(proxy_service, "_ROTATE_GAP", timedelta(0))
+        monkeypatch.setattr(proxy_service, "_drop_live_session", AsyncMock(return_value=True))
+        alive = {"10.9.1.2", "10.9.2.1", "10.9.2.2"}
+
+        async def probe(host, port, timeout=4.0):
+            return host in alive
+
+        monkeypatch.setattr(proxy_service, "probe_proxy_tcp", probe)
+
+        owner = await self._add_account(
+            test_session, custom_automation, username="set_owner", phone="+79996000001"
+        )
+        other = await self._add_account(
+            test_session, custom_automation, username="set_other", phone="+79996000002"
+        )
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.9.1.1:1080\n10.9.1.2:1080\n10.9.2.1:1080\n10.9.2.2:1080",
+        )
+        await test_session.commit()
+        owner_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == owner.id)
+        )
+        other_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == other.id)
+        )
+        owner_set = list(owner_pool.proxy_set_ids or [])
+        other_set = set(other_pool.proxy_set_ids or [])
+        assert len(owner_set) == 2
+        assert len(other_set) == 2
+        assert set(owner_set).isdisjoint(other_set)
+        assert owner_pool.proxy_id == owner_set[0]
+
+        chosen = await recover_dead_proxy(test_session, owner)
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        assert chosen is not None
+        assert chosen.id == owner_set[1]
+        assert chosen.id not in other_set
+        assert owner_pool.proxy_id == owner_set[1]
+        assert owner_pool.proxy_problem is False
+
+        alive.clear()
+        proxy_service._last_rotate_at.clear()
+        again = await recover_dead_proxy(test_session, owner)
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        assert again is None
+        assert owner_pool.proxy_id == owner_set[1]
+        assert owner_pool.proxy_id not in other_set
+        assert owner_pool.proxy_problem is True
+
+        primary = await test_session.get(CustomProxy, owner_set[0])
+        alive.add(primary.host)
+        proxy_service._last_rotate_at.clear()
+        restored = await recover_dead_proxy(test_session, owner)
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        assert restored is not None
+        assert restored.id == owner_set[0]
+        assert restored.id not in other_set
+        assert owner_pool.proxy_problem is False
+
+        owner_before = list(owner_pool.proxy_set_ids or [])
+        other_before = list(other_pool.proxy_set_ids or [])
+        await rebalance_proxies(test_session, custom_automation.id)
+        await test_session.refresh(owner_pool)
+        await test_session.refresh(other_pool)
+        assert list(owner_pool.proxy_set_ids or []) == owner_before
+        assert list(other_pool.proxy_set_ids or []) == other_before
+        assert owner_pool.proxy_id in set(owner_before)
+
+        by_host = {
+            row.host: row
+            for row in (
+                await test_session.execute(
+                    select(CustomProxy).where(CustomProxy.custom_automation_id == custom_automation.id)
+                )
+            ).scalars().all()
+        }
+        by_host["10.9.1.1"].country_code = "IN"
+        by_host["10.9.1.2"].country_code = "FI"
+        by_host["10.9.2.1"].country_code = "RU"
+        foreign = by_host["10.9.2.1"]
+        nearer = by_host["10.9.1.2"]
+        worse = by_host["10.9.1.1"]
+        for row in by_host.values():
+            row.is_healthy = True
+            row.last_failed_at = None
+        owner_pool.proxy_set_ids = [nearer.id, worse.id]
+        other_pool.proxy_set_ids = [foreign.id, by_host["10.9.2.2"].id]
+        bind_account_proxy(owner_pool, owner, worse)
+        await test_session.commit()
+        moved = await rebind_account_proxy_if_far(test_session, owner_pool, owner)
+        await test_session.flush()
+        await test_session.refresh(owner_pool)
+        assert moved is not None
+        assert moved.id == nearer.id
+        assert moved.id != foreign.id
+        assert owner_pool.proxy_id == nearer.id
+
+        owner_pool.proxy_problem = True
+        await test_session.commit()
+        await record_proxy_success(test_session, owner)
+        await test_session.flush()
+        await test_session.refresh(owner_pool)
+        assert owner_pool.proxy_problem is False
 
 
 class TestNeurocommentingDailyLimits:

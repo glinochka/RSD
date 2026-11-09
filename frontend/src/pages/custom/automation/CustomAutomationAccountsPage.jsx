@@ -1252,7 +1252,12 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                         <td title={uploadAgeAt(account) ? new Date(uploadAgeAt(account)).toLocaleString('ru-RU') : undefined}>
                           {formatUploadAge(uploadAgeAt(account))}
                         </td>
-                        <td>{account.proxy_label || 'Авто'}</td>
+                        <td>
+                          <div>{account.proxy_label || 'Авто'}</div>
+                          {account.proxy_problem ? (
+                            <span className="acc-chip acc-chip--bad">Проблемы с прокси</span>
+                          ) : null}
+                        </td>
                         <td onClick={(event) => event.stopPropagation()}>
                           <button
                             type="button"
@@ -1592,7 +1597,11 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 ) : null}
               </div>
               <p className="form-hint">
-                Прокси: {drawerAccount.proxy_label || 'авто из пула'}. В пуле: {formatUploadAge(uploadAgeAt(drawerAccount))}.
+                Прокси: {drawerAccount.proxy_label || 'авто из пула'}.
+                {drawerAccount.proxy_problem ? (
+                  <span className="acc-chip acc-chip--bad">Проблемы с прокси</span>
+                ) : null}
+                {' '}В пуле: {formatUploadAge(uploadAgeAt(drawerAccount))}.
                 {drawerAccount.warmup_status && drawerAccount.warmup_status !== 'idle'
                   ? ` ${WARMUP_STATUS_LABELS[drawerAccount.warmup_status] || drawerAccount.warmup_status}.`
                   : ''}

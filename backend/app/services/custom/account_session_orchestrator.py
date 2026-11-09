@@ -118,8 +118,8 @@ class AccountSessionHub:
             async with async_session_maker() as session:
                 fresh = await session.get(SocialAccount, account.id)
                 rotated = await recover_dead_proxy(session, fresh) if fresh is not None else None
-                if rotated is not None:
-                    await session.commit()
+                await session.commit()
+                if rotated is not None and fresh is not None:
                     await session.refresh(fresh)
             if fresh is None or rotated is None:
                 return False

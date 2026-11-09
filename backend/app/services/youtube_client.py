@@ -54,6 +54,14 @@ class YouTubeClient:
         self._token_url = "https://oauth2.googleapis.com/token"
         self._api_base = "https://www.googleapis.com"
 
+    def _async_client(self, proxy: str | None):
+        kwargs: dict[str, Any] = {"timeout": self._timeout}
+        url = str(proxy or "").strip()
+        if url:
+            kwargs["proxy"] = url
+            kwargs["trust_env"] = False
+        return httpx.AsyncClient(**kwargs)
+
     def build_oauth_authorization_url(self, *, state: str, redirect_uri: str | None = None) -> str:
         self._assert_oauth_configured()
         effective_redirect_uri = (redirect_uri or self._redirect_uri).strip()
@@ -73,7 +81,13 @@ class YouTubeClient:
         )
         return f"{self._oauth_base_url}?{query}"
 
-    async def exchange_code_for_tokens(self, *, code: str, redirect_uri: str | None = None) -> dict[str, Any]:
+    async def exchange_code_for_tokens(
+        self,
+        *,
+        code: str,
+        redirect_uri: str | None = None,
+        proxy: str | None = None,
+    ) -> dict[str, Any]:
         self._assert_oauth_configured()
         effective_redirect_uri = (redirect_uri or self._redirect_uri).strip()
         if not effective_redirect_uri:
@@ -88,7 +102,7 @@ class YouTubeClient:
         if not payload["code"]:
             raise RuntimeError("OAuth code is empty")
 
-        response = await self._request_form("POST", self._token_url, data=payload)
+        response = await self._request_form("POST", self._token_url, data=payload, proxy=proxy)
         access_token = str(response.get("access_token") or "").strip()
         refresh_token = str(response.get("refresh_token") or "").strip()
         if not access_token:
@@ -108,12 +122,13 @@ class YouTubeClient:
             "connected_at": _now_utc_naive().isoformat(),
         }
 
-    async def health_check(self, *, token_bundle: dict[str, Any]) -> dict[str, Any]:
-        bundle = await self.ensure_fresh_access_token(token_bundle=token_bundle)
+    async def health_check(self, *, token_bundle: dict[str, Any], proxy: str | None = None) -> dict[str, Any]:
+        bundle = await self.ensure_fresh_access_token(token_bundle=token_bundle, proxy=proxy)
         profile = await self._youtube_api_get(
             path="/youtube/v3/channels",
             params={"part": "id,snippet", "mine": "true"},
             access_token=str(bundle.get("access_token") or ""),
+            proxy=proxy,
         )
         items = profile.get("items") if isinstance(profile, dict) else None
         first = items[0] if isinstance(items, list) and items else {}
@@ -138,8 +153,9 @@ class YouTubeClient:
         description: str = "",
         privacy_status: str = "public",
         media_bytes: bytes | None = None,
+        proxy: str | None = None,
     ) -> dict[str, Any]:
-        bundle = await self.ensure_fresh_access_token(token_bundle=token_bundle)
+        bundle = await self.ensure_fresh_access_token(token_bundle=token_bundle, proxy=proxy)
         access_token = str(bundle.get("access_token") or "").strip()
         if not access_token:
             raise RuntimeError("YouTube upload failed: empty access_token")
@@ -148,7 +164,7 @@ class YouTubeClient:
             src = str(video_url or "").strip()
             if not src:
                 raise RuntimeError("YouTube upload failed: empty video_url")
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with self._async_client(proxy) as client:
                 media_resp = await client.get(src)
                 if not media_resp.is_success:
                     raise RuntimeError(f"Failed to download rendered video: HTTP {media_resp.status_code}")
@@ -170,11 +186,13 @@ class YouTubeClient:
             access_token=access_token,
             metadata=metadata,
             content_length=len(media_bytes),
+            proxy=proxy,
         )
         upload_result = await self._upload_resumable_bytes(
             access_token=access_token,
             resumable_url=resumable_url,
             media_bytes=media_bytes,
+            proxy=proxy,
         )
         video_id = str(upload_result.get("id") or "").strip()
         if not video_id:
@@ -185,16 +203,23 @@ class YouTubeClient:
             "token_bundle": bundle,
         }
 
-    async def ensure_fresh_access_token(self, *, token_bundle: dict[str, Any]) -> dict[str, Any]:
+    async def ensure_fresh_access_token(
+        self,
+        *,
+        token_bundle: dict[str, Any],
+        proxy: str | None = None,
+    ) -> dict[str, Any]:
         bundle = dict(token_bundle or {})
         access_token = str(bundle.get("access_token") or "").strip()
         refresh_token = str(bundle.get("refresh_token") or "").strip()
-        if not refresh_token:
-            raise RuntimeError("YouTube token bundle missing refresh_token")
         expires_at = _parse_expiry(bundle.get("expires_at"))
         now = _now_utc_naive()
         if access_token and expires_at and expires_at > (now + timedelta(seconds=60)):
             return bundle
+        if not refresh_token:
+            if access_token and expires_at is None:
+                return bundle
+            raise RuntimeError("YouTube token bundle missing refresh_token")
 
         response = await self._request_form(
             "POST",
@@ -205,22 +230,31 @@ class YouTubeClient:
                 "refresh_token": refresh_token,
                 "grant_type": "refresh_token",
             },
+            proxy=proxy,
         )
         new_access_token = str(response.get("access_token") or "").strip()
         if not new_access_token:
             raise RuntimeError("YouTube refresh response missing access_token")
         expires_in = int(response.get("expires_in") or 3600)
         bundle["access_token"] = new_access_token
+        bundle["refresh_token"] = str(response.get("refresh_token") or refresh_token).strip() or refresh_token
         bundle["token_type"] = str(response.get("token_type") or bundle.get("token_type") or "Bearer")
         bundle["expires_at"] = (now + timedelta(seconds=max(30, expires_in - 30))).isoformat()
         if response.get("scope"):
             bundle["scope"] = str(response.get("scope") or "")
         return bundle
 
-    async def _youtube_api_get(self, *, path: str, params: dict[str, Any], access_token: str) -> dict[str, Any]:
+    async def _youtube_api_get(
+        self,
+        *,
+        path: str,
+        params: dict[str, Any],
+        access_token: str,
+        proxy: str | None = None,
+    ) -> dict[str, Any]:
         url = f"{self._api_base}{path}"
         headers = {"Authorization": f"Bearer {access_token}"}
-        return await self._request_json("GET", url, headers=headers, params=params)
+        return await self._request_json("GET", url, headers=headers, params=params, proxy=proxy)
 
     async def _init_resumable_upload(
         self,
@@ -228,6 +262,7 @@ class YouTubeClient:
         access_token: str,
         metadata: dict[str, Any],
         content_length: int,
+        proxy: str | None = None,
     ) -> str:
         url = f"{self._api_base}/upload/youtube/v3/videos"
         headers = {
@@ -240,7 +275,7 @@ class YouTubeClient:
         last_error = None
         for attempt in range(1, self._max_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with self._async_client(proxy) as client:
                     resp = await client.post(url, headers=headers, params=params, json=metadata)
                 if resp.is_success:
                     location = str(resp.headers.get("Location") or "").strip()
@@ -265,6 +300,7 @@ class YouTubeClient:
         access_token: str,
         resumable_url: str,
         media_bytes: bytes,
+        proxy: str | None = None,
     ) -> dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -274,7 +310,7 @@ class YouTubeClient:
         last_error = None
         for attempt in range(1, self._max_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with self._async_client(proxy) as client:
                     resp = await client.put(resumable_url, headers=headers, content=media_bytes)
                 if resp.is_success:
                     return resp.json() if resp.content else {}
@@ -297,8 +333,9 @@ class YouTubeClient:
         *,
         headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
+        proxy: str | None = None,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with self._async_client(proxy) as client:
             resp = await client.request(method, url, headers=headers, params=params)
         if not resp.is_success:
             raise RuntimeError(f"YouTube API request failed: HTTP {resp.status_code} {resp.text[:300]}")
@@ -307,8 +344,15 @@ class YouTubeClient:
         data = resp.json()
         return data if isinstance(data, dict) else {"data": data}
 
-    async def _request_form(self, method: str, url: str, *, data: dict[str, Any]) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+    async def _request_form(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: dict[str, Any],
+        proxy: str | None = None,
+    ) -> dict[str, Any]:
+        async with self._async_client(proxy) as client:
             resp = await client.request(method, url, data=data)
         if not resp.is_success:
             raise RuntimeError(f"YouTube OAuth request failed: HTTP {resp.status_code} {resp.text[:300]}")

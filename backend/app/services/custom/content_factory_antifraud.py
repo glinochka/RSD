@@ -421,6 +421,56 @@ def should_clear_shadowban(*, recent_posts: list[dict[str, Any]]) -> bool:
     return sum(int(post.get("views") or 0) for post in live) > 0
 
 
+def credential_status(platform: str, credentials: dict[str, Any] | None) -> dict[str, Any]:
+    """How the row should talk about the token. Access-only is never 'forever fine'."""
+    payload = credentials or {}
+    name = str(platform or "").strip().lower()
+    has_refresh = bool(str(payload.get("refresh_token") or "").strip())
+    has_access = bool(str(payload.get("access_token") or "").strip())
+    renewable = name == "instagram" and bool(str(payload.get("expires_at") or "").strip())
+    if has_refresh and name == "youtube":
+        mode = "refresh"
+        note = "Refresh сохранён. Access обновляется через прокси этого аккаунта."
+    elif has_refresh:
+        mode = "refresh_saved"
+        note = (
+            "Refresh сохранён. Обновить им access нельзя: на сервере нет ключей приложения "
+            f"{name}. Пока access жив, публикация идёт им через прокси аккаунта."
+        )
+    elif renewable:
+        mode = "renewable"
+        note = "Access продлевается через прокси этого аккаунта. Это не вечный токен."
+    elif has_access:
+        mode = "access_only"
+        notes = {
+            "youtube": "Только access, без refresh. Когда срок кончится, обновить токен нечем.",
+            "instagram": "Только access. Instagram в этом подключении refresh не отдаёт, срок токена сам не продлевается.",
+            "tiktok": "Только access, без refresh. Срок токена сам не продлевается.",
+            "pinterest": "Только access, без refresh. Срок токена сам не продлевается.",
+            "vk": "Только access. VK в этой форме refresh не отдаёт, срок токена сам не продлевается.",
+        }
+        note = notes.get(name, "Только access, без refresh. Срок токена сам не продлевается.")
+    else:
+        mode = "missing"
+        note = "Нет токена площадки."
+    return {
+        "credential_mode": mode,
+        "credential_note": note,
+        "access_only": mode in {"access_only", "missing"},
+    }
+
+
+def present_health_score(score: int, *, credential_mode: str, proxy_ok: bool) -> int:
+    value = int(score)
+    if not proxy_ok:
+        value = min(value, 45)
+    if credential_mode in {"access_only", "missing"}:
+        value = min(value, 49)
+    elif credential_mode in {"refresh_saved", "renewable"}:
+        value = min(value, 60)
+    return max(1, value)
+
+
 def compute_health_score(
     *,
     status: str,

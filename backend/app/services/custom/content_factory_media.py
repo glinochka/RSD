@@ -650,7 +650,7 @@ async def synthesize_voiceover(*, api_key: str, voice_id: str, model_id: str, te
     return dest
 
 
-async def resolve_video_bytes(video_url: str | None) -> bytes:
+async def resolve_video_bytes(video_url: str | None, *, proxy_url: str | None = None) -> bytes:
     local = local_path_from_url(video_url)
     if local:
         data = local.read_bytes()
@@ -659,7 +659,9 @@ async def resolve_video_bytes(video_url: str | None) -> bytes:
     url = str(video_url or "").strip()
     if not url.startswith("http"):
         raise RuntimeError("Нет готового файла ролика")
-    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+    if not str(proxy_url or "").strip():
+        raise RuntimeError("Нет прокси")
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, proxy=proxy_url, trust_env=False) as client:
         response = await client.get(url)
         if not response.is_success:
             raise RuntimeError(f"Не удалось скачать ролик: HTTP {response.status_code}")

@@ -179,8 +179,8 @@ class AccountHealthWorker:
 
                         if looks_like_proxy_dead(exc):
                             rotated = await recover_dead_proxy(session, social_account)
+                            await session.commit()
                             if rotated is not None:
-                                await session.commit()
                                 await session.refresh(social_account)
                                 await asyncio.sleep(2)
                                 last_exc = None

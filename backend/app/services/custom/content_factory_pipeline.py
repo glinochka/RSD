@@ -71,7 +71,13 @@ from .content_factory_media import (
     write_music_bed,
     write_thumbnail,
 )
-from .content_factory_publishers import PublisherError, fetch_post_analytics, publish_to_platform
+from .content_factory_proxy import PROXY_MISSING, proxy_url_for_account
+from .content_factory_publishers import (
+    PublisherError,
+    fetch_post_analytics,
+    merge_platform_credentials,
+    publish_to_platform,
+)
 from .content_factory_service import (
     add_warmup_event,
     decrypt_json,
@@ -1237,6 +1243,16 @@ async def _post_video(
             seed=f"{video.id}:{account.id}",
             hashtags=list(video.hashtags or []),
         )
+        proxy_url = ""
+        if not settings.sandbox_mode:
+            proxy_url = await proxy_url_for_account(session, account)
+            if not proxy_url:
+                if post.status != "processing":
+                    post.status = "held"
+                    post.hold_reason = PROXY_MISSING
+                if not str(account.last_error or "").strip():
+                    account.last_error = PROXY_MISSING
+                continue
         try:
             result = await publish_to_platform(
                 platform=account.platform,
@@ -1251,6 +1267,7 @@ async def _post_video(
                 image_urls=list((video.extra or {}).get("slide_urls") or [])
                 if str((video.extra or {}).get("media_kind") or "") == "carousel"
                 else None,
+                proxy_url=proxy_url or None,
             )
         except PublisherError as exc:
             _mark_publish_failure(post, account, str(exc))
@@ -1291,9 +1308,9 @@ async def _post_video(
         attempted_this_tick += 1
         bundle = result.get("token_bundle")
         if isinstance(bundle, dict) and bundle:
-            merged = decrypt_json(account.credentials_enc)
-            merged.update({key: value for key, value in bundle.items() if value})
-            account.credentials_enc = encrypt_json(merged)
+            account.credentials_enc = encrypt_json(
+                merge_platform_credentials(decrypt_json(account.credentials_enc), bundle)
+            )
         if not settings.sandbox_mode and post.external_id:
             await session.commit()
     statuses = [item.status for item in existing.values()]
@@ -1502,10 +1519,14 @@ async def _sync_analytics(session: AsyncSession, automation_id: int) -> int:
         account = post.account
         if not account:
             continue
+        proxy_url = await proxy_url_for_account(session, account)
+        if not proxy_url:
+            continue
         stats = await fetch_post_analytics(
             platform=post.platform,
             credentials=decrypt_json(account.credentials_enc),
             external_id=post.external_id,
+            proxy_url=proxy_url,
         )
         if not stats:
             continue
@@ -1523,8 +1544,8 @@ async def _sync_analytics(session: AsyncSession, automation_id: int) -> int:
         if not unreliable:
             post.analytics_synced_at = now_utc()
         if isinstance(bundle, dict) and bundle.get("access_token"):
-            merged = decrypt_json(account.credentials_enc)
-            merged.update({key: value for key, value in bundle.items() if value})
-            account.credentials_enc = encrypt_json(merged)
+            account.credentials_enc = encrypt_json(
+                merge_platform_credentials(decrypt_json(account.credentials_enc), bundle)
+            )
         updated += 1
     return updated
