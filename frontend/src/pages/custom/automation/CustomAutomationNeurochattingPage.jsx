@@ -102,6 +102,13 @@ const CustomAutomationNeurochattingPage = () => {
   const selectedAccounts = new Set(settings?.account_ids || []);
   const selectedChats = new Set(settings?.chat_ids || []);
   const selectedFolders = new Set(settings?.folder_ids || []);
+  const folderGroupCount = (data?.folders || []).reduce((sum, folder) => {
+    if (!selectedFolders.has(folder.id)) {
+      return sum;
+    }
+    return sum + Number(folder.group_count || 0);
+  }, 0);
+  const shownGroups = selectedFolders.size ? folderGroupCount : selectedChats.size;
   const blockedAccounts = new Set(settings?.blacklisted_account_ids || []);
 
   const accounts = useMemo(() => {
@@ -325,7 +332,7 @@ const CustomAutomationNeurochattingPage = () => {
 
       <div className="nc-card">
         <div className="nc-card-head">
-          <h2>Целевые группы <span className="nc-muted">{selectedFolders.size} пап. · {selectedChats.size} гр.</span></h2>
+          <h2>Целевые группы <span className="nc-muted">{selectedFolders.size} пап. · {shownGroups} гр.</span></h2>
           <Link className="acc-btn acc-btn--ghost" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}>Чаты и каналы</Link>
         </div>
         <div className="nc-row">

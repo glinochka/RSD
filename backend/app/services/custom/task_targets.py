@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import ChatTarget, UserFolderMember
 
-from .chat_scope import is_broadcast_channel, is_group_chat
+from .chat_scope import CHANNEL_TYPES, is_broadcast_channel, is_group_chat
 
 TASK_RESOURCE_KIND = {
     "neurocommenting": "channel",
@@ -39,6 +39,44 @@ def chat_matches_resource_kind(chat: ChatTarget | None, kind: str | None) -> boo
     if normalized in {"chat", "group"}:
         return bool(ctype) and is_group_chat(chat)
     return True
+
+
+async def folder_kind_counts(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    kind: str,
+) -> dict[int, int]:
+    """How many active targets in each folder match a module: chat or channel.
+
+    Same rule as ``chat_matches_resource_kind``. An empty chat type stays with
+    channels, so a group is counted for neurochatting only when it is typed
+    as a chat.
+    """
+    normalized = str(kind or "any").strip().lower()
+    filters = [
+        ChatTarget.custom_automation_id == automation_id,
+        ChatTarget.folder_id.is_not(None),
+        ChatTarget.is_active.is_(True),
+        ChatTarget.black_boxed_at.is_(None),
+    ]
+    ctype = func.lower(func.trim(ChatTarget.chat_type))
+    if normalized == "channel":
+        filters.append(
+            (ChatTarget.chat_type.is_(None))
+            | (ctype == "")
+            | (ctype.in_(tuple(CHANNEL_TYPES)))
+        )
+    elif normalized in {"chat", "group"}:
+        filters.append(ChatTarget.chat_type.is_not(None))
+        filters.append(ctype != "")
+        filters.append(ctype.notin_(tuple(CHANNEL_TYPES)))
+    rows = await session.execute(
+        select(ChatTarget.folder_id, func.count(ChatTarget.id))
+        .where(*filters)
+        .group_by(ChatTarget.folder_id)
+    )
+    return {int(folder_id): int(count) for folder_id, count in rows.all() if folder_id is not None}
 
 
 def as_int_list(raw: Any) -> list[int]:

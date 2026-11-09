@@ -1,5 +1,5 @@
 """Task folders, parser user folders, and per-account session streams."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -146,6 +146,122 @@ class TestTaskChatFolders:
         assert group.id not in channels
         assert group.id in chats_only
         assert channel.id not in chats_only
+
+    async def test_neurochatting_counts_folder_groups_not_channels(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.neurochatting_module_service import get_neurochatting_module
+        from app.services.custom.task_targets import resolve_task_chat_ids
+
+        now = _now()
+        folder = ChatFolder(
+            custom_automation_id=custom_automation.id,
+            name="mixed_pool",
+            created_at=now,
+            updated_at=now,
+        )
+        channels_only = ChatFolder(
+            custom_automation_id=custom_automation.id,
+            name="channels_only",
+            created_at=now,
+            updated_at=now,
+        )
+        test_session.add_all([folder, channels_only])
+        await test_session.flush()
+        group = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Группа в папке",
+            invite_link="https://t.me/mixed_group",
+            folder_id=folder.id,
+            chat_type="chat",
+            is_active=True,
+            created_at=now - timedelta(days=30),
+            updated_at=now,
+        )
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Канал в папке",
+            invite_link="https://t.me/mixed_channel",
+            folder_id=folder.id,
+            chat_type="channel",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        lone_channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Только канал",
+            invite_link="https://t.me/only_channel",
+            folder_id=channels_only.id,
+            chat_type="channel",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        newer_channels = [
+            ChatTarget(
+                custom_automation_id=custom_automation.id,
+                provider="telegram",
+                title=f"Канал {index}",
+                invite_link=f"https://t.me/mixed_channel_{index}",
+                folder_id=folder.id,
+                chat_type="channel",
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+            for index in range(400)
+        ]
+        test_session.add_all([group, channel, lone_channel, *newer_channels])
+        custom_automation.module_settings = {
+            "neurochatting": {
+                "enabled": True,
+                "account_ids": [],
+                "chat_ids": [],
+                "folder_ids": [folder.id],
+            }
+        }
+        custom_automation.is_digital_footprint_enabled = True
+        await test_session.commit()
+
+        chatting = await resolve_task_chat_ids(
+            test_session,
+            custom_automation.id,
+            {"folder_ids": [folder.id]},
+            task_key="neurochatting",
+        )
+        commenting = await resolve_task_chat_ids(
+            test_session,
+            custom_automation.id,
+            {"folder_ids": [folder.id]},
+            task_key="neurocommenting",
+        )
+        assert chatting == [group.id]
+        assert group.id not in commenting
+        assert channel.id in commenting
+        assert channel.id not in chatting
+
+        screen = await get_neurochatting_module(test_session, custom_automation.id)
+        assert screen["folder_group_count"] == 1
+        assert "в выбранных папках нет чатов" not in " ".join(screen["issues"])
+        mixed = next(item for item in screen["folders"] if item["id"] == folder.id)
+        assert mixed["group_count"] == 1
+
+        custom_automation.module_settings = {
+            "neurochatting": {
+                "enabled": True,
+                "account_ids": [],
+                "chat_ids": [],
+                "folder_ids": [channels_only.id],
+            }
+        }
+        await test_session.commit()
+        empty = await get_neurochatting_module(test_session, custom_automation.id)
+        assert empty["folder_group_count"] == 0
+        assert any("в выбранных папках нет чатов" in item for item in empty["issues"])
 
     async def test_chats_api_lists_folders_then_folder_contents(
         self,

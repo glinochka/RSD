@@ -20,6 +20,7 @@ from .chat_addlist_service import import_chat_links, normalize_chat_assignments
 from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
 from .chat_scope import is_group_chat
+from .task_targets import folder_kind_counts
 from .discussion_service import DEFAULT_DISCUSSION_PROMPT
 from .job_service import list_jobs
 from .module_delays import (
@@ -213,7 +214,13 @@ async def _log_summary(session: AsyncSession, automation_id: int) -> dict[str, A
     }
 
 
-def _issues(settings: dict[str, Any], *, enabled: bool, chats: list[dict[str, Any]]) -> list[str]:
+def _issues(
+    settings: dict[str, Any],
+    *,
+    enabled: bool,
+    chats: list[dict[str, Any]],
+    folder_group_count: int = 0,
+) -> list[str]:
     issues: list[str] = []
     if not enabled:
         issues.append("Модуль нейрочаттинга выключен")
@@ -226,11 +233,8 @@ def _issues(settings: dict[str, Any], *, enabled: bool, chats: list[dict[str, An
     selected = {item["id"] for item in chats if item["id"] in set(settings.get("chat_ids") or [])}
     if selected and not any(item["id"] in selected and item.get("is_group") for item in chats):
         issues.append("Нейрочаттинг отвечает только в группах — среди выбранных нет чатов")
-    folder_ids = set(settings.get("folder_ids") or [])
-    if folder_ids:
-        in_folders = [item for item in chats if item.get("folder_id") in folder_ids]
-        if in_folders and not any(item.get("is_group") for item in in_folders):
-            issues.append("Нейрочаттинг отвечает только в группах — в выбранных папках нет чатов")
+    if settings.get("folder_ids") and folder_group_count <= 0:
+        issues.append("Нейрочаттинг отвечает только в группах — в выбранных папках нет чатов")
     return issues
 
 
@@ -263,6 +267,11 @@ async def get_neurochatting_module(session: AsyncSession, automation_id: int) ->
         )
     ).scalars().all()
     folders = await folder_payloads(session, automation_id)
+    group_counts = await folder_kind_counts(session, automation_id, kind="chat")
+    for folder in folders:
+        folder["group_count"] = group_counts.get(int(folder["id"]), 0)
+    selected_folders = set(settings.get("folder_ids") or [])
+    folder_group_count = sum(group_counts.get(int(folder_id), 0) for folder_id in selected_folders)
     visible = [_chat_row(chat) for chat in chats if not chat.black_boxed_at]
     black = [chat for chat in chats if chat.black_boxed_at]
     jobs = await list_jobs(session, automation_id, bucket="all", category="module", limit=80)
@@ -274,6 +283,7 @@ async def get_neurochatting_module(session: AsyncSession, automation_id: int) ->
         "accounts": accounts,
         "chats": visible,
         "folders": folders,
+        "folder_group_count": folder_group_count,
         "prompts": [
             {
                 "id": prompt.id,
@@ -295,7 +305,12 @@ async def get_neurochatting_module(session: AsyncSession, automation_id: int) ->
             }
             for chat in black
         ],
-        "issues": _issues(settings, enabled=bool(automation.is_digital_footprint_enabled), chats=visible),
+        "issues": _issues(
+            settings,
+            enabled=bool(automation.is_digital_footprint_enabled),
+            chats=visible,
+            folder_group_count=folder_group_count,
+        ),
     }
 
 
