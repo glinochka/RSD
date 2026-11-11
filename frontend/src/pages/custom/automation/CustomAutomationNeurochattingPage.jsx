@@ -253,6 +253,71 @@ const CustomAutomationNeurochattingPage = () => {
       </div>
 
       <div className="nc-card">
+        <div className="nc-card-head"><h2>Запуск и логи</h2></div>
+        <div className="nc-launch" style={{ width: '100%' }}>
+          <div className="nc-status">
+            <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
+            {activeJob ? `${STATUS_LABELS[activeJob.status] || activeJob.status} · ${formatWhen(activeJob.created_at)}` : 'Остановлено'}
+          </div>
+          <div className="nc-row" style={{ flexWrap: 'wrap', maxWidth: '100%' }}>
+            <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => persist()}>Сохранить</button>
+            <UbtJobControls
+              job={activeJob}
+              busy={busy}
+              onPause={() => runSafe(() => customService.pauseAutomationJob(id, activeJob.id).then(load), 'Задача на паузе')}
+              onResume={() => runSafe(() => customService.resumeAutomationJob(id, activeJob.id).then(load), 'Задача продолжена')}
+              onCancel={() => runSafe(() => customService.cancelAutomationJob(id, activeJob.id).then(load), 'Запуск отменён')}
+            />
+            <span style={{ display: 'inline-flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
+              <button
+                type="button"
+                className="acc-btn acc-btn--ghost"
+                disabled={busy}
+                onClick={() => runSafe(async () => {
+                  const payload = await customService.getParserModule(id);
+                  setParserSettings(payload.settings || {});
+                  setParserOpen(true);
+                })}
+              >
+                Парсинг юзеров
+              </button>
+              <button
+                type="button"
+                className="acc-btn acc-btn--primary"
+                disabled={busy || !enabled || (issues.length > 0 && !dirty)}
+                onClick={() => runSafe(async () => {
+                  const saved = assertCanRun(await persist());
+                  await customService.runNeurochattingModule(id, { ...saved.settings, enabled: saved.enabled });
+                  await load();
+                }, 'Запуск поставлен в очередь')}
+              >
+                + Новый запуск
+              </button>
+            </span>
+            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'tasks')}>Все задачи</Link>
+          </div>
+        </div>
+        <div className="nc-kpis">
+          <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
+          <div className="nc-kpi"><strong>{selectedFolders.size || selectedChats.size}</strong><span>Папки / группы</span></div>
+          <div className="nc-kpi"><strong>{settings.delay_before_max}s</strong><span>Макс. интервал</span></div>
+          <div className="nc-kpi"><strong>{settings.max_per_chat}</strong><span>Макс. сообщений</span></div>
+        </div>
+        {issues.length ? (
+          <div className="nc-alert">
+            <strong>Проблемы с конфигурацией</strong>
+            {issues.map((item) => <div key={item}>{item}</div>)}
+          </div>
+        ) : null}
+        <div className="nc-logs">
+          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
+            <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {humanizeUbtLog(row.message)}</div>
+          ))}
+        </div>
+        <UbtUnsaved dirty={dirty} />
+      </div>
+
+      <div className="nc-card">
         <div className="nc-card-head">
           <h2>Выбор аккаунтов <span className="nc-muted">{selectedAccounts.size} выбрано</span></h2>
         </div>
@@ -479,69 +544,6 @@ const CustomAutomationNeurochattingPage = () => {
         </div>
         <p className="nc-muted" style={{ marginTop: 10 }}>Не отвечаем на слишком свежие сообщения — антибот-пауза. FloodWait Telegram обрабатывается сам.</p>
         <UbtJoinDelay settings={settings} onPatch={patch} />
-      </div>
-
-      <div className="nc-card">
-        <div className="nc-card-head"><h2>Запуск и логи</h2></div>
-        <div className="nc-kpis">
-          <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
-          <div className="nc-kpi"><strong>{selectedFolders.size || selectedChats.size}</strong><span>Папки / группы</span></div>
-          <div className="nc-kpi"><strong>{settings.delay_before_max}s</strong><span>Макс. интервал</span></div>
-          <div className="nc-kpi"><strong>{settings.max_per_chat}</strong><span>Макс. сообщений</span></div>
-        </div>
-        {issues.length ? (
-          <div className="nc-alert" style={{ marginTop: 12 }}>
-            <strong>Проблемы с конфигурацией</strong>
-            {issues.map((item) => <div key={item}>{item}</div>)}
-          </div>
-        ) : null}
-        <div className="nc-logs" style={{ marginTop: 12 }}>
-          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
-            <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {humanizeUbtLog(row.message)}</div>
-          ))}
-        </div>
-        <UbtUnsaved dirty={dirty} />
-        <div className="nc-launch" style={{ marginTop: 12 }}>
-          <div className="nc-status">
-            <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
-            {activeJob ? `${STATUS_LABELS[activeJob.status] || activeJob.status} · ${formatWhen(activeJob.created_at)}` : 'Остановлено'}
-          </div>
-          <div className="nc-row">
-            <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => persist()}>Сохранить</button>
-            <UbtJobControls
-              job={activeJob}
-              busy={busy}
-              onPause={() => runSafe(() => customService.pauseAutomationJob(id, activeJob.id).then(load), 'Задача на паузе')}
-              onResume={() => runSafe(() => customService.resumeAutomationJob(id, activeJob.id).then(load), 'Задача продолжена')}
-              onCancel={() => runSafe(() => customService.cancelAutomationJob(id, activeJob.id).then(load), 'Запуск отменён')}
-            />
-            <button
-              type="button"
-              className="acc-btn acc-btn--ghost"
-              disabled={busy}
-              onClick={() => runSafe(async () => {
-                const payload = await customService.getParserModule(id);
-                setParserSettings(payload.settings || {});
-                setParserOpen(true);
-              })}
-            >
-              Парсинг юзеров
-            </button>
-            <button
-              type="button"
-              className="acc-btn acc-btn--primary"
-              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
-              onClick={() => runSafe(async () => {
-                const saved = assertCanRun(await persist());
-                await customService.runNeurochattingModule(id, { ...saved.settings, enabled: saved.enabled });
-                await load();
-              }, 'Запуск поставлен в очередь')}
-            >
-              + Новый запуск
-            </button>
-            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'tasks')}>Все задачи</Link>
-          </div>
-        </div>
       </div>
 
       <div className="nc-card">
