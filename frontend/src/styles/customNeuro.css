@@ -708,6 +708,34 @@
   overflow: auto;
 }
 
+.nc-modal-backdrop--fit {
+  top: 64px;
+  z-index: 180;
+  align-items: flex-start;
+  padding: 12px 16px 16px;
+  overflow: hidden;
+}
+
+.nc-modal--fit {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  max-height: calc(100dvh - 92px);
+  overflow: hidden;
+  padding: 0;
+}
+
+.nc-modal--fit .nc-card-head {
+  flex: 0 0 auto;
+  padding: 18px 20px 0;
+}
+
+.nc-modal--fit .nc-modal-body {
+  overflow: auto;
+  min-height: 0;
+  padding: 0 20px 20px;
+}
+
 .nc-distribute {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

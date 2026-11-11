@@ -2138,6 +2138,8 @@ class TestNeurochattingUserParser:
                 "min_per_account": 100,
                 "max_per_account": 100,
                 "member_limit": 10,
+                "join_delay_min": 20 * 60,
+                "join_delay_max": 40 * 60,
             },
         }
         await test_session.commit()
@@ -2157,6 +2159,8 @@ class TestNeurochattingUserParser:
                 "min_per_account": 100,
                 "max_per_account": 100,
                 "do_join": False,
+                "join_delay_min": 15 * 60,
+                "join_delay_max": 60 * 60,
                 "folder_ids": [],
                 "targets": [],
             },
@@ -2165,6 +2169,10 @@ class TestNeurochattingUserParser:
         await test_session.refresh(custom_automation)
         stored = custom_automation.module_settings["parser"]
         assert stored["do_join"] is True
+        assert stored["join_delay_min"] == 20 * 60
+        assert stored["join_delay_max"] == 40 * 60
+        assert "join_delay_min" not in cfg
+        assert "join_delay_max" not in cfg
         assert stored["folder_ids"] == [folder.id]
         assert stored["targets"]
         assert "joined_only" not in stored

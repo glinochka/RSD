@@ -12,7 +12,6 @@ import Stepper from '../../../components/custom/UbtStepper';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { folderOptions, matchesPreset, toggleNumericId, ubtModulePath } from './customNav';
-import { DELAY_MAX_SECONDS } from './delayLimits';
 import { humanizeUbtLog } from './ubtLogText';
 import UbtDistributeChats from '../../../components/custom/UbtDistributeChats';
 import UbtJobControls from '../../../components/custom/UbtJobControls';
@@ -26,21 +25,6 @@ const DELAY_PRESETS = {
   rec: { delay_before_min: 42, delay_before_max: 78 },
   max: { delay_before_min: 90, delay_before_max: 150 },
 };
-
-const PARSER_SOURCES = [
-  { value: 'messages', label: 'По сообщениям' },
-  { value: 'participants', label: 'Участники' },
-  { value: 'comments', label: 'По комментариям' },
-];
-
-const PARSER_SINCE = [
-  { value: 1, label: '1 час' },
-  { value: 6, label: '6 часов' },
-  { value: 24, label: 'Сутки' },
-  { value: 72, label: '3 дня' },
-  { value: 168, label: 'Неделя' },
-  { value: 720, label: '30 дней' },
-];
 
 const STATUS_LABELS = {
   pending: 'Ожидает',
@@ -81,8 +65,6 @@ const CustomAutomationNeurochattingPage = () => {
   const [blackQuery, setBlackQuery] = useState('');
   const [presetName, setPresetName] = useState('');
   const [blackAccountQuery, setBlackAccountQuery] = useState('');
-  const [parserOpen, setParserOpen] = useState(false);
-  const [parserSettings, setParserSettings] = useState(null);
 
   const applyPayload = (payload) => {
     setData(payload);
@@ -250,71 +232,6 @@ const CustomAutomationNeurochattingPage = () => {
           <FeatureToggle compact title={enabled ? 'Модуль включён' : 'Модуль выключен'} checked={enabled} onChange={(value) => { setEnabled(value); persist({ enabled: value }); }} />
         </div>
         <p className="nc-intro">Автоматический чаттинг в Telegram-группах. Аккаунты следят за разговором и отвечают короткими естественными репликами — без ссылок и рекламы.</p>
-      </div>
-
-      <div className="nc-card">
-        <div className="nc-card-head"><h2>Запуск и логи</h2></div>
-        <div className="nc-launch" style={{ width: '100%' }}>
-          <div className="nc-status">
-            <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
-            {activeJob ? `${STATUS_LABELS[activeJob.status] || activeJob.status} · ${formatWhen(activeJob.created_at)}` : 'Остановлено'}
-          </div>
-          <div className="nc-row" style={{ flexWrap: 'wrap', maxWidth: '100%' }}>
-            <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => persist()}>Сохранить</button>
-            <UbtJobControls
-              job={activeJob}
-              busy={busy}
-              onPause={() => runSafe(() => customService.pauseAutomationJob(id, activeJob.id).then(load), 'Задача на паузе')}
-              onResume={() => runSafe(() => customService.resumeAutomationJob(id, activeJob.id).then(load), 'Задача продолжена')}
-              onCancel={() => runSafe(() => customService.cancelAutomationJob(id, activeJob.id).then(load), 'Запуск отменён')}
-            />
-            <span style={{ display: 'inline-flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
-              <button
-                type="button"
-                className="acc-btn acc-btn--ghost"
-                disabled={busy}
-                onClick={() => runSafe(async () => {
-                  const payload = await customService.getParserModule(id);
-                  setParserSettings(payload.settings || {});
-                  setParserOpen(true);
-                })}
-              >
-                Парсинг юзеров
-              </button>
-              <button
-                type="button"
-                className="acc-btn acc-btn--primary"
-                disabled={busy || !enabled || (issues.length > 0 && !dirty)}
-                onClick={() => runSafe(async () => {
-                  const saved = assertCanRun(await persist());
-                  await customService.runNeurochattingModule(id, { ...saved.settings, enabled: saved.enabled });
-                  await load();
-                }, 'Запуск поставлен в очередь')}
-              >
-                + Новый запуск
-              </button>
-            </span>
-            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'tasks')}>Все задачи</Link>
-          </div>
-        </div>
-        <div className="nc-kpis">
-          <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
-          <div className="nc-kpi"><strong>{selectedFolders.size || selectedChats.size}</strong><span>Папки / группы</span></div>
-          <div className="nc-kpi"><strong>{settings.delay_before_max}s</strong><span>Макс. интервал</span></div>
-          <div className="nc-kpi"><strong>{settings.max_per_chat}</strong><span>Макс. сообщений</span></div>
-        </div>
-        {issues.length ? (
-          <div className="nc-alert">
-            <strong>Проблемы с конфигурацией</strong>
-            {issues.map((item) => <div key={item}>{item}</div>)}
-          </div>
-        ) : null}
-        <div className="nc-logs">
-          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
-            <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {humanizeUbtLog(row.message)}</div>
-          ))}
-        </div>
-        <UbtUnsaved dirty={dirty} />
       </div>
 
       <div className="nc-card">
@@ -547,6 +464,57 @@ const CustomAutomationNeurochattingPage = () => {
       </div>
 
       <div className="nc-card">
+        <div className="nc-card-head"><h2>Запуск и логи</h2></div>
+        <div className="nc-kpis">
+          <div className="nc-kpi"><strong>{selectedAccounts.size}</strong><span>Аккаунты</span></div>
+          <div className="nc-kpi"><strong>{selectedFolders.size || selectedChats.size}</strong><span>Папки / группы</span></div>
+          <div className="nc-kpi"><strong>{settings.delay_before_max}s</strong><span>Макс. интервал</span></div>
+          <div className="nc-kpi"><strong>{settings.max_per_chat}</strong><span>Макс. сообщений</span></div>
+        </div>
+        {issues.length ? (
+          <div className="nc-alert" style={{ marginTop: 12 }}>
+            <strong>Проблемы с конфигурацией</strong>
+            {issues.map((item) => <div key={item}>{item}</div>)}
+          </div>
+        ) : null}
+        <div className="nc-logs" style={{ marginTop: 12 }}>
+          {(activeJob?.logs || []).length === 0 ? 'Логи появятся после запуска. Хранятся 3 суток.' : (activeJob.logs || []).map((row, index) => (
+            <div key={`${row.ts}-${index}`} className={row.level === 'error' ? 'nc-log-err' : ''}>{formatWhen(row.ts)} {humanizeUbtLog(row.message)}</div>
+          ))}
+        </div>
+        <UbtUnsaved dirty={dirty} />
+        <div className="nc-launch" style={{ marginTop: 12 }}>
+          <div className="nc-status">
+            <span className={`nc-dot ${activeJob && ['pending', 'running'].includes(activeJob.status) ? 'is-on' : ''}`} />
+            {activeJob ? `${STATUS_LABELS[activeJob.status] || activeJob.status} · ${formatWhen(activeJob.created_at)}` : 'Остановлено'}
+          </div>
+          <div className="nc-row">
+            <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => persist()}>Сохранить</button>
+            <UbtJobControls
+              job={activeJob}
+              busy={busy}
+              onPause={() => runSafe(() => customService.pauseAutomationJob(id, activeJob.id).then(load), 'Задача на паузе')}
+              onResume={() => runSafe(() => customService.resumeAutomationJob(id, activeJob.id).then(load), 'Задача продолжена')}
+              onCancel={() => runSafe(() => customService.cancelAutomationJob(id, activeJob.id).then(load), 'Запуск отменён')}
+            />
+            <button
+              type="button"
+              className="acc-btn acc-btn--primary"
+              disabled={busy || !enabled || (issues.length > 0 && !dirty)}
+              onClick={() => runSafe(async () => {
+                const saved = assertCanRun(await persist());
+                await customService.runNeurochattingModule(id, { ...saved.settings, enabled: saved.enabled });
+                await load();
+              }, 'Запуск поставлен в очередь')}
+            >
+              + Новый запуск
+            </button>
+            <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'tasks')}>Все задачи</Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="nc-card">
         <div className="nc-card-head">
           <h2>История сообщений</h2>
           <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'stats')}>История сообщений</Link>
@@ -611,123 +579,6 @@ const CustomAutomationNeurochattingPage = () => {
           )}
         </div>
       </div>
-      {parserOpen ? (
-        <div className="nc-modal-backdrop" onClick={() => { if (!busy) setParserOpen(false); }}>
-          <div className="nc-modal nc-modal--wide" role="dialog" aria-label="Парсинг юзеров" onClick={(event) => event.stopPropagation()}>
-            <div className="nc-card-head">
-              <h2>Парсинг юзеров</h2>
-              <button type="button" className="acc-btn acc-btn--ghost" disabled={busy} onClick={() => setParserOpen(false)}>Закрыть</button>
-            </div>
-            <p className="nc-intro">Те же настройки парсера юзеров. Аккаунты этой задачи читают группы, где они уже состоят. Каналы не берём и никуда не вступаем. Юзеры одного запуска попадают в одну папку — её можно выбрать в масслукинге и масспрайминге.</p>
-            {!parserSettings ? <p className="nc-muted">Загрузка настроек парсера...</p> : (
-              <>
-                <div className="nc-mode nc-mode--3" style={{ marginTop: 12 }}>
-                  {PARSER_SOURCES.map((item) => (
-                    <button key={item.value} type="button" className={parserSettings.source === item.value ? 'is-on' : ''} onClick={() => setParserSettings((prev) => ({ ...prev, source: item.value }))}>{item.label}</button>
-                  ))}
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Окно по сообщениям</strong>
-                    <span>{parserSettings.source === 'participants' ? 'Для списка участников окно не нужно.' : `Берём тех, кто писал за ${PARSER_SINCE.find((item) => item.value === Number(parserSettings.since_hours))?.label || `${parserSettings.since_hours}ч`}.`}</span>
-                  </div>
-                  <div className="nc-row">
-                    {PARSER_SINCE.map((item) => (
-                      <button key={item.value} type="button" className={`nc-chip ${Number(parserSettings.since_hours) === item.value ? 'is-on' : ''}`} onClick={() => setParserSettings((prev) => ({ ...prev, since_hours: item.value }))}>{item.label}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Лимит с чата</strong>
-                    <span>Не больше {parserSettings.member_limit} человек из одной группы</span>
-                  </div>
-                  <Stepper value={parserSettings.member_limit} min={1} max={10000} onChange={(value) => setParserSettings((prev) => ({ ...prev, member_limit: value }))} />
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Чатов в день на аккаунт</strong>
-                    <span>Каждый день число между минимумом и максимумом. Дальше аккаунт в этот день чаты не парсит.</span>
-                  </div>
-                  <div className="nc-row">
-                    <Stepper value={parserSettings.min_per_account ?? parserSettings.max_per_account ?? 100} min={0} max={parserSettings.max_per_account || 500} onChange={(value) => setParserSettings((prev) => ({ ...prev, min_per_account: value }))} />
-                    <span className="nc-muted">до</span>
-                    <Stepper value={parserSettings.max_per_account ?? 100} min={1} max={500} onChange={(value) => setParserSettings((prev) => ({ ...prev, max_per_account: value, min_per_account: Math.min(prev.min_per_account ?? value, value) }))} />
-                  </div>
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Базовые фильтры</strong>
-                    <span>Отсекаем Telegram-ботов, юзерботов со ссылкой в био и мёртвые аккаунты</span>
-                  </div>
-                  <div className="nc-checks">
-                    <UbtCheck checked={Boolean(parserSettings.skip_bots)} onChange={(value) => setParserSettings((prev) => ({ ...prev, skip_bots: value }))}>Пропустить ботов</UbtCheck>
-                    <UbtCheck checked={Boolean(parserSettings.skip_deleted)} onChange={(value) => setParserSettings((prev) => ({ ...prev, skip_deleted: value }))}>Пропустить удалённых</UbtCheck>
-                    <UbtCheck checked={Boolean(parserSettings.skip_scam)} onChange={(value) => setParserSettings((prev) => ({ ...prev, skip_scam: value }))}>Пропустить scam/fake</UbtCheck>
-                  </div>
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Фильтры профиля</strong>
-                    <span>То, что Telegram отдаёт в карточке пользователя</span>
-                  </div>
-                  <div className="nc-checks">
-                    <UbtCheck checked={Boolean(parserSettings.only_username)} onChange={(value) => setParserSettings((prev) => ({ ...prev, only_username: value }))}>Только с username</UbtCheck>
-                    <UbtCheck checked={Boolean(parserSettings.only_photo)} onChange={(value) => setParserSettings((prev) => ({ ...prev, only_photo: value }))}>Только с фото</UbtCheck>
-                    <UbtCheck checked={Boolean(parserSettings.only_premium)} onChange={(value) => setParserSettings((prev) => ({ ...prev, only_premium: value }))}>Только Premium</UbtCheck>
-                    <UbtCheck checked={Boolean(parserSettings.only_admins)} onChange={(value) => setParserSettings((prev) => ({ ...prev, only_admins: value }))}>Только админы</UbtCheck>
-                    <UbtCheck checked={Boolean(parserSettings.only_active_stories)} onChange={(value) => setParserSettings((prev) => ({ ...prev, only_active_stories: value }))}>Только с активной историей</UbtCheck>
-                  </div>
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Задержки</strong>
-                    <span>Пауза между чатами и шаг между пользователями</span>
-                  </div>
-                  <div className="nc-row">
-                    <span className="nc-muted">чаты</span>
-                    <Stepper value={parserSettings.delay_chat} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => setParserSettings((prev) => ({ ...prev, delay_chat: value }))} />
-                    <span className="nc-muted">с</span>
-                  </div>
-                  <div className="nc-row">
-                    <span className="nc-muted">люди</span>
-                    <Stepper value={parserSettings.delay_user} min={0} max={DELAY_MAX_SECONDS} onChange={(value) => setParserSettings((prev) => ({ ...prev, delay_user: value }))} />
-                    <span className="nc-muted">с</span>
-                  </div>
-                  <UbtJoinDelay settings={parserSettings} onPatch={(partial) => setParserSettings((prev) => ({ ...prev, ...partial }))} />
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Ограничивать темп на аккаунт</strong>
-                    <span>После чата аккаунт уходит на паузу гуманизации, как у остальных модулей.</span>
-                  </div>
-                  <FeatureToggle compact title="" label="Ограничивать темп на аккаунт" checked={Boolean(parserSettings.limit_rate)} onChange={(value) => setParserSettings((prev) => ({ ...prev, limit_rate: value }))} />
-                </div>
-                <div className="nc-setting">
-                  <div className="nc-setting-copy">
-                    <strong>Ночной простой</strong>
-                    <span>Вне окна работы фермы (по умолчанию 20:00–08:00 МСК) парсер не идёт.</span>
-                  </div>
-                  <FeatureToggle compact title="" label="Ночной простой" checked={Boolean(parserSettings.respect_night_hours)} onChange={(value) => setParserSettings((prev) => ({ ...prev, respect_night_hours: value }))} />
-                </div>
-                <div className="nc-row" style={{ marginTop: 12 }}>
-                  <button
-                    type="button"
-                    className="acc-btn acc-btn--primary"
-                    disabled={busy}
-                    onClick={() => runSafe(async () => {
-                      await customService.parseNeurochattingUsers(id, parserSettings);
-                      setParserOpen(false);
-                    }, 'Парсинг юзеров поставлен в очередь')}
-                  >
-                    Запустить
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 };

@@ -454,8 +454,6 @@ _PARSER_DIALOG_FIELDS = (
     "only_active_stories",
     "respect_night_hours",
     "limit_rate",
-    "join_delay_min",
-    "join_delay_max",
 )
 
 
@@ -524,6 +522,8 @@ async def neurochatting_parser_run_config(
     cfg["chat_ids"] = chat_ids
     cfg["chat_assignments"] = {str(aid): ids for aid, ids in assignments.items()}
     cfg["joined_only"] = True
+    cfg.pop("join_delay_min", None)
+    cfg.pop("join_delay_max", None)
     return cfg
 
 
@@ -545,8 +545,6 @@ _PARSER_DIALOG_FIELDS = (
     "only_active_stories",
     "respect_night_hours",
     "limit_rate",
-    "join_delay_min",
-    "join_delay_max",
 )
 
 
@@ -615,4 +613,6 @@ async def neurochatting_parser_run_config(
     cfg["chat_ids"] = chat_ids
     cfg["chat_assignments"] = {str(aid): ids for aid, ids in assignments.items()}
     cfg["joined_only"] = True
+    cfg.pop("join_delay_min", None)
+    cfg.pop("join_delay_max", None)
     return cfg
