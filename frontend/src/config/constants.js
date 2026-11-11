@@ -352,6 +352,7 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_NEUROCOMMENTING_BLACKLIST: (id) => `/api/custom/automations/${id}/modules/neurocommenting/blacklist`,
   CUSTOM_AUTOMATION_NEUROCHATTING: (id) => `/api/custom/automations/${id}/modules/neurochatting`,
   CUSTOM_AUTOMATION_NEUROCHATTING_RUN: (id) => `/api/custom/automations/${id}/modules/neurochatting/run`,
+  CUSTOM_AUTOMATION_NEUROCHATTING_PARSE_USERS: (id) => `/api/custom/automations/${id}/modules/neurochatting/parse-users`,
   CUSTOM_AUTOMATION_NEUROCHATTING_GROUPS: (id) => `/api/custom/automations/${id}/modules/neurochatting/groups`,
   CUSTOM_AUTOMATION_NEUROCHATTING_PRESETS: (id) => `/api/custom/automations/${id}/modules/neurochatting/presets`,
   CUSTOM_AUTOMATION_NEUROCHATTING_PROMPTS: (id) => `/api/custom/automations/${id}/modules/neurochatting/prompts`,

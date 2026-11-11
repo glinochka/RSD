@@ -8,7 +8,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
+    AccountChatMembership,
     AutomationActionLog,
+    ChatJoinStatus,
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
@@ -19,7 +21,7 @@ from ...alembic.models import (
 from .chat_addlist_service import import_chat_links, normalize_chat_assignments
 from .chat_folder_service import folder_payloads
 from .chat_membership_service import blackbox_unusable_chat
-from .chat_scope import is_group_chat
+from .chat_scope import is_broadcast_channel, is_group_chat
 from .task_targets import folder_kind_counts
 from .discussion_service import DEFAULT_DISCUSSION_PROMPT
 from .job_service import list_jobs
@@ -432,3 +434,185 @@ async def blackbox_neurochatting_chat(session: AsyncSession, automation_id: int,
         automation.module_settings = blob
     await session.commit()
     return await get_neurochatting_module(session, automation_id)
+
+
+_PARSER_DIALOG_FIELDS = (
+    "source",
+    "since_hours",
+    "member_limit",
+    "min_per_account",
+    "max_per_account",
+    "delay_chat",
+    "delay_user",
+    "skip_bots",
+    "skip_deleted",
+    "skip_scam",
+    "only_username",
+    "only_photo",
+    "only_premium",
+    "only_admins",
+    "only_active_stories",
+    "respect_night_hours",
+    "limit_rate",
+    "join_delay_min",
+    "join_delay_max",
+)
+
+
+async def neurochatting_parser_run_config(
+    session: AsyncSession,
+    automation_id: int,
+    edits: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Parser settings as stored, aimed at this task's accounts and chats they already sit in.
+
+    One run still uses run_parser_pass. Channels are left out, and nobody joins a chat to parse it.
+    """
+    from .parser_module_service import normalize_parser_settings, save_parser_module
+
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        raise ValueError("Automation not found")
+    stored = normalize_parser_settings((automation.module_settings or {}).get("parser"))
+    if edits:
+        for key in _PARSER_DIALOG_FIELDS:
+            if key in edits:
+                stored[key] = edits[key]
+        await save_parser_module(session, automation_id, stored)
+        automation = await session.get(CustomAutomation, automation_id)
+        if not automation:
+            raise ValueError("Automation not found")
+        stored = normalize_parser_settings((automation.module_settings or {}).get("parser"))
+    account_ids = list(normalize_chat_settings((automation.module_settings or {}).get("neurochatting")).get("account_ids") or [])
+    if not account_ids:
+        raise ValueError("В нейрочаттинге не выбраны аккаунты")
+    rows = (
+        await session.execute(
+            select(AccountChatMembership.social_account_id, ChatTarget)
+            .join(ChatTarget, ChatTarget.id == AccountChatMembership.chat_target_id)
+            .where(
+                AccountChatMembership.custom_automation_id == automation_id,
+                AccountChatMembership.social_account_id.in_(account_ids),
+                AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+                ChatTarget.is_active.is_(True),
+            )
+        )
+    ).all()
+    assignments: dict[int, list[int]] = {int(aid): [] for aid in account_ids}
+    chat_ids: list[int] = []
+    seen: set[int] = set()
+    for account_id, chat in rows:
+        if is_broadcast_channel(chat):
+            continue
+        aid = int(account_id)
+        cid = int(chat.id)
+        if aid not in assignments or cid in assignments[aid]:
+            continue
+        assignments[aid].append(cid)
+        if cid not in seen:
+            seen.add(cid)
+            chat_ids.append(cid)
+    if not chat_ids:
+        raise ValueError("У аккаунтов задачи нет чатов, где они уже состоят")
+    cfg = dict(stored)
+    cfg["enabled"] = True
+    cfg["do_join"] = False
+    cfg["include_joined"] = False
+    cfg["targets"] = []
+    cfg["folder_ids"] = []
+    cfg["account_ids"] = account_ids
+    cfg["chat_ids"] = chat_ids
+    cfg["chat_assignments"] = {str(aid): ids for aid, ids in assignments.items()}
+    cfg["joined_only"] = True
+    return cfg
+
+
+_PARSER_DIALOG_FIELDS = (
+    "source",
+    "since_hours",
+    "member_limit",
+    "min_per_account",
+    "max_per_account",
+    "delay_chat",
+    "delay_user",
+    "skip_bots",
+    "skip_deleted",
+    "skip_scam",
+    "only_username",
+    "only_photo",
+    "only_premium",
+    "only_admins",
+    "only_active_stories",
+    "respect_night_hours",
+    "limit_rate",
+    "join_delay_min",
+    "join_delay_max",
+)
+
+
+async def neurochatting_parser_run_config(
+    session: AsyncSession,
+    automation_id: int,
+    edits: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Parser settings as stored, aimed at this task's accounts and chats they already sit in.
+
+    One run still uses run_parser_pass. Channels are left out, and nobody joins a chat to parse it.
+    """
+    from .parser_module_service import normalize_parser_settings, save_parser_module
+
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        raise ValueError("Automation not found")
+    stored = normalize_parser_settings((automation.module_settings or {}).get("parser"))
+    if edits:
+        for key in _PARSER_DIALOG_FIELDS:
+            if key in edits:
+                stored[key] = edits[key]
+        await save_parser_module(session, automation_id, stored)
+        automation = await session.get(CustomAutomation, automation_id)
+        if not automation:
+            raise ValueError("Automation not found")
+        stored = normalize_parser_settings((automation.module_settings or {}).get("parser"))
+    account_ids = list(normalize_chat_settings((automation.module_settings or {}).get("neurochatting")).get("account_ids") or [])
+    if not account_ids:
+        raise ValueError("В нейрочаттинге не выбраны аккаунты")
+    rows = (
+        await session.execute(
+            select(AccountChatMembership.social_account_id, ChatTarget)
+            .join(ChatTarget, ChatTarget.id == AccountChatMembership.chat_target_id)
+            .where(
+                AccountChatMembership.custom_automation_id == automation_id,
+                AccountChatMembership.social_account_id.in_(account_ids),
+                AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+                ChatTarget.is_active.is_(True),
+            )
+        )
+    ).all()
+    assignments: dict[int, list[int]] = {int(aid): [] for aid in account_ids}
+    chat_ids: list[int] = []
+    seen: set[int] = set()
+    for account_id, chat in rows:
+        if is_broadcast_channel(chat):
+            continue
+        aid = int(account_id)
+        cid = int(chat.id)
+        if aid not in assignments or cid in assignments[aid]:
+            continue
+        assignments[aid].append(cid)
+        if cid not in seen:
+            seen.add(cid)
+            chat_ids.append(cid)
+    if not chat_ids:
+        raise ValueError("У аккаунтов задачи нет чатов, где они уже состоят")
+    cfg = dict(stored)
+    cfg["enabled"] = True
+    cfg["do_join"] = False
+    cfg["include_joined"] = False
+    cfg["targets"] = []
+    cfg["folder_ids"] = []
+    cfg["account_ids"] = account_ids
+    cfg["chat_ids"] = chat_ids
+    cfg["chat_assignments"] = {str(aid): ids for aid, ids in assignments.items()}
+    cfg["joined_only"] = True
+    return cfg

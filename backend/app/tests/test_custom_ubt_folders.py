@@ -1981,3 +1981,296 @@ class TestReplaceTaskPoolAccount:
         ]
         assert len(shared_old) == 1
         assert shared_old[0].purpose == MembershipPurpose.WATCHER.value
+
+
+class TestNeurochattingUserParser:
+    async def test_launch_puts_both_chats_in_one_folder(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client: AsyncClient,
+        client_token: str,
+        tmp_path,
+        monkeypatch,
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from sqlalchemy import select
+
+        from app.alembic.models import (
+            AccountChatMembership,
+            ChatJoinStatus,
+            PoolAccount,
+            SocialAccount,
+            UserFolderMember,
+        )
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.neurochatting_module_service import neurochatting_parser_run_config
+        from app.services.custom.parser_service import run_parser_pass
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        (tmp_path / "joined_a.session").write_bytes(b"session")
+        (tmp_path / "joined_b.session").write_bytes(b"session")
+
+        def _account(username: str, phone: str, session_name: str) -> SocialAccount:
+            return SocialAccount(
+                provider="telegram",
+                phone_number=phone,
+                username=username,
+                display_name=username,
+                account_class="one_day",
+                encrypted_session="mock_encrypted_session",
+                session_file_path=session_name,
+                is_active=True,
+            )
+
+        account_a = _account("joined_a", "+79994000021", "joined_a.session")
+        account_b = _account("joined_b", "+79994000022", "joined_b.session")
+        test_session.add_all([account_a, account_b])
+        await test_session.flush()
+        test_session.add_all([
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account_a.id,
+                assigned_class="one_day",
+                custom_automation_id=custom_automation.id,
+            ),
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account_b.id,
+                assigned_class="one_day",
+                custom_automation_id=custom_automation.id,
+            ),
+        ])
+        folder = ChatFolder(
+            custom_automation_id=custom_automation.id,
+            name="parser_outsiders",
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        test_session.add(folder)
+        await test_session.flush()
+        chat_a = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Joined A",
+            invite_link="https://t.me/joined_a",
+            chat_type="chat",
+            is_active=True,
+        )
+        chat_b = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Joined B",
+            invite_link="https://t.me/joined_b",
+            chat_type="supergroup",
+            is_active=True,
+        )
+        outsider = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="Not joined",
+            invite_link="https://t.me/not_joined",
+            chat_type="chat",
+            folder_id=folder.id,
+            is_active=True,
+        )
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            title="News",
+            invite_link="https://t.me/news_channel",
+            chat_type="channel",
+            is_active=True,
+        )
+        test_session.add_all([chat_a, chat_b, outsider, channel])
+        await test_session.flush()
+        now = _now()
+        test_session.add_all([
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account_a.id,
+                chat_target_id=chat_a.id,
+                join_status=ChatJoinStatus.JOINED.value,
+                created_at=now,
+                updated_at=now,
+            ),
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account_b.id,
+                chat_target_id=chat_b.id,
+                join_status=ChatJoinStatus.JOINED.value,
+                created_at=now,
+                updated_at=now,
+            ),
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account_b.id,
+                chat_target_id=outsider.id,
+                join_status=ChatJoinStatus.PENDING.value,
+                created_at=now,
+                updated_at=now,
+            ),
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account_a.id,
+                chat_target_id=channel.id,
+                join_status=ChatJoinStatus.JOINED.value,
+                created_at=now,
+                updated_at=now,
+            ),
+        ])
+        custom_automation.module_settings = {
+            "neurochatting": {"account_ids": [account_a.id, account_b.id], "enabled": True},
+            "parser": {
+                "enabled": False,
+                "do_join": True,
+                "account_ids": [],
+                "folder_ids": [folder.id],
+                "targets": ["https://t.me/not_joined"],
+                "source": "messages",
+                "skip_bots": False,
+                "respect_night_hours": False,
+                "delay_chat": 0,
+                "delay_user": 0,
+                "limit_rate": False,
+                "min_per_account": 100,
+                "max_per_account": 100,
+                "member_limit": 10,
+            },
+        }
+        await test_session.commit()
+
+        cfg = await neurochatting_parser_run_config(
+            test_session,
+            custom_automation.id,
+            {
+                "source": "messages",
+                "since_hours": 24,
+                "member_limit": 10,
+                "skip_bots": False,
+                "respect_night_hours": False,
+                "delay_chat": 0,
+                "delay_user": 0,
+                "limit_rate": False,
+                "min_per_account": 100,
+                "max_per_account": 100,
+                "do_join": False,
+                "folder_ids": [],
+                "targets": [],
+            },
+        )
+        await test_session.commit()
+        await test_session.refresh(custom_automation)
+        stored = custom_automation.module_settings["parser"]
+        assert stored["do_join"] is True
+        assert stored["folder_ids"] == [folder.id]
+        assert stored["targets"]
+        assert "joined_only" not in stored
+        assert cfg["joined_only"] is True
+        assert cfg["do_join"] is False
+        assert cfg["targets"] == []
+        assert cfg["folder_ids"] == []
+        assert set(cfg["chat_ids"]) == {chat_a.id, chat_b.id}
+        assert cfg["chat_assignments"][str(account_a.id)] == [chat_a.id]
+        assert cfg["chat_assignments"][str(account_b.id)] == [chat_b.id]
+        assert channel.id not in cfg["chat_ids"]
+        assert outsider.id not in cfg["chat_ids"]
+
+        seen: list[tuple[int, str]] = []
+
+        class _Client:
+            def __init__(self, account):
+                self.account = account
+                self.client = self
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def get_entity(self, ident):
+                seen.append((self.account.id, str(ident)))
+                return SimpleNamespace(title=str(ident))
+
+        class _Telegram:
+            @staticmethod
+            def for_account(account):
+                return _Client(account)
+
+        async def _collect(_telethon, entity, **_kwargs):
+            uid = {
+                "https://t.me/joined_a": 910001,
+                "https://t.me/joined_b": 910002,
+            }[str(entity.title)]
+            return [{
+                "telegram_user_id": uid,
+                "username": f"user_{uid}",
+                "first_name": "User",
+                "last_name": None,
+                "is_bot": False,
+                "is_deleted": False,
+                "is_scam": False,
+                "is_premium": False,
+                "has_photo": False,
+                "is_admin": False,
+                "has_stories": False,
+                "is_self": False,
+            }]
+
+        async def _join(*_args, **_kwargs):
+            raise AssertionError("parser must not join chats")
+
+        monkeypatch.setattr("app.services.custom.parser_service._media_root", lambda: tmp_path)
+        monkeypatch.setattr("app.services.custom.parser_service.account_humanization_should_idle", lambda *_a, **_k: False)
+        monkeypatch.setattr("app.services.custom.parser_service.TelegramAccountClient", _Telegram)
+        monkeypatch.setattr("app.services.custom.parser_service.collect_live_authors", _collect)
+        monkeypatch.setattr("app.services.custom.chat_join_service.join_loaded_chats_for_accounts", _join)
+        monkeypatch.setattr("app.services.custom.job_service.log_active", AsyncMock())
+
+        result = await run_parser_pass(custom_automation.id, cfg)
+        assert result["status"] == "ok"
+        assert result["users"] == 2
+        assert result["chats"] == 2
+        parsed = {ident for _aid, ident in seen}
+        assert parsed == {"https://t.me/joined_a", "https://t.me/joined_b"}
+        by_account: dict[int, set[str]] = {}
+        for aid, ident in seen:
+            by_account.setdefault(aid, set()).add(ident)
+        assert by_account[account_a.id] == {"https://t.me/joined_a"}
+        assert by_account[account_b.id] == {"https://t.me/joined_b"}
+
+        automation_id = custom_automation.id
+        await test_session.commit()
+        test_session.expire_all()
+        folders = (
+            await test_session.execute(
+                select(UserFolder).where(UserFolder.custom_automation_id == automation_id)
+            )
+        ).scalars().all()
+        assert len(folders) == 1
+        folder_row = folders[0]
+        assert folder_row.source == "parser"
+        assert folder_row.id == result["user_folder_id"]
+        members = (
+            await test_session.execute(
+                select(UserFolderMember).where(UserFolderMember.user_folder_id == folder_row.id)
+            )
+        ).scalars().all()
+        assert {row.telegram_user_id for row in members} == {910001, 910002}
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        looking = await client.get(
+            f"/api/custom/automations/{automation_id}/modules/masslooking",
+            headers=headers,
+        )
+        priming = await client.get(
+            f"/api/custom/automations/{automation_id}/modules/masspriming",
+            headers=headers,
+        )
+        assert looking.status_code == 200, looking.text
+        assert priming.status_code == 200, priming.text
+        assert any(item["id"] == folder_row.id for item in looking.json()["user_folders"])
+        assert any(item["id"] == folder_row.id for item in priming.json()["user_folders"])

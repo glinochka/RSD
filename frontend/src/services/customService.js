@@ -483,6 +483,15 @@ const customService = {
     return handleResponse(response);
   },
 
+  async parseNeurochattingUsers(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_PARSE_USERS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
   async addNeurochattingGroups(automationId, links) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_GROUPS(automationId)}`, {
       method: 'POST',

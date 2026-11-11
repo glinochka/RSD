@@ -11,7 +11,9 @@ from typing import Any, Iterable
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import async_session_maker
 from .account_pacing import account_humanization_should_idle, farm_overlap_active_hours, schedule_account_humanization_rest
+from .chat_scope import is_broadcast_channel
 from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .module_delays import DELAY_MAX_SECONDS
 from .rotation_service import record_successful_humanization
@@ -469,8 +471,36 @@ async def _process_entity(
     return saved
 
 
+def _membership_assignment(
+    cfg: dict[str, Any],
+    worker_ids: list[int],
+    chat_by_id: dict[int, ChatTarget],
+) -> dict[int, list[int]]:
+    """Keep each chat with an account that already sits in it. Do not hand it to another."""
+    workers = set(worker_ids)
+    out: dict[int, list[int]] = {aid: [] for aid in worker_ids}
+    raw = cfg.get("chat_assignments") if isinstance(cfg.get("chat_assignments"), dict) else {}
+    for key, value in raw.items():
+        try:
+            aid = int(key)
+        except (TypeError, ValueError):
+            continue
+        if aid not in workers:
+            continue
+        for item in value or []:
+            try:
+                cid = int(item)
+            except (TypeError, ValueError):
+                continue
+            chat = chat_by_id.get(cid)
+            if chat is None or is_broadcast_channel(chat):
+                continue
+            if cid not in out[aid]:
+                out[aid].append(cid)
+    return out
+
+
 async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None = None) -> dict[str, Any]:
-    from ...alembic.database import async_session_maker
     from .chat_join_service import join_loaded_chats_for_accounts
 
     total = 0
@@ -497,18 +527,23 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         elif chat_ids:
             chats = [chat for chat in chats if chat.id in chat_ids]
         join_chats = list(chats)
-        from .task_targets import load_work_pool
+        joined_only = bool(cfg.get("joined_only"))
+        if joined_only:
+            chats = [chat for chat in chats if not is_broadcast_channel(chat)]
+            extra_targets = []
+        else:
+            from .task_targets import load_work_pool
 
-        work_pool = await load_work_pool(session, automation_id, cfg, task_key="parser")
-        if work_pool.extra_owner:
-            known = {chat.id for chat in chats}
-            extra_rows = (
-                await session.execute(
-                    select(ChatTarget).where(ChatTarget.id.in_(list(work_pool.extra_owner)))
-                )
-            ).scalars().all()
-            chats.extend(chat for chat in extra_rows if chat.id not in known)
-        extra_targets = normalize_parser_targets(cfg.get("targets"))
+            work_pool = await load_work_pool(session, automation_id, cfg, task_key="parser")
+            if work_pool.extra_owner:
+                known = {chat.id for chat in chats}
+                extra_rows = (
+                    await session.execute(
+                        select(ChatTarget).where(ChatTarget.id.in_(list(work_pool.extra_owner)))
+                    )
+                ).scalars().all()
+                chats.extend(chat for chat in extra_rows if chat.id not in known)
+            extra_targets = normalize_parser_targets(cfg.get("targets"))
         if not chats and not extra_targets:
             return {"status": "skipped", "reason": "no_targets", "users": 0}
         pairs = (
@@ -535,7 +570,7 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
             accounts.append((account, pool))
         if not accounts:
             return {"status": "skipped", "reason": "no_accounts", "users": 0}
-        if bool(cfg.get("do_join", True)) and join_chats:
+        if not joined_only and bool(cfg.get("do_join", True)) and join_chats:
             await join_loaded_chats_for_accounts(
                 session,
                 automation_id,
@@ -554,13 +589,17 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         worker_ids = [account.id for account, _pool in accounts]
         by_id = {account.id: (account, pool) for account, pool in accounts}
         chat_by_id = {chat.id: chat for chat in chats}
-        chat_assignment = unique_assign(worker_ids, [chat.id for chat in chats], load_unique_assign(automation, "parser"))
-        extra_assignment = unique_assign(
-            worker_ids, extra_targets, load_unique_assign(automation, "parser_targets")
-        )
-        store_unique_assign(automation, "parser", chat_assignment)
-        store_unique_assign(automation, "parser_targets", extra_assignment)
-        await session.commit()
+        if joined_only:
+            chat_assignment = _membership_assignment(cfg, worker_ids, chat_by_id)
+            extra_assignment = {}
+        else:
+            chat_assignment = unique_assign(worker_ids, [chat.id for chat in chats], load_unique_assign(automation, "parser"))
+            extra_assignment = unique_assign(
+                worker_ids, extra_targets, load_unique_assign(automation, "parser_targets")
+            )
+            store_unique_assign(automation, "parser", chat_assignment)
+            store_unique_assign(automation, "parser_targets", extra_assignment)
+            await session.commit()
         from .daily_quota import account_blocked_for_task
 
         for account_id, assigned_ids in chat_assignment.items():

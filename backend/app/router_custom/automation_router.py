@@ -325,6 +325,7 @@ from ..services.custom.neurochatting_module_service import (
     blackbox_neurochatting_chat,
     create_neurochatting_prompt,
     get_neurochatting_module,
+    neurochatting_parser_run_config,
     save_neurochatting_module,
     save_neurochatting_preset,
 )
@@ -949,6 +950,31 @@ async def run_neurochatting_module(
     )
     if not settings.get("only_joined"):
         background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/neurochatting/parse-users")
+async def parse_neurochatting_users(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: ParserSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        edits = payload.model_dump(exclude_unset=True) if payload else None
+        try:
+            settings = await neurochatting_parser_run_config(session, automation_id, edits)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "parser",
+        run_parser_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
     return {"status": "started", "job_id": f"job:{job_id}"}
 
 
