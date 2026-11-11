@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -56,6 +57,7 @@ from .content_factory_media import (
     clip_prompt,
     concat_clips,
     download_to_file,
+    generate_grok_authoring,
     generate_grok_carousel_pack,
     generate_slide_png,
     factory_grok_bot_id,
@@ -230,7 +232,8 @@ def _publish_time_blocked(video: CustomContentFactoryVideo, settings: CustomCont
         return False
     if video.scheduled_for and video.scheduled_for > now_utc():
         return True
-    if not in_posting_window(
+    manual = bool((video.extra or {}).get("manual"))
+    if not manual and not in_posting_window(
         timezone_name=settings.timezone,
         start=settings.posting_window_start,
         end=settings.posting_window_end,
@@ -312,6 +315,11 @@ async def _advance_video(
     settings: CustomContentFactorySettings,
 ) -> None:
     try:
+        if bool((video.extra or {}).get("manual")):
+            if video.status in {"ready", "posting"}:
+                await _post_video(session, video, settings)
+            video.updated_at = now_utc()
+            return
         if video.status in {"queued", "ideating", "scripting"} and _is_grok_carousel(video, settings):
             await _render_carousel(session, video, settings)
         elif video.status == "queued":
@@ -354,7 +362,8 @@ async def _write_idea_and_script(
     performance = await _performance_hint(session, video.custom_automation_id)
     pack = await _generate_pack(settings, video, used, performance)
     hook = str(pack.get("hook") or "").strip()
-    if settings.hook_required and not hook_is_strong(hook):
+    authored_by_grok = str((pack.get("usage") or {}).get("provider") or "") == "grok"
+    if settings.hook_required and not hook_is_strong(hook) and not authored_by_grok:
         hook = _fallback_hook(settings, video.id)
     video.idea = str(pack.get("idea") or "")[:2000]
     video.hook = hook[:300]
@@ -435,9 +444,32 @@ async def _generate_pack(
     used_hooks: list[str],
     performance: str = "",
 ) -> dict[str, Any]:
-    fallback = _fallback_pack(settings, video, used_hooks)
     prompt = _authoring_prompt(settings, video, used_hooks, performance)
     carousel = str((video.extra or {}).get("media_kind") or "") == "carousel"
+    if _script_author_is_grok(settings):
+        grok_key = _xai_key(settings)
+        if not grok_key:
+            raise RuntimeError("Grok выбран автором сценария, но ключа нет")
+        try:
+            author = await generate_grok_authoring(
+                api_key=grok_key,
+                message=f"{_creative_system(carousel)}\n\n{prompt}",
+                previous_response_id=str(getattr(settings, "grok_bot_response_id", "") or ""),
+            )
+        except Exception as exc:
+            logger.info("Content factory grok bot did not return a script")
+            detail = str(exc).strip()
+            if detail and "sk-" not in detail and "xai-" not in detail and "bearer" not in detail.lower():
+                raise RuntimeError(detail[:300]) from None
+            raise RuntimeError("Grok-бот не отдал сценарий") from None
+        if author and author.get("response_id"):
+            settings.grok_bot_response_id = str(author["response_id"])[:2000]
+            settings.updated_at = now_utc()
+        pack = _pack_from_grok(_parse_json_object((author or {}).get("text") if author else ""), video)
+        if pack is None:
+            raise RuntimeError("Grok-бот не отдал разборный сценарий")
+        return pack
+    fallback = _fallback_pack(settings, video, used_hooks)
     completion = await _llm_json(
         settings,
         system_prompt=_creative_system(carousel),
@@ -456,6 +488,84 @@ async def _generate_pack(
     if not isinstance(merged.get("storyboard"), list) or not merged["storyboard"]:
         merged["storyboard"] = fallback["storyboard"]
     return merged
+
+
+GROK_SCRIPT_MODEL = "grok-4.7"
+
+
+def _script_author_is_grok(settings: CustomContentFactorySettings) -> bool:
+    model = str(getattr(settings, "script_model", "") or "").strip().lower()
+    if not model:
+        model = str(getattr(settings, "idea_model", "") or "").strip().lower()
+    return "grok" in model
+
+
+def _pack_from_grok(data: dict[str, Any] | None, video: CustomContentFactoryVideo) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    board = data.get("storyboard")
+    if not isinstance(board, list):
+        return None
+    scenes = []
+    for item in board:
+        if not isinstance(item, dict):
+            continue
+        visual = str(item.get("visual") or "").strip()
+        voice = str(item.get("voiceover") or "").strip()
+        if not visual and not voice:
+            continue
+        scene = {"visual": visual, "voiceover": voice}
+        if item.get("t") is not None:
+            scene["t"] = item.get("t")
+        if item.get("duration") is not None:
+            scene["duration"] = item.get("duration")
+        scenes.append(scene)
+    if not scenes:
+        return None
+    hook = str(data.get("hook") or "").strip()
+    script = str(data.get("script") or "").strip()
+    idea = str(data.get("idea") or "").strip()
+    if not (hook or script or idea):
+        return None
+    content_format = data.get("content_format")
+    if content_format not in CONTENT_FORMATS:
+        content_format = video.content_format
+    visual_style = data.get("visual_style")
+    if visual_style not in VISUAL_STYLES:
+        visual_style = video.visual_style
+    tags = data.get("hashtags") if isinstance(data.get("hashtags"), list) else []
+    return {
+        "idea": idea or hook or script,
+        "hook": hook or idea or script,
+        "script": script or hook or idea,
+        "caption": str(data.get("caption") or "").strip() or hook or idea,
+        "hashtags": tags,
+        "storyboard": scenes,
+        "content_format": content_format,
+        "visual_style": visual_style,
+        "usage": {
+            "provider": "grok",
+            "model": GROK_SCRIPT_MODEL,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        },
+    }
+
+
+def _xai_key(settings: CustomContentFactorySettings) -> str:
+    key = decrypted_secret(settings, "xai_api_key") if hasattr(settings, "xai_api_key_enc") else ""
+    return (key or (getattr(app_settings, "XAI_API_KEY", "") or "")).strip()
+
+
+def _parse_json_object(text: str | None) -> dict[str, Any] | None:
+    match = _JSON_BLOCK.search(str(text or "").strip())
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _creative_system(carousel: bool) -> str:
@@ -719,8 +829,6 @@ def _apply_grok_copy(video: CustomContentFactoryVideo, settings: CustomContentFa
     video.caption = (text or theme)[:2000]
     video.script = video.caption
     video.hook = theme[:300]
-    if settings.hook_required and not hook_is_strong(video.hook):
-        video.hook = _fallback_hook(settings, video.id)
     prompts = [str(item).strip() for item in (pack.get("prompts") or []) if str(item).strip()]
     board: list[dict[str, str]] = []
     for index, prompt in enumerate(prompts):
@@ -738,9 +846,7 @@ def _carousel_key(settings: CustomContentFactorySettings) -> tuple[str, str, str
         provider = "chatgpt"
     model = str(getattr(settings, "image_model", "") or "").strip()
     if provider == "grok":
-        key = decrypted_secret(settings, "xai_api_key") if hasattr(settings, "xai_api_key_enc") else ""
-        key = key or (getattr(app_settings, "XAI_API_KEY", "") or "").strip()
-        return provider, model or "grok-imagine-image-2.0", key
+        return provider, model or "grok-imagine-image-2.0", _xai_key(settings)
     key = decrypted_secret(settings, "openai_api_key") or (app_settings.OPENAI_API_KEY or "").strip()
     return provider, model or "gpt-image-2.5-flare", key
 
@@ -1135,6 +1241,10 @@ async def _post_video(
         ).scalars().all()
     )
     extra = dict(video.extra or {})
+    manual = bool(extra.get("manual"))
+    manual_account_id = int(extra.get("manual_account_id") or 0) if manual else 0
+    if manual_account_id:
+        accounts = [item for item in accounts if int(item.id) == manual_account_id]
     if not accounts:
         video.status = "ready"
         extra["hold_reason"] = "Нет подключённых аккаунтов"
@@ -1142,7 +1252,7 @@ async def _post_video(
         video.last_error = None
         return
     needs_poll = any(post.status == "processing" for post in existing_rows)
-    if not settings.sandbox_mode and not needs_poll:
+    if not settings.sandbox_mode and not needs_poll and not manual:
         if not in_posting_window(
             timezone_name=settings.timezone,
             start=settings.posting_window_start,
@@ -1173,7 +1283,7 @@ async def _post_video(
             max_posts_per_day=int(settings.max_posts_per_account_per_day or 2),
             warmup_completed_at=account.warmup_completed_at,
             owner_confirmed=bool((account.extra or {}).get("owner_confirmed")),
-            ramp=bool((account.extra or {}).get("apply_post_ramp")),
+            ramp=False if manual else bool((account.extra or {}).get("apply_post_ramp")),
         )
         if settings.sandbox_mode:
             allowed, reason = True, ""
@@ -1340,6 +1450,104 @@ async def _post_video(
         if not statuses:
             extra["hold_reason"] = "Нет площадок для публикации"
     video.extra = extra
+
+
+_OWN_IMAGE = {".png", ".jpg", ".jpeg", ".webp"}
+_OWN_VIDEO = {".mp4", ".mov", ".webm"}
+
+
+async def publish_own_material(
+    session: AsyncSession,
+    *,
+    automation_id: int,
+    account_id: int,
+    title: str,
+    caption: str,
+    media_kind: str,
+    files: list[tuple[str, bytes]],
+) -> CustomContentFactoryVideo:
+    """Publish the owner's file through the same poster. Do not regenerate it."""
+    from pathlib import Path
+
+    kind = str(media_kind or "").strip().lower()
+    if kind not in {"carousel", "video"}:
+        raise ValueError("Нужно видео или фото-карусель")
+    if kind == "video" and len(files) != 1:
+        raise ValueError("Для ролика нужен один файл")
+    if kind == "carousel" and not (2 <= len(files) <= 10):
+        raise ValueError("Для карусели нужно от 2 до 10 фото в порядке публикации")
+    account = await session.get(CustomContentFactoryAccount, int(account_id))
+    if account is None or int(account.custom_automation_id) != int(automation_id) or not account.is_enabled:
+        raise ValueError("Аккаунт завода не найден")
+    text = str(caption or "").strip()
+    headline = str(title or "").strip() or text[:100] or "Свой материал"
+    if not text and not headline:
+        raise ValueError("Нужно описание")
+    now = now_utc()
+    video = CustomContentFactoryVideo(
+        custom_automation_id=automation_id,
+        status="ready",
+        scheduled_for=now,
+        started_at=now,
+        idea=headline[:2000],
+        hook=headline[:300],
+        script=(text or headline)[:8000],
+        caption=(text or headline)[:2000],
+        hashtags=[],
+        content_format="ugc",
+        visual_style="realism",
+        duration_seconds=15,
+        aspect_ratio="9:16",
+        storyboard=[],
+        uniqualization={},
+        uniqueness_hash=hashlib.sha256(f"manual:{account_id}:{now.isoformat()}:{headline}".encode()).hexdigest(),
+        extra={
+            "manual": True,
+            "manual_account_id": int(account.id),
+            "media_kind": kind,
+            "source": "manual",
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(video)
+    await session.flush()
+    folder = video_dir(automation_id, video.id)
+    urls: list[str] = []
+    names: list[str] = []
+    for index, (name, blob) in enumerate(files):
+        if not blob:
+            raise ValueError("Пустой файл")
+        suffix = Path(str(name or "")).suffix.lower()
+        allowed = _OWN_IMAGE if kind == "carousel" else _OWN_VIDEO
+        if suffix not in allowed:
+            raise ValueError("Формат файла эта площадка в таком виде не примет")
+        filename = f"slide-{index:02d}{suffix}" if kind == "carousel" else f"own{suffix}"
+        dest = folder / filename
+        dest.write_bytes(blob)
+        urls.append(public_media_url(dest))
+        names.append(filename)
+    extra = dict(video.extra or {})
+    extra["slide_names"] = names
+    if kind == "carousel":
+        extra["slide_urls"] = urls
+        extra["slides_done"] = len(urls)
+        video.storyboard = [{"visual": name, "voiceover": ""} for name in names]
+        show = folder / "slideshow.mp4"
+        try:
+            slides_to_mp4([folder / name for name in names], show, seconds=2.4)
+            video.video_url = public_media_url(show)
+        except Exception as exc:
+            extra["slideshow_error"] = str(exc)[:300]
+            video.video_url = None
+    else:
+        video.video_url = urls[0]
+    extra["note"] = "Свой материал. Завод его не перегенерирует."
+    video.extra = extra
+    settings = await get_or_create_settings(session, automation_id)
+    await _post_video(session, video, settings)
+    await session.flush()
+    return video
 
 
 def _finish_warmup(account: CustomContentFactoryAccount) -> None:

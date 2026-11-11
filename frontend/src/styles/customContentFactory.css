@@ -116,14 +116,99 @@
 .cf-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
+  margin-top: 4px;
 }
 
 .cf-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 16px;
+  gap: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.cf-form-grid .form-group {
+  margin: 0;
+  min-width: 0;
+}
+
+.ubt-panel > .form-group {
+  margin: 0 0 16px;
+  min-width: 0;
+}
+
+.cf-form-grid .form-group input,
+.cf-form-grid .form-group textarea,
+.cf-form-grid .form-group select,
+.ubt-panel > .form-group input,
+.ubt-panel > .form-group textarea,
+.ubt-panel > .form-group select {
+  width: 100%;
+}
+
+.ubt-page > .ubt-panel,
+.ubt-page > form.ubt-panel,
+.ubt-page > .cf-grid-2 {
+  margin-top: 16px;
+}
+
+.ubt-page .ubt-panel-header {
+  margin-bottom: 16px;
+}
+
+.ubt-page .form-hint + .btn,
+.ubt-page .settings-actions {
+  margin-top: 16px;
+}
+
+.cf-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.cf-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e8ecf0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.cf-card-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex: none;
+}
+
+.cf-card-preview {
+  width: 72px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #f3f4f6;
+  flex: none;
+}
+
+.cf-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-card .acc-btn {
+  margin-left: auto;
 }
 
 .cf-player video {

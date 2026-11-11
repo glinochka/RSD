@@ -1091,3 +1091,500 @@ async def test_instagram_refresh_stays_on_account_proxy(monkeypatch):
     assert updated["token_type"] == "ig_refresh"
     assert seen[0]["proxy"] == "socks5://10.7.0.8:1080"
     assert seen[0]["trust_env"] is False
+
+
+def test_login_methods_follow_what_each_platform_accepts():
+    from datetime import datetime, timedelta
+
+    from app.services.custom.content_factory_antifraud import (
+        credential_status,
+        now_utc,
+        present_health_score,
+        validate_platform_credentials,
+        youtube_refresh_badge_ok,
+    )
+
+    youtube = validate_platform_credentials("youtube", {"refresh_token": "refresh-yt"})
+    assert youtube["refresh_token"] == "refresh-yt"
+    access_only = validate_platform_credentials("youtube", {"access_token": "ya-live"})
+    assert access_only["access_token"] == "ya-live"
+    instagram = validate_platform_credentials(
+        "instagram",
+        {"access_token": "ig-live", "ig_user_id": "1789"},
+    )
+    assert instagram["ig_user_id"] == "1789"
+    tiktok = validate_platform_credentials(
+        "tiktok",
+        {"access_token": "tt-live", "refresh_token": "tt-refresh"},
+    )
+    assert tiktok["refresh_token"] == "tt-refresh"
+    pinterest = validate_platform_credentials(
+        "pinterest",
+        {"access_token": "pin-live", "board_id": "board-1"},
+    )
+    assert pinterest["board_id"] == "board-1"
+    vk = validate_platform_credentials("vk", {"access_token": "vk-live", "group_id": "club42"})
+    assert vk["group_id"] == "42"
+    with pytest.raises(ValueError, match="cookie"):
+        validate_platform_credentials("tiktok", {"access_token": "tt", "sessionid": "browser-session"})
+    with pytest.raises(ValueError, match="Пароль"):
+        validate_platform_credentials("instagram", {"access_token": "ig", "ig_user_id": "1", "password": "secret"})
+
+    past = (now_utc() - timedelta(hours=2)).isoformat()
+    dead = credential_status("tiktok", {"access_token": "tt", "refresh_token": "saved", "expires_at": past})
+    assert dead["credential_mode"] == "expired"
+    assert present_health_score(90, credential_mode=dead["credential_mode"], proxy_ok=True) <= 49
+    stale_refresh = {"access_token": "ya", "refresh_token": "refresh-yt", "expires_at": past}
+    living = credential_status("youtube", stale_refresh)
+    assert living["credential_mode"] == "refresh"
+    assert youtube_refresh_badge_ok(stale_refresh, last_error=None) is True
+    assert youtube_refresh_badge_ok(
+        stale_refresh,
+        last_error="YouTube не подтвердил канал через прокси аккаунта.",
+    ) is False
+    future = (datetime.utcnow() + timedelta(days=20)).isoformat()
+    renewable = credential_status("instagram", {"access_token": "ig", "ig_user_id": "1789", "expires_at": future})
+    assert renewable["credential_mode"] == "renewable"
+
+
+async def test_grok_script_uses_the_factory_bot_not_a_side_llm(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.custom.content_factory_pipeline import _generate_pack
+
+    calls = {"bot": 0, "llm": 0}
+
+    async def fake_author(**kwargs):
+        calls["bot"] += 1
+        assert kwargs["previous_response_id"] == "resp-old"
+        assert "JSON" in kwargs["message"]
+        return {
+            "text": (
+                '{"idea":"очередь","hook":"Стоп. Очередь","script":"текст","caption":"подпись",'
+                '"hashtags":["кофе"],"storyboard":[{"visual":"кадр 1","voiceover":"раз"},'
+                '{"visual":"кадр 2","voiceover":"два"}],"content_format":"ugc","visual_style":"realism"}'
+            ),
+            "response_id": "resp-new",
+        }
+
+    async def fake_llm(*_args, **_kwargs):
+        calls["llm"] += 1
+        return None
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.generate_grok_authoring", fake_author)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline._llm_json", fake_llm)
+    monkeypatch.setattr(
+        "app.services.custom.content_factory_pipeline.decrypted_secret",
+        lambda _row, field: "xai-test" if field == "xai_api_key" else "",
+    )
+    settings = SimpleNamespace(
+        product_name="Кофейня",
+        product_description="кофе",
+        audience="гости",
+        niche="кофе",
+        language="ru",
+        tone="expert_friendly",
+        brand_voice="",
+        forbidden_topics="",
+        cta_text="",
+        product_url="",
+        script_model="grok-4.7",
+        idea_model="grok-4.7",
+        grok_bot_response_id="resp-old",
+        xai_api_key_enc="enc",
+        image_provider="chatgpt",
+        duration_min=30,
+        hook_required=False,
+        updated_at=None,
+    )
+    video = SimpleNamespace(
+        id=1,
+        content_format="ugc",
+        visual_style="realism",
+        duration_seconds=30,
+        aspect_ratio="9:16",
+        extra={"media_kind": "video"},
+    )
+    pack = await _generate_pack(settings, video, [])
+    assert calls["bot"] == 1
+    assert calls["llm"] == 0
+    assert settings.grok_bot_response_id == "resp-new"
+    assert pack["storyboard"][0]["visual"] == "кадр 1"
+    assert pack["usage"]["provider"] == "grok"
+
+    async def broken_author(**_kwargs):
+        calls["bot"] += 1
+        return {"text": "это не сценарий", "response_id": "resp-bad"}
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.generate_grok_authoring", broken_author)
+    with pytest.raises(RuntimeError, match="разборный сценарий"):
+        await _generate_pack(settings, video, [])
+    assert calls["llm"] == 0
+
+    async def dead_author(**_kwargs):
+        calls["bot"] += 1
+        raise RuntimeError("Grok Bot: HTTP 500")
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.generate_grok_authoring", dead_author)
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        await _generate_pack(settings, video, [])
+    assert calls["llm"] == 0
+
+    settings.script_model = "deepseek-chat"
+    settings.image_provider = "grok"
+    bot_before = calls["bot"]
+
+    async def quiet_llm(*_args, **_kwargs):
+        calls["llm"] += 1
+        return None
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline._llm_json", quiet_llm)
+    other = await _generate_pack(settings, video, [])
+    assert calls["bot"] == bot_before
+    assert calls["llm"] == 1
+    assert "продаёте" in other["hook"] or "рутину" in other["hook"]
+
+
+async def test_carousel_frames_come_from_the_same_grok_bot(tmp_path, monkeypatch):
+    from app.services.custom.content_factory_media import generate_grok_carousel_pack
+
+    calls = []
+
+    async def fake_ask(**kwargs):
+        calls.append(kwargs)
+        images = [
+            {"bytes": b"\x89PNG\r\n\x1a\n" + bytes([index + 1]), "prompt": f"кадр {index + 1}"}
+            for index in range(4)
+        ]
+        return {"images": images, "text": "Тема", "response_id": "resp-c"}
+
+    monkeypatch.setattr("app.services.custom.content_factory_media.ask_grok_bot", fake_ask)
+    pack = await generate_grok_carousel_pack(
+        api_key="xai-test",
+        company="Кофейня",
+        description="кофе",
+        audience="",
+        niche="",
+        brief="",
+        avoid=[],
+        previous_response_id="resp-prev",
+        folder=tmp_path,
+    )
+    assert calls[0]["previous_response_id"] == "resp-prev"
+    assert calls[0]["tools"]
+    assert pack["response_id"] == "resp-c"
+    assert [path.name for path in pack["paths"]] == ["slide-00.png", "slide-01.png", "slide-02.png", "slide-03.png"]
+
+
+@pytest.mark.asyncio
+async def test_manual_carousel_keeps_card_order_and_skips_platform_without_proxy(
+    test_session: AsyncSession,
+    custom_automation: CustomAutomation,
+    monkeypatch,
+):
+    from sqlalchemy import select
+
+    from app.alembic.models import CustomContentFactoryPost
+    from app.services.custom.content_factory_pipeline import publish_own_material
+    from app.services.custom.content_factory_service import connect_account, get_or_create_settings
+
+    calls = []
+
+    async def fake_publish(**kwargs):
+        calls.append(list(kwargs.get("image_urls") or []))
+        return {"status": "posted", "external_id": "manual-1", "posted_url": "https://example.test/p"}
+
+    def no_show(*_args, **_kwargs):
+        raise RuntimeError("ffmpeg skipped")
+
+    async def no_link(*_args, **_kwargs):
+        return {}, None, {}
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.publish_to_platform", fake_publish)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.slides_to_mp4", no_show)
+    monkeypatch.setattr("app.services.custom.content_factory_service.check_platform_link", no_link)
+
+    settings = await get_or_create_settings(test_session, custom_automation.id)
+    settings.sandbox_mode = False
+    account = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="instagram",
+        display_name="Свой",
+        handle="@own",
+        external_id="1789009",
+        credentials={"access_token": "tok-own", "ig_user_id": "1789009"},
+    )
+    from app.services.custom.content_factory_antifraud import now_utc
+
+    account.warmup_started_at = now_utc()
+    account.warmup_completed_at = now_utc()
+    account.status = "ready"
+    held = await publish_own_material(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        title="Заголовок",
+        caption="Описание своего поста",
+        media_kind="carousel",
+        files=[
+            ("a.png", b"\x89PNG\r\n\x1a\nA"),
+            ("b.png", b"\x89PNG\r\n\x1a\nB"),
+            ("c.png", b"\x89PNG\r\n\x1a\nC"),
+        ],
+    )
+    assert calls == []
+    assert (held.extra or {}).get("slide_names") == ["slide-00.png", "slide-01.png", "slide-02.png"]
+    post = await test_session.scalar(
+        select(CustomContentFactoryPost).where(CustomContentFactoryPost.video_id == held.id)
+    )
+    assert post is not None
+    assert post.status == "held"
+    assert post.hold_reason == "Нет прокси"
+    assert account.status != "restricted"
+
+    async def own_proxy(_session, _account):
+        return "socks5://10.9.0.8:1080"
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.proxy_url_for_account", own_proxy)
+    posted = await publish_own_material(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        title="Заголовок",
+        caption="Описание своего поста",
+        media_kind="carousel",
+        files=[
+            ("first.png", b"\x89PNG\r\n\x1a\n1"),
+            ("second.png", b"\x89PNG\r\n\x1a\n2"),
+            ("third.png", b"\x89PNG\r\n\x1a\n3"),
+        ],
+    )
+    assert len(calls) == 1
+    assert [item.rsplit("/", 1)[-1] for item in calls[0]] == ["slide-00.png", "slide-01.png", "slide-02.png"]
+    assert (posted.extra or {}).get("slide_names") == ["slide-00.png", "slide-01.png", "slide-02.png"]
+    assert posted.status == "posted"
+
+
+async def test_account_update_does_not_store_password_or_cookie(
+    test_session: AsyncSession,
+    custom_automation: CustomAutomation,
+    monkeypatch,
+):
+    from app.services.custom.content_factory_service import connect_account, decrypt_json, update_account
+
+    async def no_link(*_args, **_kwargs):
+        return {}, None, {}
+
+    monkeypatch.setattr("app.services.custom.content_factory_service.check_platform_link", no_link)
+    account = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="instagram",
+        display_name="Лента",
+        handle="@feed",
+        external_id="1789011",
+        credentials={"access_token": "tok-old", "ig_user_id": "1789011"},
+    )
+    updated = await update_account(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        payload={
+            "credentials": {
+                "access_token": "tok-next",
+                "password": "secret-pass",
+                "cookie": "browser-cookie",
+                "cookies": "browser-jar",
+                "sessionid": "browser-session",
+            }
+        },
+    )
+    stored = decrypt_json(updated.credentials_enc)
+    assert stored["access_token"] == "tok-next"
+    assert stored["ig_user_id"] == "1789011"
+    for key in ("password", "cookie", "cookies", "sessionid"):
+        assert key not in stored
+    assert "secret-pass" not in stored.values()
+    assert "browser-cookie" not in stored.values()
+
+    untouched = await update_account(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        payload={"credentials": {"password": "again", "cookie": "again"}},
+    )
+    kept = decrypt_json(untouched.credentials_enc)
+    assert kept["access_token"] == "tok-next"
+    assert "password" not in kept
+    assert "cookie" not in kept
+
+
+async def test_manual_retry_outside_window_reaches_publisher_without_skipping_daily_cap(
+    test_session: AsyncSession,
+    custom_automation: CustomAutomation,
+    monkeypatch,
+):
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.alembic.models import CustomContentFactoryPost
+    from app.services.custom.content_factory_antifraud import now_utc
+    from app.services.custom.content_factory_pipeline import _process_next_video, publish_own_material
+    from app.services.custom.content_factory_service import connect_account, get_or_create_settings
+
+    calls = []
+
+    async def fake_publish(**_kwargs):
+        calls.append(True)
+        return {"status": "posted", "external_id": "manual-tick", "posted_url": "https://example.test/p"}
+
+    def no_show(*_args, **_kwargs):
+        raise RuntimeError("ffmpeg skipped")
+
+    async def no_link(*_args, **_kwargs):
+        return {}, None, {}
+
+    def window_closed(*_args, **_kwargs):
+        return False
+
+    proxy_box = {"url": ""}
+
+    async def own_proxy(_session, _account):
+        return proxy_box["url"]
+
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.publish_to_platform", fake_publish)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.slides_to_mp4", no_show)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.in_posting_window", window_closed)
+    monkeypatch.setattr("app.services.custom.content_factory_pipeline.proxy_url_for_account", own_proxy)
+    monkeypatch.setattr("app.services.custom.content_factory_service.check_platform_link", no_link)
+
+    settings = await get_or_create_settings(test_session, custom_automation.id)
+    settings.sandbox_mode = False
+    settings.max_posts_per_account_per_day = 2
+    account = await connect_account(
+        test_session,
+        automation_id=custom_automation.id,
+        platform="instagram",
+        display_name="Свой",
+        handle="@own2",
+        external_id="1789012",
+        credentials={"access_token": "tok-own", "ig_user_id": "1789012"},
+    )
+    account.warmup_started_at = now_utc()
+    account.warmup_completed_at = now_utc()
+    account.status = "ready"
+    account.extra = {"apply_post_ramp": True}
+
+    slides = [
+        ("a.png", b"\x89PNG\r\n\x1a\nA"),
+        ("b.png", b"\x89PNG\r\n\x1a\nB"),
+    ]
+    held = await publish_own_material(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        title="Снаружи окна",
+        caption="Свой пост",
+        media_kind="carousel",
+        files=slides,
+    )
+    assert calls == []
+    assert held.status == "ready"
+    assert (held.extra or {}).get("hold_reason") != "Вне окна публикаций"
+    first_post = await test_session.scalar(
+        select(CustomContentFactoryPost).where(CustomContentFactoryPost.video_id == held.id)
+    )
+    assert first_post.hold_reason == "Нет прокси"
+
+    proxy_box["url"] = "socks5://10.9.0.9:1080"
+    retried = await _process_next_video(test_session, custom_automation.id, settings)
+    assert retried is not None
+    assert retried.id == held.id
+    assert len(calls) == 1
+    assert retried.status == "posted"
+    assert int(account.posts_today or 0) == 1
+
+    account.last_posted_at = now_utc() - timedelta(hours=3)
+    again = await publish_own_material(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        title="Рамп не режет свой материал",
+        caption="Второй свой пост",
+        media_kind="carousel",
+        files=slides,
+    )
+    assert len(calls) == 2
+    assert again.status == "posted"
+
+    account.last_posted_at = now_utc() - timedelta(hours=3)
+    capped = await publish_own_material(
+        test_session,
+        automation_id=custom_automation.id,
+        account_id=account.id,
+        title="Потолок",
+        caption="Третий свой пост",
+        media_kind="carousel",
+        files=slides,
+    )
+    assert len(calls) == 2
+    capped_post = await test_session.scalar(
+        select(CustomContentFactoryPost).where(CustomContentFactoryPost.video_id == capped.id)
+    )
+    assert capped_post.hold_reason == "Дневной лимит постов исчерпан"
+    ticked = await _process_next_video(test_session, custom_automation.id, settings)
+    assert ticked is not None
+    assert ticked.id == capped.id
+    assert len(calls) == 2
+    assert capped_post.hold_reason == "Дневной лимит постов исчерпан"
+
+
+async def test_instagram_carousel_published_container_is_not_published_again(monkeypatch):
+    from app.services.custom.content_factory_publishers import _proxy_url, _publish_instagram_carousel, _use_proxy
+
+    posts = []
+
+    class _Response:
+        def __init__(self, payload):
+            self._payload = payload
+            self.is_success = True
+            self.status_code = 200
+            self.text = ""
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, params=None, **kwargs):
+            return _Response({"status_code": "PUBLISHED"})
+
+        async def post(self, url, data=None, **kwargs):
+            posts.append(str(url))
+            return _Response({"id": "should-not-publish"})
+
+    monkeypatch.setattr("app.services.custom.content_factory_publishers.httpx.AsyncClient", _Client)
+    token = _use_proxy("socks5://10.8.0.8:1080")
+    try:
+        result = await _publish_instagram_carousel(
+            credentials={"access_token": "ig", "ig_user_id": "1789"},
+            image_urls=["https://example.test/a.jpg", "https://example.test/b.jpg"],
+            caption="Карусель",
+            publisher_state={"ig_container_id": "container-already"},
+        )
+    finally:
+        _proxy_url.reset(token)
+    assert result["status"] == "posted"
+    assert result["external_id"] == "container-already"
+    assert posts == []
+    assert not any("media_publish" in url for url in posts)

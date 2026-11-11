@@ -33,8 +33,10 @@ from .content_factory_antifraud import (
     next_enqueue_at,
     now_utc,
     uniqualize_recipe,
+    scrub_rejected_credentials,
     validate_platform_credentials,
     warmup_progress,
+    youtube_refresh_badge_ok,
 )
 from .content_factory_proxy import (
     PROXY_MISSING,
@@ -300,6 +302,9 @@ def serialize_account(
         credential_mode=str(tokens["credential_mode"]),
         proxy_ok=proxy_ok,
     )
+    if str(row.platform or "").lower() == "youtube" and tokens["credential_mode"] == "refresh":
+        if not youtube_refresh_badge_ok(creds, last_error=row.last_error):
+            score = min(score, 49)
     return {
         "id": row.id,
         "platform": row.platform,
@@ -547,10 +552,11 @@ async def update_account(
     if "is_enabled" in payload and payload["is_enabled"] is not None:
         account.is_enabled = bool(payload["is_enabled"])
     credentials = payload.get("credentials")
-    if isinstance(credentials, dict) and any(str(value or "").strip() for value in credentials.values()):
-        incoming = {str(key): str(value).strip() for key, value in credentials.items() if str(value or "").strip()}
-        merged = merge_platform_credentials(decrypt_json(account.credentials_enc), incoming)
-        account.credentials_enc = encrypt_json(merged)
+    if isinstance(credentials, dict):
+        incoming = scrub_rejected_credentials(credentials)
+        if incoming:
+            merged = merge_platform_credentials(decrypt_json(account.credentials_enc), incoming)
+            account.credentials_enc = encrypt_json(merged)
     if payload.get("pause"):
         account.status = "paused"
     if payload.get("mark_warmed"):
@@ -836,6 +842,33 @@ async def retry_video(session: AsyncSession, automation_id: int, video_id: int) 
     video = await get_video(session, automation_id, video_id)
     if video.status not in {"failed", "skipped"}:
         raise ValueError("Повторить можно только ошибочный или пропущенный ролик")
+    extra = dict(video.extra or {})
+    if extra.get("manual"):
+        extra["retried_at"] = now_utc().isoformat()
+        extra.pop("hold_reason", None)
+        video.extra = extra
+        video.status = "ready"
+        video.last_error = None
+        video.finished_at = None
+        video.updated_at = now_utc()
+        posts = list(
+            (
+                await session.execute(
+                    select(CustomContentFactoryPost).where(CustomContentFactoryPost.video_id == video.id)
+                )
+            ).scalars().all()
+        )
+        for post in posts:
+            if post.status != "failed":
+                continue
+            meta = dict(post.uniqualization_applied or {})
+            meta["attempts"] = 0
+            meta.pop("retry_after", None)
+            post.uniqualization_applied = meta
+            post.status = "pending"
+            post.hold_reason = None
+        await session.flush()
+        return video
     extra = dict(video.extra or {})
     extra["retried_at"] = now_utc().isoformat()
     extra.pop("hold_reason", None)

@@ -425,6 +425,60 @@ def grok_agent_pack(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def ask_grok_bot(
+    *,
+    api_key: str,
+    message: str,
+    previous_response_id: str = "",
+    tools: list[dict[str, Any]] | None = None,
+    timeout: float = 180.0,
+) -> dict[str, Any]:
+    """One turn of the factory Grok bot. Direct call, not the social-account proxy."""
+    body: dict[str, Any] = {
+        "model": GROK_CAROUSEL_MODEL,
+        "input": message,
+    }
+    if tools:
+        body["tools"] = tools
+    thread = str(previous_response_id or "").strip()
+    if thread:
+        body["previous_response_id"] = thread
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            "https://api.x.ai/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=body,
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Grok Bot: HTTP {response.status_code}")
+    payload = response.json() if response.content else {}
+    if not isinstance(payload, dict):
+        raise RuntimeError("Grok Bot вернул пустой ответ")
+    return grok_agent_pack(payload)
+
+
+async def generate_grok_authoring(
+    *,
+    api_key: str,
+    message: str,
+    previous_response_id: str = "",
+) -> dict[str, Any]:
+    """Scenario and prompts stay on the same bot thread as the carousel."""
+    thread = str(previous_response_id or "").strip()
+    try:
+        pack = await ask_grok_bot(
+            api_key=api_key,
+            message=message,
+            previous_response_id=thread,
+            timeout=120.0,
+        )
+    except RuntimeError:
+        if not thread:
+            raise
+        pack = await ask_grok_bot(api_key=api_key, message=message, timeout=120.0)
+    return {"text": pack["text"], "response_id": pack["response_id"]}
+
+
 async def generate_grok_carousel_pack(
     *,
     api_key: str,
@@ -437,14 +491,14 @@ async def generate_grok_carousel_pack(
     previous_response_id: str,
     folder: Path,
 ) -> dict[str, Any]:
-    """One Responses call. Grok writes the prompts and generates the pack."""
+    """Same bot draws the carousel. The thread is previous_response_id, not a side client."""
     folder.mkdir(parents=True, exist_ok=True)
     thread = str(previous_response_id or "").strip()
 
     async def _ask(follow_up: bool, response_id: str) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "model": GROK_CAROUSEL_MODEL,
-            "input": grok_carousel_message(
+        return await ask_grok_bot(
+            api_key=api_key,
+            message=grok_carousel_message(
                 company=company,
                 description=description,
                 audience=audience,
@@ -453,22 +507,10 @@ async def generate_grok_carousel_pack(
                 avoid=avoid,
                 follow_up=follow_up,
             ),
-            "tools": [{"type": "image_generation", "action": "auto"}],
-        }
-        if follow_up and response_id:
-            body["previous_response_id"] = response_id
-        async with httpx.AsyncClient(timeout=360.0) as client:
-            response = await client.post(
-                "https://api.x.ai/v1/responses",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=body,
-            )
-        if response.status_code >= 400:
-            raise RuntimeError(f"Grok Bot: HTTP {response.status_code} {response.text[:240]}")
-        payload = response.json() if response.content else {}
-        if not isinstance(payload, dict):
-            raise RuntimeError("Grok Bot вернул пустой ответ")
-        return grok_agent_pack(payload)
+            previous_response_id=response_id if follow_up else "",
+            tools=[{"type": "image_generation", "action": "auto"}],
+            timeout=360.0,
+        )
 
     try:
         pack = await _ask(bool(thread), thread)

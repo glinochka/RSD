@@ -353,7 +353,15 @@ async def _publish_instagram_carousel(
             params={"fields": "status_code", "access_token": token},
         )
         code = str((status_resp.json() or {}).get("status_code") or "").upper() if status_resp.is_success else ""
-        if code not in {"FINISHED", "PUBLISHED"}:
+        if code == "PUBLISHED":
+            return {
+                "status": "posted",
+                "external_id": container_id,
+                "posted_url": f"https://www.instagram.com/p/{container_id}/",
+                "publisher_state": {"ig_container_id": container_id},
+                "note": "Это карусель в ленте, не Reels: в Reels фото-листание не публикуется.",
+            }
+        if code != "FINISHED":
             return {
                 "status": "processing",
                 "external_id": container_id,

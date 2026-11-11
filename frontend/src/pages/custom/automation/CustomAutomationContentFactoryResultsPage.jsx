@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
@@ -19,15 +19,24 @@ const CustomAutomationContentFactoryResultsPage = () => {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [ownKind, setOwnKind] = useState('carousel');
+  const [ownAccount, setOwnAccount] = useState('');
+  const [ownTitle, setOwnTitle] = useState('');
+  const [ownCaption, setOwnCaption] = useState('');
+  const [ownCards, setOwnCards] = useState([]);
+  const dragIndex = useRef(null);
 
   const loadAll = useCallback(async () => {
-    const [overview, videoData, tokenData] = await Promise.all([
+    const [overview, videoData, tokenData, accountData] = await Promise.all([
       customService.getContentFactory(id),
       customService.getContentFactoryVideos(id, { status: statusFilter || undefined, limit: 40 }),
       customService.getContentFactoryTokens(id),
+      customService.getContentFactoryAccounts(id),
     ]);
     setData(overview);
     setVideos(videoData.items || []);
+    setAccounts(accountData.items || []);
     setTokens(tokenData.items || []);
   }, [id, statusFilter]);
 
@@ -103,6 +112,84 @@ const CustomAutomationContentFactoryResultsPage = () => {
     }
   };
 
+  const releaseOwnCards = (cards) => {
+    cards.forEach((card) => {
+      if (card.preview) {
+        URL.revokeObjectURL(card.preview);
+      }
+    });
+  };
+
+  const addOwnFiles = (fileList) => {
+    const incoming = Array.from(fileList || []);
+    setOwnCards((current) => [
+      ...current,
+      ...incoming.map((file) => ({
+        id: `${file.name}-${file.size}-${file.lastModified}-${current.length}-${Math.random()}`,
+        name: file.name,
+        file,
+        preview: URL.createObjectURL(file),
+      })),
+    ]);
+  };
+
+  const moveOwnCard = (from, to) => {
+    if (from == null || to == null || from === to) {
+      return;
+    }
+    setOwnCards((current) => {
+      const next = [...current];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const handleOwnPublish = async (event) => {
+    event.preventDefault();
+    if (!ownAccount) {
+      setError('Выберите аккаунт, с которого публиковать');
+      return;
+    }
+    if (ownKind === 'video' && ownCards.length !== 1) {
+      setError('Для ролика нужен один видеофайл');
+      return;
+    }
+    if (ownKind === 'carousel' && ownCards.length < 2) {
+      setError('Для карусели нужно хотя бы два фото. Порядок карточек — порядок публикации.');
+      return;
+    }
+    if (!ownCaption.trim() && !ownTitle.trim()) {
+      setError('Напишите описание');
+      return;
+    }
+    const body = new FormData();
+    body.append('account_id', ownAccount);
+    body.append('media_kind', ownKind);
+    body.append('title', ownTitle.trim());
+    body.append('caption', ownCaption.trim());
+    ownCards.forEach((card) => body.append('files', card.file, card.file.name));
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const video = await customService.publishContentFactoryOwn(id, body);
+      setMessage(`Свой материал #${video.id}: ${CF_STATUS[video.status] || video.status}`);
+      setOwnCards((current) => {
+        releaseOwnCards(current);
+        return [];
+      });
+      setOwnTitle('');
+      setOwnCaption('');
+      await loadAll();
+      setOpenId(video.id);
+    } catch (err) {
+      setError(err.message || 'Не удалось опубликовать');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleRetry = async (videoId) => {
     setBusy(true);
     setError(null);
@@ -160,6 +247,116 @@ const CustomAutomationContentFactoryResultsPage = () => {
 
       {message ? <p className="crm-flash">{message}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+      <form className="ubt-panel" onSubmit={handleOwnPublish}>
+        <div className="ubt-panel-header">
+          <div>
+            <h2>Свой материал</h2>
+            <p>Завод не перегенерирует эти файлы. Порядок карточек — порядок публикации. Уходит в тот же публикатор, что и ролики завода.</p>
+          </div>
+        </div>
+        <div className="cf-form-grid">
+          <div className="form-group">
+            <label htmlFor="cf-own-account">Аккаунт</label>
+            <select
+              id="cf-own-account"
+              value={ownAccount}
+              onChange={(event) => setOwnAccount(event.target.value)}
+            >
+              <option value="">Выберите аккаунт</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.platform} · {account.display_name || account.handle || account.id}
+                  {account.proxy_ok ? '' : ' · нет прокси'}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="cf-own-kind">Что публикуем</label>
+            <select
+              id="cf-own-kind"
+              value={ownKind}
+              onChange={(event) => {
+                setOwnKind(event.target.value);
+                setOwnCards((current) => {
+                  releaseOwnCards(current);
+                  return [];
+                });
+              }}
+            >
+              <option value="carousel">Фото-карусель</option>
+              <option value="video">Видео</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="cf-own-title">Заголовок</label>
+            <input id="cf-own-title" value={ownTitle} onChange={(event) => setOwnTitle(event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label htmlFor="cf-own-caption">Описание</label>
+            <textarea id="cf-own-caption" rows={3} value={ownCaption} onChange={(event) => setOwnCaption(event.target.value)} />
+          </div>
+        </div>
+        <div className="form-group">
+          <label htmlFor="cf-own-files">{ownKind === 'video' ? 'Видеофайл' : 'Фото карточек'}</label>
+          <input
+            id="cf-own-files"
+            type="file"
+            accept={ownKind === 'video' ? 'video/mp4,video/quicktime,video/webm' : 'image/png,image/jpeg,image/webp'}
+            multiple={ownKind === 'carousel'}
+            onChange={(event) => {
+              addOwnFiles(event.target.files);
+              event.target.value = '';
+            }}
+          />
+        </div>
+        {ownCards.length ? (
+          <div className="cf-cards">
+            {ownCards.map((card, index) => (
+              <div
+                key={card.id}
+                className="cf-card"
+                draggable
+                onDragStart={() => {
+                  dragIndex.current = index;
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  moveOwnCard(dragIndex.current, index);
+                  dragIndex.current = null;
+                }}
+              >
+                <span className="cf-card-index">{index + 1}</span>
+                {card.preview && card.file.type.startsWith('video/') ? (
+                  <video className="cf-card-preview" src={card.preview} muted playsInline />
+                ) : card.preview ? (
+                  <img className="cf-card-preview" src={card.preview} alt="" />
+                ) : null}
+                <span className="cf-card-name">{card.name}</span>
+                <button
+                  type="button"
+                  className="acc-btn acc-btn--ghost"
+                  onClick={() => setOwnCards((current) => {
+                    const found = current.find((item) => item.id === card.id);
+                    if (found) {
+                      releaseOwnCards([found]);
+                    }
+                    return current.filter((item) => item.id !== card.id);
+                  })}
+                >
+                  Убрать
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="cf-muted">Карточки можно перетащить. Первая уйдёт первой.</p>
+        )}
+        <div className="cf-actions">
+          <button type="submit" className="btn btn-black" disabled={busy}>Опубликовать</button>
+        </div>
+      </form>
 
       <div className="ubt-panel">
         <FeatureToggle

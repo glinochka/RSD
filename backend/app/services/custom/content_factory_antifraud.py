@@ -421,16 +421,56 @@ def should_clear_shadowban(*, recent_posts: list[dict[str, Any]]) -> bool:
     return sum(int(post.get("views") or 0) for post in live) > 0
 
 
+_REJECTED_CREDENTIAL_KEYS = frozenset({
+    "password",
+    "passwd",
+    "pass",
+    "cookie",
+    "cookies",
+    "session",
+    "sessionid",
+    "session_id",
+    "remixsid",
+    "sid_tt",
+})
+
+
+def access_expired(credentials: dict[str, Any] | None, *, now: datetime | None = None) -> bool:
+    raw = str((credentials or {}).get("expires_at") or "").strip()
+    if not raw:
+        return False
+    if raw.endswith("Z"):
+        raw = raw[:-1]
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if parsed.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=None)
+    current = now or now_utc()
+    return parsed <= current + timedelta(seconds=60)
+
+
 def credential_status(platform: str, credentials: dict[str, Any] | None) -> dict[str, Any]:
-    """How the row should talk about the token. Access-only is never 'forever fine'."""
+    """How the row should talk about the token. A dead access is never healthy."""
     payload = credentials or {}
     name = str(platform or "").strip().lower()
     has_refresh = bool(str(payload.get("refresh_token") or "").strip())
     has_access = bool(str(payload.get("access_token") or "").strip())
-    renewable = name == "instagram" and bool(str(payload.get("expires_at") or "").strip())
+    expired = access_expired(payload)
+    renewable = name == "instagram" and bool(str(payload.get("expires_at") or "").strip()) and not expired
     if has_refresh and name == "youtube":
         mode = "refresh"
         note = "Refresh сохранён. Access обновляется через прокси этого аккаунта."
+    elif expired:
+        mode = "expired"
+        if has_refresh and name != "youtube":
+            note = (
+                "Access истёк. Refresh сохранён, но без ключей приложения обновить им access нельзя. "
+                "Строка не считается здоровой."
+            )
+        else:
+            note = "Access истёк. Рабочего refresh нет, строка не считается здоровой."
     elif has_refresh:
         mode = "refresh_saved"
         note = (
@@ -456,7 +496,7 @@ def credential_status(platform: str, credentials: dict[str, Any] | None) -> dict
     return {
         "credential_mode": mode,
         "credential_note": note,
-        "access_only": mode in {"access_only", "missing"},
+        "access_only": mode in {"access_only", "missing", "expired"},
     }
 
 
@@ -464,7 +504,7 @@ def present_health_score(score: int, *, credential_mode: str, proxy_ok: bool) ->
     value = int(score)
     if not proxy_ok:
         value = min(value, 45)
-    if credential_mode in {"access_only", "missing"}:
+    if credential_mode in {"access_only", "missing", "expired"}:
         value = min(value, 49)
     elif credential_mode in {"refresh_saved", "renewable"}:
         value = min(value, 60)
@@ -516,6 +556,26 @@ def warmup_action_interval(actions_per_day: int) -> timedelta:
     return timedelta(hours=24.0 / per_day)
 
 
+def scrub_rejected_credentials(credentials: dict[str, Any] | None) -> dict[str, str]:
+    """Password and browser cookies are not stored, on connect or on update."""
+    return {
+        str(key): str(value).strip()
+        for key, value in (credentials or {}).items()
+        if str(value or "").strip() and str(key).strip().lower() not in _REJECTED_CREDENTIAL_KEYS
+    }
+
+
+def youtube_refresh_badge_ok(credentials: dict[str, Any] | None, *, last_error: str | None = None) -> bool:
+    """Refresh alone is not a green badge after a failed check.
+
+    A live refresh that has not been checked yet stays valid, even if the access
+    timestamp is already old. Do not paint that row expired in advance.
+    """
+    if credential_status("youtube", credentials)["credential_mode"] != "refresh":
+        return False
+    return not str(last_error or "").strip()
+
+
 def validate_platform_credentials(
     platform: str,
     credentials: dict[str, Any] | None,
@@ -530,6 +590,14 @@ def validate_platform_credentials(
         for key, value in (credentials or {}).items()
         if str(value or "").strip()
     }
+    rejected = [key for key in cleaned if key.strip().lower() in _REJECTED_CREDENTIAL_KEYS]
+    if rejected:
+        raise ValueError(
+            "Пароль и cookie браузера не сохраняются. "
+            "Площадка принимает уже выданный токен: YouTube — ещё refresh или OAuth, "
+            "Instagram — access и id пользователя, TikTok — access, "
+            "Pinterest — access и board_id, VK — access и id сообщества."
+        )
     if name == "youtube":
         if not cleaned.get("refresh_token") and not cleaned.get("access_token"):
             raise ValueError("YouTube: нужен refresh_token или access_token")

@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { CF_CREDENTIAL_FIELDS, CF_PLATFORMS, accountStatusLabel, formatWhen } from './contentFactoryLabels';
+import { CF_LOGIN, CF_PLATFORMS, accountStatusLabel, formatWhen } from './contentFactoryLabels';
 import '../../../styles/customAccountManager.css';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/customSolutionNav.css';
@@ -70,23 +70,24 @@ const CustomAutomationContentFactoryAccountsPage = () => {
   const handleConnect = async (event) => {
     event.preventDefault();
     const credentials = credentialsFor();
+    const login = CF_LOGIN[form.platform];
     if (form.platform === 'youtube' && !credentials.refresh_token && !credentials.access_token) {
       setError('YouTube: вставьте refresh token или access token, либо пройдите OAuth');
       return;
     }
-    if (form.platform === 'instagram' && (!credentials.access_token || !credentials.ig_user_id)) {
+    if (login?.access && form.platform !== 'youtube' && !credentials.access_token) {
+      setError('Нужен уже выданный access token. Пароль и cookie браузера не подходят.');
+      return;
+    }
+    if (form.platform === 'instagram' && !credentials.ig_user_id) {
       setError('Instagram: нужны access token и Instagram User ID');
       return;
     }
-    if (form.platform === 'tiktok' && !credentials.access_token) {
-      setError('TikTok: нужен access token');
-      return;
-    }
-    if (form.platform === 'pinterest' && (!credentials.access_token || !credentials.board_id)) {
+    if (form.platform === 'pinterest' && !credentials.board_id) {
       setError('Pinterest: нужны access token и board_id');
       return;
     }
-    if (form.platform === 'vk' && (!credentials.access_token || !credentials.group_id)) {
+    if (form.platform === 'vk' && !credentials.group_id) {
       setError('VK Клипы: нужен пользовательский токен и id сообщества');
       return;
     }
@@ -192,9 +193,7 @@ const CustomAutomationContentFactoryAccountsPage = () => {
         <div className="ubt-panel-header">
           <div>
             <h2>Подключить аккаунт</h2>
-            <p>
-              Токены шифруются и обратно не показываются. Для {CF_PLATFORMS.find((item) => item.id === form.platform)?.title}: {CF_CREDENTIAL_FIELDS[form.platform]}.
-            </p>
+            <p>{CF_LOGIN[form.platform]?.note}</p>
           </div>
         </div>
         <div className="cf-form-grid">
@@ -204,7 +203,14 @@ const CustomAutomationContentFactoryAccountsPage = () => {
               id="cf-platform"
               value={form.platform}
               options={CF_PLATFORMS.map((item) => ({ value: item.id, label: item.title }))}
-              onChange={(event) => setForm((current) => ({ ...current, platform: event.target.value }))}
+              onChange={(event) => {
+                const platform = event.target.value;
+                setForm((current) => ({
+                  ...current,
+                  platform,
+                  refresh_token: CF_LOGIN[platform]?.refresh ? current.refresh_token : '',
+                }));
+              }}
             />
           </div>
           <div className="form-group">
@@ -235,17 +241,19 @@ const CustomAutomationContentFactoryAccountsPage = () => {
               autoComplete="off"
             />
           </div>
-          <div className="form-group">
-            <label htmlFor="cf-refresh">Refresh token</label>
-            <input
-              id="cf-refresh"
-              type="password"
-              value={form.refresh_token}
-              onChange={(event) => setForm((current) => ({ ...current, refresh_token: event.target.value }))}
-              autoComplete="off"
-              placeholder={form.platform === 'youtube' ? 'Обязателен, чтобы обновлять access' : 'Если площадка его отдала'}
-            />
-          </div>
+          {CF_LOGIN[form.platform]?.refresh ? (
+            <div className="form-group">
+              <label htmlFor="cf-refresh">Refresh token</label>
+              <input
+                id="cf-refresh"
+                type="password"
+                value={form.refresh_token}
+                onChange={(event) => setForm((current) => ({ ...current, refresh_token: event.target.value }))}
+                autoComplete="off"
+                placeholder={form.platform === 'youtube' ? 'Чтобы обновлять access' : 'Если площадка его отдала'}
+              />
+            </div>
+          ) : null}
           {form.platform === 'instagram' ? (
             <div className="form-group">
               <label htmlFor="cf-ig">Instagram User ID</label>
@@ -305,7 +313,7 @@ const CustomAutomationContentFactoryAccountsPage = () => {
                       <h3>{account.display_name || account.handle || account.platform}</h3>
                       <p>{account.platform} {account.handle ? `· ${account.handle}` : ''}</p>
                     </div>
-                    <span className={`cf-tag${account.status === 'shadow_risk' || account.status === 'restricted' ? ' cf-tag--danger' : !account.proxy_ok || account.credential_mode === 'access_only' || account.credential_mode === 'missing' ? ' cf-tag--warn' : account.status === 'ready' ? ' cf-tag--ok' : ' cf-tag--warn'}`}>
+                    <span className={`cf-tag${account.status === 'shadow_risk' || account.status === 'restricted' ? ' cf-tag--danger' : !account.proxy_ok || account.credential_mode === 'access_only' || account.credential_mode === 'missing' || account.credential_mode === 'expired' || (account.credential_mode === 'refresh' && account.last_error) ? ' cf-tag--warn' : account.status === 'ready' ? ' cf-tag--ok' : ' cf-tag--warn'}`}>
                       {accountStatusLabel(account.status)}
                     </span>
                   </div>

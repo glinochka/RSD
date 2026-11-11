@@ -323,6 +323,7 @@ const CustomAutomationContentFactorySettingsPage = () => {
             <div className="form-group">
               <label htmlFor="cf-imodel">Модель идей / сценария</label>
               <input id="cf-imodel" value={form.script_model} onChange={(e) => setField('script_model', e.target.value)} />
+              <p className="form-hint">Имя с Grok отдаёт сценарий боту. Сбой бота останавливает ролик. Другая модель идёт прежним путём.</p>
             </div>
             <div className="form-group">
               <label htmlFor="cf-vmodel">Видеомодель</label>

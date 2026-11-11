@@ -467,6 +467,7 @@ export const API_ROUTES = {
     `/api/custom/automations/${id}/content-factory/videos/${videoId}/skip`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_TOKENS: (id) => `/api/custom/automations/${id}/content-factory/tokens`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_GENERATE: (id) => `/api/custom/automations/${id}/content-factory/generate`,
+  CUSTOM_AUTOMATION_CONTENT_FACTORY_MANUAL: (id) => `/api/custom/automations/${id}/content-factory/manual`,
   CUSTOM_AUTOMATION_CONTENT_FACTORY_RUN: (id) => `/api/custom/automations/${id}/content-factory/run`,
 };
 

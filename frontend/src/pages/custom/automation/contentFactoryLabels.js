@@ -2,29 +2,57 @@ export const CF_PLATFORMS = [
   {
     id: 'youtube',
     title: 'YouTube Shorts',
-    hint: 'Основной канал для коротких роликов. Можно вставить refresh-токен или пройти OAuth.',
+    hint: 'OAuth, refresh или access. Cookie и пароль Data API не принимает.',
   },
   {
     id: 'instagram',
     title: 'Instagram Reels',
-    hint: 'Видео уходит в Reels. Фото-карусель публикуется в ленту: в Reels листание кадров не поддерживается.',
+    hint: 'Access token и Instagram User ID. Видео уходит в Reels, фото-карусель — в ленту.',
   },
   {
     id: 'tiktok',
     title: 'TikTok',
-    hint: 'Content Posting API. Публичный пост возможен только после аудита приложения TikTok — иначе завод остановит публикацию и напишет причину.',
+    hint: 'Уже выданный access token. Refresh можно сохранить, без ключей приложения он access не обновит.',
   },
   {
     id: 'pinterest',
     title: 'Pinterest',
-    hint: 'access token и board_id. Фото и карусель уходят пином. Видео Pinterest API v5 по ссылке не принимает.',
+    hint: 'Access token и board_id. Фото и карусель уходят пином. Видео по ссылке API не принимает.',
   },
   {
     id: 'vk',
     title: 'VK Клипы',
-    hint: 'Короткое вертикальное видео. Карусель сюда не встаёт: те же кадры собираются в слайд-шоу с музыкой.',
+    hint: 'Пользовательский access token и id сообщества. Карусель собирается в слайд-шоу.',
   },
 ];
+
+export const CF_LOGIN = {
+  youtube: {
+    note: 'Живые способы: OAuth, refresh token или access token. Пароль и cookie браузера не сохраняются.',
+    refresh: true,
+    access: true,
+  },
+  instagram: {
+    note: 'Живой способ: access token и Instagram User ID. Отдельный refresh площадка здесь не отдаёт. Cookie сессии Graph не принимает.',
+    refresh: false,
+    access: true,
+  },
+  tiktok: {
+    note: 'Живой способ: уже выданный access token. Если TikTok отдал refresh, его можно вставить: без ключей приложения он access не обновит.',
+    refresh: true,
+    access: true,
+  },
+  pinterest: {
+    note: 'Живой способ: access token и board_id. Refresh сохраняется, если он есть, и сам access не крутит.',
+    refresh: true,
+    access: true,
+  },
+  vk: {
+    note: 'Живой способ: пользовательский access token и id сообщества. Refresh VK ID можно сохранить, без ключей приложения он не крутит access.',
+    refresh: true,
+    access: true,
+  },
+};
 
 export const CF_FORMATS = [
   { id: 'educational', label: 'Обучающее' },
@@ -132,11 +160,11 @@ export const CF_VIDEO_FILTERS = [
 ];
 
 export const CF_CREDENTIAL_FIELDS = {
-  youtube: 'refresh token. Один access без refresh на строке виден отдельно и сам не продлевается',
+  youtube: 'OAuth, refresh или access. Один access без refresh на строке виден отдельно',
   instagram: 'access token и Instagram User ID. Refresh эта площадка в подключении не отдаёт',
-  tiktok: 'access token. Если TikTok отдал refresh, вставьте его тоже',
-  pinterest: 'access token и board_id. Если Pinterest отдал refresh, вставьте его тоже',
-  vk: 'пользовательский токен с правом на клипы и id сообщества. Refresh VK ID, если он есть',
+  tiktok: 'access token. Refresh сохраняется, но без ключей приложения access не обновляет',
+  pinterest: 'access token и board_id. Refresh сохраняется, но сам access не крутит',
+  vk: 'пользовательский access token и id сообщества. Refresh сохраняется, если VK его отдал',
 };
 
 export const CF_MUSIC_MODES = [

@@ -2508,6 +2508,16 @@ const customService = {
     return handleResponse(response);
   },
 
+  async publishContentFactoryOwn(automationId, formData) {
+    const headers = getAuthHeaders();
+    delete headers['Content-Type'];
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_MANUAL(automationId)}`,
+      { method: 'POST', headers, body: formData },
+    );
+    return handleResponse(response);
+  },
+
   async generateContentFactoryVideo(automationId) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CONTENT_FACTORY_GENERATE(automationId)}`,

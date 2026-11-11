@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import RedirectResponse
 
 from .dependencies import get_current_custom_automation
@@ -22,7 +22,7 @@ from ..alembic.models import CustomAutomation, CustomProxy
 from ..config import settings as app_settings
 from ..services.custom.content_factory_antifraud import factory_return_url
 from ..services.custom.content_factory_media import factory_grok_bot_id
-from ..services.custom.content_factory_pipeline import generate_now, tick
+from ..services.custom.content_factory_pipeline import generate_now, publish_own_material, tick
 from ..services.custom.content_factory_proxy import (
     ensure_factory_proxy,
     handshake_proxy,
@@ -384,6 +384,42 @@ async def youtube_oauth_callback(
     )
     sep = "&" if "?" in return_url else "?"
     return RedirectResponse(f"{return_url}{sep}youtube=connected&account_id={account_id}")
+
+
+@router.post("/automations/{automation_id}/content-factory/manual")
+async def publish_content_factory_manual(
+    automation_id: int,
+    account_id: int = Form(...),
+    title: str = Form(""),
+    caption: str = Form(""),
+    media_kind: str = Form("carousel"),
+    files: list[UploadFile] = File(...),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    blobs: list[tuple[str, bytes]] = []
+    total = 0
+    for upload in files:
+        raw = await upload.read()
+        total += len(raw)
+        if total > 80 * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Файл слишком большой")
+        blobs.append((upload.filename or "file", raw))
+    async with async_session_maker() as session:
+        try:
+            video = await publish_own_material(
+                session,
+                automation_id=automation.id,
+                account_id=account_id,
+                title=title,
+                caption=caption,
+                media_kind=media_kind,
+                files=blobs,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        await session.commit()
+        await session.refresh(video)
+        return serialize_video(video)
 
 
 @router.get("/automations/{automation_id}/content-factory/videos")
