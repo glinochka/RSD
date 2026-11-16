@@ -11,6 +11,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import release_session_before_wait
+
 from .account_pacing import account_humanization_should_idle, account_may_reply_dm, farm_overlap_active_hours
 from .conversation_guard import (
     conversation_has_link,
@@ -188,6 +190,7 @@ async def _generate_reply(
             "partner_promo_code": promo,
         },
     )
+    await release_session_before_wait(session)
     response = await ai_client.chat.completions.create(
         model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],

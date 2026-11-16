@@ -49,6 +49,7 @@ from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import comment_send_error_label, execute_with_telegram_retry, is_comments_unusable
 from .telegram_invite import chat_entity_key
+from ...alembic.database import release_session_before_wait
 from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
@@ -226,6 +227,7 @@ async def _generate_comment(
         {"post_text": post_text or "", "chat_title": chat_title or ""},
     )
     try:
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
@@ -478,7 +480,7 @@ async def _send_comment(
         await session.commit()
         return label
 
-    record_successful_send(account)
+    await record_successful_send(session, account)
     log = AutomationActionLog(
         custom_automation_id=automation_id,
         social_account_id=account.id,

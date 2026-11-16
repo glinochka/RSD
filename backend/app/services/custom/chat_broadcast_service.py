@@ -211,7 +211,7 @@ async def _send_line(
     except Exception as exc:
         logger.warning("Chat broadcast send failed chat=%s account=%s: %s", chat.id, account.id, exc)
         return False
-    record_successful_send(account)
+    await record_successful_send(session, account)
     session.add(
         AutomationActionLog(
             custom_automation_id=automation_id,

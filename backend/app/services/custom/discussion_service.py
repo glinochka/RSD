@@ -49,6 +49,7 @@ from ...alembic.models import (
     PromptType,
     SocialAccount,
 )
+from ...alembic.database import release_session_before_wait
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -171,6 +172,7 @@ async def _generate_reply(
     if extras:
         prompt = f"{prompt}\n\n" + "\n\n".join(extras)
     try:
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
@@ -340,7 +342,7 @@ async def _send_reply(
         logger.warning("Send discussion reply failed for chat %s message %s: %s", chat_target.id, message.id, exc)
         return False
 
-    record_successful_send(account)
+    await record_successful_send(session, account)
     from .job_service import actor_label, chat_label, clip_text, log_active
 
     await log_active(

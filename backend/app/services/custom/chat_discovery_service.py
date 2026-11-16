@@ -13,6 +13,8 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...alembic.database import release_session_before_wait
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import SearchGlobalRequest
@@ -122,6 +124,7 @@ async def _score_candidate(
         },
     )
     try:
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],

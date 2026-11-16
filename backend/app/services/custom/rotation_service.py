@@ -11,8 +11,9 @@ from logging import getLogger
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import case, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ...alembic.models import AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
 from .account_pacing import account_is_flood_quarantined, account_should_idle, effective_daily_target_max
@@ -95,12 +96,52 @@ def current_daily_messages_sent(account: SocialAccount | None) -> int:
     return int(account.daily_messages_sent or 0)
 
 
-def _reset_counters_if_needed(accounts: list[SocialAccount]) -> None:
+async def commit_daily_counter_reset(session: AsyncSession, accounts: list[SocialAccount]) -> None:
+    """Persist today's counter reset on its own connection and commit it.
+
+    The caller's transaction often still has a SELECT open (prompts, pool
+    rows) and then waits on Telegram or the LLM. An UPDATE of
+    daily_messages_reset_at in that transaction sits on the row lock for
+    the whole wait, and every other worker's reset queues behind it.
+    """
     now = _utc_now()
-    for account in accounts:
-        if _needs_reset(account.daily_messages_reset_at):
-            account.daily_messages_sent = 0
-            account.daily_messages_reset_at = now
+    pending = [
+        account
+        for account in accounts
+        if account is not None and account.id is not None and _needs_reset(account.daily_messages_reset_at)
+    ]
+    if not pending:
+        return
+    ids = [account.id for account in pending]
+    day_start = moscow_day_start_utc_naive()
+    # AsyncSession.get_bind() is the sync engine. Wrap it so this checkout
+    # uses the same pool without joining the caller's open transaction.
+    async with AsyncEngine(session.get_bind()).begin() as conn:
+        await conn.execute(
+            update(SocialAccount)
+            .where(SocialAccount.id.in_(ids))
+            .where(
+                or_(
+                    SocialAccount.daily_messages_reset_at.is_(None),
+                    SocialAccount.daily_messages_reset_at < day_start,
+                )
+            )
+            .values(daily_messages_sent=0, daily_messages_reset_at=now)
+        )
+        fetched = await conn.execute(
+            select(
+                SocialAccount.id,
+                SocialAccount.daily_messages_sent,
+                SocialAccount.daily_messages_reset_at,
+            ).where(SocialAccount.id.in_(ids))
+        )
+        rows = {row[0]: row for row in fetched.all()}
+    for account in pending:
+        row = rows.get(account.id)
+        if row is None:
+            continue
+        set_committed_value(account, "daily_messages_sent", int(row[1] or 0))
+        set_committed_value(account, "daily_messages_reset_at", row[2])
 
 
 def _filter_eligible(
@@ -207,11 +248,47 @@ async def list_alive_session_accounts(
     return alive
 
 
-def record_successful_send(account: SocialAccount) -> None:
-    """Count a TARGET message only after Telegram actually accepted it."""
-    _reset_counters_if_needed([account])
-    account.daily_messages_sent = (account.daily_messages_sent or 0) + 1
-    account.last_used_at = _utc_now()
+async def record_successful_send(session: AsyncSession, account: SocialAccount) -> None:
+    """Count a TARGET message only after Telegram actually accepted it.
+
+    One short UPDATE adds 1 in the database. If today's reset is still due,
+    the same statement starts the counter at 1 and commits. The in-memory
+    number is then copied from that committed row.
+    """
+    if account is None or account.id is None:
+        return
+    now = _utc_now()
+    day_start = moscow_day_start_utc_naive()
+    reset_due = or_(
+        SocialAccount.daily_messages_reset_at.is_(None),
+        SocialAccount.daily_messages_reset_at < day_start,
+    )
+    async with AsyncEngine(session.get_bind()).begin() as conn:
+        await conn.execute(
+            update(SocialAccount)
+            .where(SocialAccount.id == account.id)
+            .values(
+                daily_messages_sent=case(
+                    (reset_due, 1),
+                    else_=SocialAccount.daily_messages_sent + 1,
+                ),
+                daily_messages_reset_at=case(
+                    (reset_due, now),
+                    else_=SocialAccount.daily_messages_reset_at,
+                ),
+            )
+        )
+        row = (
+            await conn.execute(
+                select(
+                    SocialAccount.daily_messages_sent,
+                    SocialAccount.daily_messages_reset_at,
+                ).where(SocialAccount.id == account.id)
+            )
+        ).one()
+    set_committed_value(account, "daily_messages_sent", int(row[0] or 0))
+    set_committed_value(account, "daily_messages_reset_at", row[1])
+    account.last_used_at = now
 
 
 def record_successful_humanization(account: SocialAccount) -> None:
@@ -269,7 +346,7 @@ async def select_account_for_action(
 
     rows = await _load_pool_accounts(session, pool.id)
     accounts = [social for _, social in rows]
-    _reset_counters_if_needed(accounts)
+    await commit_daily_counter_reset(session, accounts)
 
     exclude_spamblocked = action_type in _DM_ACTIONS
     skip_write_rest = ignore_rest or action_type == "inspect"

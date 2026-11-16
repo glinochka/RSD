@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import release_session_before_wait
 from ...alembic.models import CustomAutomation, CustomPrompt, PromptType
 from ...services.ai_authoring import ai_client
 
@@ -540,12 +541,16 @@ async def test_prompt(
             "missing_variables": [] if setup and reply else ["setup", "reply"],
         }
 
+    model = prompt.model
+    temperature = prompt.temperature
+    max_tokens = prompt.max_tokens
     try:
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
-            model=prompt.model,
+            model=model,
             messages=[{"role": "user", "content": rendered}],
-            temperature=prompt.temperature,
-            max_tokens=prompt.max_tokens,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         output = response.choices[0].message.content or ""
         return {

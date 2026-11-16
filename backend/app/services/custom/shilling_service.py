@@ -37,6 +37,7 @@ from .rotation_service import (
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry, is_comments_unusable
+from ...alembic.database import release_session_before_wait
 from ...alembic.models import (
     AutomationActionLog,
     ChatMessage,
@@ -265,6 +266,7 @@ async def generate_shilling_dialogue(
     if not setup or not reply:
         setup, reply = DEFAULT_SHILLING_SETUP, DEFAULT_SHILLING_REPLY
     cfg = _module_cfg(automation)
+    await release_session_before_wait(session)
     if vary and bool(cfg.get("unique_messages", True)):
         setup, reply = await light_vary_shilling_lines(setup, reply)
     return sanitize_public_text(setup), sanitize_public_text(reply)
@@ -461,7 +463,7 @@ async def _send_message(
         return None
     message_id = getattr(message, "id", None)
     if message_id:
-        record_successful_send(account)
+        await record_successful_send(session, account)
         await session.commit()
     return message_id
 

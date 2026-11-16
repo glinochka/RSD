@@ -9,6 +9,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import release_session_before_wait
+
 from .account_pacing import farm_overlap_active_hours
 from .amocrm_service import transfer_lead_to_amocrm
 from .dmp_one_service import check_lead_conversion, resolve_telegram_for_lead
@@ -188,6 +190,7 @@ async def _classify_dialogue(
         },
     )
     try:
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],

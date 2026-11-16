@@ -10,6 +10,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import release_session_before_wait
+
 from .account_pacing import profile_edit_allowed
 from .telegram_account_client import SESSION_RECONNECT_HINT, TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry
@@ -61,6 +63,7 @@ async def _generate_unique_bio(
         logger.warning("Bio prompt contains unknown variable: %s", exc)
 
     try:
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],

@@ -535,7 +535,7 @@ class TestAccountPoolAndRotation:
         selected = await select_account_for_action(test_session, custom_automation.id, "commenting")
         assert selected is not None
         assert selected.daily_messages_sent == 0
-        record_successful_send(selected)
+        await record_successful_send(test_session, selected)
         await test_session.commit()
         await test_session.refresh(selected)
         assert selected.daily_messages_sent == 1

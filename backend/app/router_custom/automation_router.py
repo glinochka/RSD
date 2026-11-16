@@ -182,7 +182,7 @@ from ..services.custom.proxy_service import (
     replace_proxy_list,
     resolve_account_proxy_choice,
 )
-from ..services.custom.rotation_service import _reset_counters_if_needed, current_daily_messages_sent
+from ..services.custom.rotation_service import commit_daily_counter_reset, current_daily_messages_sent
 from ..services.custom.account_connect_service import (
     poll_account_qr,
     request_account_sms,
@@ -2189,7 +2189,7 @@ async def list_accounts(
         total = await session.scalar(count_stmt)
 
         max_daily = automation.max_daily_messages_per_account
-        _reset_counters_if_needed([social_account for _, social_account in rows])
+        await commit_daily_counter_reset(session, [social_account for _, social_account in rows])
         await session.commit()
         from ..services.custom.work_mode import apply_work_mode, reset_work_mode
 

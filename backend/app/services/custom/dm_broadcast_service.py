@@ -210,7 +210,7 @@ async def _send_line(
         return False
     if skip_peer:
         return "skip"
-    record_successful_send(account)
+    await record_successful_send(session, account)
     session.add(
         AutomationActionLog(
             custom_automation_id=automation_id,

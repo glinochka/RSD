@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import release_session_before_wait
+
 from .chat_membership_service import get_reader_account, live_joined_chat_ids, recover_reader_after_error
 from .chat_scope import (
     apply_entity_metadata,
@@ -144,6 +146,7 @@ async def _classify_message(
             template,
             {"text": text or "", "offer": offer or "услуги компании"},
         )
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
@@ -185,6 +188,7 @@ async def _generate_response(
             await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_RESPONSE.value),
             {"text": text or ""},
         )
+        await release_session_before_wait(session)
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
