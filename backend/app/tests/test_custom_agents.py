@@ -8008,7 +8008,7 @@ class TestAccountProxies:
         assert kept_hosts == {"10.7.4.1", "10.7.4.2"}
         assert old_ids.isdisjoint({pools[0].proxy_id, pools[1].proxy_id})
 
-    async def test_replace_skips_foreign_and_factory_proxy(
+    async def test_replace_takes_held_proxy_and_skips_factory(
         self,
         test_session: AsyncSession,
         custom_automation: CustomAutomation,
@@ -8020,7 +8020,6 @@ class TestAccountProxies:
         from app.alembic.models import CustomContentFactoryAccount, CustomProxy
         from app.services.custom import proxy_service as ps
         from app.services.custom.proxy_service import (
-            ProxyChoiceError,
             bind_account_proxy,
             replace_account_proxy_sets,
             replace_proxy_list,
@@ -8080,7 +8079,9 @@ class TestAccountProxies:
         await test_session.commit()
         await test_session.refresh(owner_pool)
         await test_session.refresh(neighbor_pool)
+        await test_session.refresh(neighbor)
         await test_session.refresh(factory_proxy)
+        await test_session.refresh(by_host["10.7.5.4"])
         fresh = await test_session.scalar(
             select(CustomProxy).where(
                 CustomProxy.custom_automation_id == custom_automation.id,
@@ -8088,13 +8089,17 @@ class TestAccountProxies:
             )
         )
         assert fresh is not None
-        assert list(owner_pool.proxy_set_ids) == [fresh.id]
-        assert owner_pool.proxy_id == fresh.id
-        assert foreign.id not in set(owner_pool.proxy_set_ids)
+        spare = by_host["10.7.5.4"]
+        assert list(owner_pool.proxy_set_ids) == [foreign.id, fresh.id]
+        assert owner_pool.proxy_id == foreign.id
         assert factory_proxy.id not in set(owner_pool.proxy_set_ids)
         assert set(old_owner).isdisjoint(owner_pool.proxy_set_ids)
-        assert neighbor_pool.proxy_id == foreign.id
+        assert list(neighbor_pool.proxy_set_ids) == [spare.id]
+        assert neighbor_pool.proxy_id == spare.id
+        assert foreign.id not in set(neighbor_pool.proxy_set_ids)
+        assert (neighbor.telegram_proxy or {}).get("host") == spare.host
         assert factory_proxy.id not in set(neighbor_pool.proxy_set_ids)
+        assert set(owner_pool.proxy_set_ids).isdisjoint(neighbor_pool.proxy_set_ids)
         kept_factory = await test_session.scalar(
             select(CustomContentFactoryAccount).where(
                 CustomContentFactoryAccount.external_id == "yt-replace"
@@ -8104,16 +8109,107 @@ class TestAccountProxies:
         assert kept_factory.proxy_id == factory_proxy.id
         assert owner.id in result["changed"]
 
-        with pytest.raises(ProxyChoiceError, match="закрепл"):
-            await replace_account_proxy_sets(
-                test_session,
-                custom_automation.id,
-                [owner.id],
-                "10.7.5.1:1080\n10.7.5.2:1080",
-            )
+        async def drop_neighbor(account):
+            return account.id != neighbor.id
+
+        monkeypatch.setattr(ps, "_drop_live_session", drop_neighbor)
+        busy = await replace_account_proxy_sets(
+            test_session,
+            custom_automation.id,
+            [owner.id],
+            "10.7.5.4:1080\n10.7.5.2:1080",
+        )
+        await test_session.commit()
         await test_session.refresh(owner_pool)
-        assert list(owner_pool.proxy_set_ids) == [fresh.id]
-        assert owner_pool.proxy_id == fresh.id
+        await test_session.refresh(neighbor_pool)
+        await test_session.refresh(neighbor)
+        await test_session.refresh(kept_factory)
+        assert "закрепл" not in str(busy)
+        assert owner.id in busy["kept"]
+        assert list(owner_pool.proxy_set_ids) == [foreign.id, fresh.id]
+        assert owner_pool.proxy_id == foreign.id
+        assert list(neighbor_pool.proxy_set_ids) == [spare.id]
+        assert neighbor_pool.proxy_id == spare.id
+        assert kept_factory.proxy_id == factory_proxy.id
+
+        async def drop_owner(account):
+            return account.id != owner.id
+
+        monkeypatch.setattr(ps, "_drop_live_session", drop_owner)
+        denied = await replace_account_proxy_sets(
+            test_session,
+            custom_automation.id,
+            [owner.id],
+            "10.7.5.4:1080",
+        )
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        await test_session.refresh(neighbor_pool)
+        await test_session.refresh(neighbor)
+        assert owner.id in denied["kept"]
+        assert list(owner_pool.proxy_set_ids) == [foreign.id, fresh.id]
+        assert owner_pool.proxy_id == foreign.id
+        assert list(neighbor_pool.proxy_set_ids) == [spare.id]
+        assert neighbor_pool.proxy_id == spare.id
+        assert (neighbor.telegram_proxy or {}).get("host") == spare.host
+
+        monkeypatch.setattr(ps, "_drop_live_session", drop_neighbor)
+        mate = await self._add_account(
+            test_session, custom_automation, username="replace_guard_mate", phone="+79997300003"
+        )
+        mate_pool = await self._pool_for(test_session, mate)
+        shared = await replace_account_proxy_sets(
+            test_session,
+            custom_automation.id,
+            [owner.id, mate.id],
+            "10.7.5.4:1080\n10.7.5.8:1080",
+        )
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        await test_session.refresh(neighbor_pool)
+        await test_session.refresh(mate_pool)
+        await test_session.refresh(kept_factory)
+        moved = await test_session.scalar(
+            select(CustomProxy).where(
+                CustomProxy.custom_automation_id == custom_automation.id,
+                CustomProxy.host == "10.7.5.8",
+            )
+        )
+        assert moved is not None
+        assert owner.id in shared["kept"]
+        assert list(owner_pool.proxy_set_ids) == [foreign.id, fresh.id]
+        assert mate.id in shared["changed"]
+        assert list(mate_pool.proxy_set_ids) == [moved.id]
+        assert mate_pool.proxy_id == moved.id
+        assert list(neighbor_pool.proxy_set_ids) == [spare.id]
+        assert neighbor_pool.proxy_id == spare.id
+        assert kept_factory.proxy_id == factory_proxy.id
+        assert factory_proxy.id not in set(mate_pool.proxy_set_ids)
+        held_now = [set(owner_pool.proxy_set_ids), set(neighbor_pool.proxy_set_ids), set(mate_pool.proxy_set_ids)]
+        flat = [proxy_id for group in held_now for proxy_id in group]
+        assert len(flat) == len(set(flat))
+
+        monkeypatch.setattr(ps, "_drop_live_session", AsyncMock(return_value=True))
+        taken = await replace_account_proxy_sets(
+            test_session,
+            custom_automation.id,
+            [owner.id],
+            "10.7.5.4:1080",
+        )
+        await test_session.commit()
+        await test_session.refresh(owner_pool)
+        await test_session.refresh(neighbor_pool)
+        await test_session.refresh(neighbor)
+        await test_session.refresh(mate_pool)
+        await test_session.refresh(kept_factory)
+        assert owner.id in taken["changed"]
+        assert list(owner_pool.proxy_set_ids) == [spare.id]
+        assert owner_pool.proxy_id == spare.id
+        assert list(neighbor_pool.proxy_set_ids or []) == []
+        assert neighbor_pool.proxy_id is None
+        assert neighbor.telegram_proxy is None
+        assert spare.id not in set(mate_pool.proxy_set_ids or [])
+        assert kept_factory.proxy_id == factory_proxy.id
 
     async def test_replace_keeps_old_set_when_socket_busy(
         self,
