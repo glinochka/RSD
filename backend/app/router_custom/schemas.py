@@ -380,7 +380,7 @@ class AccountProxyListResponse(BaseModel):
 
 class AccountProxyReplaceRequest(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=500)
-    proxy_lines: str = Field(min_length=1, max_length=20000)
+    proxy_lines: str = Field(max_length=20000)
 
 
 class AccountProxyReplaceResponse(BaseModel):

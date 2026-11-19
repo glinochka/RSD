@@ -868,9 +868,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   };
 
   const applyProxyReplace = async (accountIds, text, setMessage, setBusy, clearText) => {
-    const lines = (text || '').trim();
-    if (!accountIds.length || !lines) {
-      setMessage('Укажите адрес прокси');
+    if (!accountIds.length) {
+      setMessage('Не выбраны аккаунты');
       return;
     }
     setBusy(true);
@@ -878,7 +877,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     try {
       const data = await customService.replaceAccountProxies(id, {
         accountIds,
-        proxyLines: lines,
+        proxyLines: text || '',
       });
       const parts = [];
       if (data.changed?.length) {
@@ -1385,7 +1384,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     : 'ZIP с .session, одиночный .session или CSV.')}
                   {panel === 'add' && 'QR или код из SMS. 2FA — если включена.'}
                   {panel === 'proxy' && 'Список для автоназначения при заливе и подключении.'}
-                  {panel === 'proxy-replace' && 'Старые прокси выбранных аккаунтов снимаются. Новые адреса раздаются по одному на аккаунт.'}
+                  {panel === 'proxy-replace' && 'Эти строки станут набором каждого выбранного. Первая — основной адрес, остальные — запасные, не больше четырёх. Пустое поле снимает прокси только у выбранных. У остальных аккаунтов адрес остаётся.'}
                   {panel === 'profiles' && 'Имя, bio и аватар сразу на пачку аккаунтов.'}
                 </p>
               </div>
@@ -1479,9 +1478,9 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
               {panel === 'proxy-replace' ? (
                 <>
                   <p className="form-hint">
-                    Выбрано аккаунтов: {selectedIds.size}. Один адрес — одному аккаунту.
-                    Если адресов больше, лишние становятся запасными, не больше четырёх на аккаунт.
-                    Если адресов меньше, остальные останутся без прокси.
+                    Выбрано аккаунтов: {selectedIds.size}. Эти строки станут набором каждого выбранного.
+                    Первая — основной адрес, остальные — запасные, не больше четырёх.
+                    Пустое поле снимает прокси только у выбранных.
                   </p>
                   {proxyReplaceMessage ? <p className="form-hint">{proxyReplaceMessage}</p> : null}
                   <div className="form-group">
@@ -1721,7 +1720,8 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   autoComplete="off"
                 />
                 <p className="form-hint">
-                  Старый набор этого аккаунта снимается. Первая строка — основной адрес, остальные — запасные, не больше четырёх.
+                  Старый набор этого аккаунта заменяется этими строками. Первая — основной адрес, остальные — запасные, не больше четырёх.
+                  Пустое поле снимает прокси только у этого аккаунта.
                 </p>
                 {cardProxyMessage ? <p className="form-hint">{cardProxyMessage}</p> : null}
                 <button
