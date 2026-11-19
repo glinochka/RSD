@@ -1157,6 +1157,187 @@ async def resolve_connect_proxy(
     )
 
 
+async def _upsert_parsed_proxy(
+    session: AsyncSession,
+    automation_id: int,
+    parsed: dict[str, Any],
+) -> CustomProxy:
+    """Store one already-parsed proxy. New rows stay dedicated to the account that asked."""
+    existing = await session.scalar(
+        select(CustomProxy).where(
+            CustomProxy.custom_automation_id == automation_id,
+            CustomProxy.fingerprint == parsed["fingerprint"],
+        )
+    )
+    now = _utc_now()
+    password_enc = _encrypt_password(parsed.get("password"))
+    if existing:
+        existing.scheme = parsed["scheme"]
+        existing.host = parsed["host"]
+        existing.port = parsed["port"]
+        existing.username = parsed["username"]
+        existing.password_enc = password_enc
+        existing.country_code = parsed.get("country_code")
+        existing.region = parsed.get("region")
+        existing.ip_version = parsed.get("ip_version")
+        existing.is_active = True
+        existing.updated_at = now
+        await session.flush()
+        return existing
+    row = CustomProxy(
+        custom_automation_id=automation_id,
+        scheme=parsed["scheme"],
+        host=parsed["host"],
+        port=parsed["port"],
+        username=parsed["username"],
+        password_enc=password_enc,
+        fingerprint=parsed["fingerprint"],
+        country_code=parsed.get("country_code"),
+        region=parsed.get("region"),
+        ip_version=parsed.get("ip_version"),
+        is_dedicated=True,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def replace_account_proxy_sets(
+    session: AsyncSession,
+    automation_id: int,
+    account_ids: list[int],
+    raw_text: str,
+) -> dict[str, Any]:
+    """Replace the proxy sets of the given accounts with the pasted lines.
+
+    The first line of an account's share is the exit. The rest are spares, at
+    most four per account. One address is not given to two accounts. Addresses
+    already held by another account or by the content factory are left alone.
+    Until an account in this call releases its socket and the new set is
+    stored, its current exit and set stay occupied for the other accounts
+    here. A pasted copy of that address is not given to them. After a
+    successful change the old address is still not written into a new set.
+    The new set is stored only after the live client is released. A busy
+    socket keeps the old set. A dead new exit is still the exit, and the row
+    shows proxy_problem.
+    """
+    ordered_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for value in account_ids:
+        try:
+            ident = int(value)
+        except (TypeError, ValueError):
+            continue
+        if ident <= 0 or ident in seen_ids:
+            continue
+        seen_ids.add(ident)
+        ordered_ids.append(ident)
+    if not ordered_ids:
+        raise ProxyChoiceError("Не выбраны аккаунты")
+
+    text = raw_text or ""
+    parsed, _errors = parse_proxy_list(text)
+    if not text.strip() or not parsed:
+        raise ProxyParseError("Не удалось разобрать ни одного прокси. Проверьте формат строк.")
+    parsed = await normalize_imported_proxies(parsed)
+    deduped: list[dict[str, Any]] = []
+    seen_fp: set[str] = set()
+    for item in parsed:
+        fingerprint = str(item.get("fingerprint") or "")
+        if not fingerprint or fingerprint in seen_fp:
+            continue
+        seen_fp.add(fingerprint)
+        deduped.append(item)
+
+    roster = await _pool_accounts_for_rebalance(session, automation_id)
+    by_social = {int(social.id): (pool, social) for pool, social in roster}
+    ordered = [by_social[ident] for ident in ordered_ids if ident in by_social]
+    if not ordered:
+        raise ProxyChoiceError("Аккаунты не найдены в этой автоматизации")
+
+    target_ids = {int(social.id) for _pool, social in ordered}
+    reserved: set[int] = set()
+    for pool, social in roster:
+        if int(social.id) in target_ids:
+            continue
+        reserved.update(proxy_set_id_list(pool))
+        if pool.proxy_id:
+            reserved.add(int(pool.proxy_id))
+    for pool, _social in ordered:
+        reserved.update(proxy_set_id_list(pool))
+        if pool.proxy_id:
+            reserved.add(int(pool.proxy_id))
+    reserved.update(await _factory_reserved_proxy_ids(session, automation_id))
+
+    stored = await session.scalars(
+        select(CustomProxy).where(CustomProxy.custom_automation_id == automation_id)
+    )
+    by_fingerprint = {row.fingerprint: row for row in stored.all()}
+    cap = len(ordered) * PROXY_SET_MAX
+    usable: list[CustomProxy] = []
+    for item in deduped:
+        if len(usable) >= cap:
+            break
+        current = by_fingerprint.get(item["fingerprint"])
+        if current is not None and int(current.id) in reserved:
+            continue
+        row = await _upsert_parsed_proxy(session, automation_id, item)
+        if int(row.id) in reserved or any(int(saved.id) == int(row.id) for saved in usable):
+            continue
+        usable.append(row)
+    if not usable:
+        raise ProxyChoiceError("Этот прокси уже закреплён за другим аккаунтом")
+
+    sizes = proxy_set_sizes(len(ordered), len(usable))
+    changed: list[int] = []
+    kept: list[int] = []
+    without_proxy: list[int] = []
+    problem: list[int] = []
+    cursor = 0
+    for index, (pool_account, social) in enumerate(ordered):
+        size = sizes[index] if index < len(sizes) else 0
+        chunk = usable[cursor : cursor + size]
+        cursor += size
+        if not chunk:
+            if pool_account.proxy_id is None and not proxy_set_id_list(pool_account):
+                without_proxy.append(int(social.id))
+                continue
+            if not await _drop_live_session(social):
+                logger.warning(
+                    "Skip proxy replace for account %s: the session is still in use",
+                    social.id,
+                )
+                kept.append(int(social.id))
+                continue
+            bind_account_proxy(pool_account, social, None)
+            _store_proxy_set(pool_account, [])
+            pool_account.proxy_problem = False
+            without_proxy.append(int(social.id))
+            continue
+        primary = chunk[0]
+        alive = await probe_and_fix_proxy(primary)
+        if not await _bind_released_proxy(pool_account, social, primary):
+            kept.append(int(social.id))
+            continue
+        _store_proxy_set(pool_account, [int(row.id) for row in chunk])
+        pool_account.proxy_problem = not alive
+        changed.append(int(social.id))
+        if not alive:
+            problem.append(int(social.id))
+            logger.warning("Replaced proxy for account %s is dead %s:%s", social.id, primary.host, primary.port)
+        else:
+            logger.info("Replaced proxy for account %s with %s:%s", social.id, primary.host, primary.port)
+    return {
+        "changed": changed,
+        "kept": kept,
+        "without_proxy": without_proxy,
+        "proxy_problem": problem,
+    }
+
+
 async def replace_proxy_list(
     session: AsyncSession,
     automation: CustomAutomation,

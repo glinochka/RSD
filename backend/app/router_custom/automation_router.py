@@ -26,6 +26,8 @@ from .schemas import (
     AccountListResponse,
     AccountPrepareStatusResponse,
     AccountProxyListResponse,
+    AccountProxyReplaceRequest,
+    AccountProxyReplaceResponse,
     AccountQrStartRequest,
     AccountQrStartResponse,
     AccountQrStatusRequest,
@@ -179,6 +181,7 @@ from ..services.custom.proxy_service import (
     account_proxy_picker_payload,
     proxy_label,
     proxy_settings_payload,
+    replace_account_proxy_sets,
     replace_proxy_list,
     resolve_account_proxy_choice,
 )
@@ -2332,6 +2335,29 @@ async def list_account_proxies(
 ):
     async with async_session_maker() as session:
         return AccountProxyListResponse(**await account_proxy_picker_payload(session, automation_id))
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/proxy-sets",
+    response_model=AccountProxyReplaceResponse,
+)
+async def replace_accounts_proxy_sets(
+    automation_id: int,
+    payload: AccountProxyReplaceRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            result = await replace_account_proxy_sets(
+                session,
+                automation_id,
+                payload.account_ids,
+                payload.proxy_lines,
+            )
+        except (ProxyParseError, ProxyChoiceError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        await session.commit()
+        return AccountProxyReplaceResponse(**result)
 
 
 @router.post("/automations/{automation_id}/accounts/health-check", response_model=AccountHealthCheckResponse)

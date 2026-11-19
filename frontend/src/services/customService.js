@@ -1114,6 +1114,21 @@ const customService = {
     return handleResponse(response);
   },
 
+  async replaceAccountProxies(automationId, { accountIds, proxyLines }) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/proxy-sets`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          account_ids: accountIds,
+          proxy_lines: proxyLines,
+        }),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async bulkUploadAccounts(automationId, file, { proxyId, proxyLine, pool } = {}) {
     const formData = new FormData();
     formData.append('archive', file);

@@ -378,6 +378,18 @@ class AccountProxyListResponse(BaseModel):
     items: list[AccountProxyOption] = Field(default_factory=list)
 
 
+class AccountProxyReplaceRequest(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=500)
+    proxy_lines: str = Field(min_length=1, max_length=20000)
+
+
+class AccountProxyReplaceResponse(BaseModel):
+    changed: list[int] = Field(default_factory=list)
+    kept: list[int] = Field(default_factory=list)
+    without_proxy: list[int] = Field(default_factory=list)
+    proxy_problem: list[int] = Field(default_factory=list)
+
+
 class AccountQrStatusRequest(BaseModel):
     auth_token: str = Field(..., min_length=20, max_length=16384)
 

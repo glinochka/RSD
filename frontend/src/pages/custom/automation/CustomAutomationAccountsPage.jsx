@@ -290,6 +290,12 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   const [proxyCountry, setProxyCountry] = useState('');
   const [proxySaving, setProxySaving] = useState(false);
   const [proxyMessage, setProxyMessage] = useState(null);
+  const [proxyReplaceText, setProxyReplaceText] = useState('');
+  const [proxyReplaceSaving, setProxyReplaceSaving] = useState(false);
+  const [proxyReplaceMessage, setProxyReplaceMessage] = useState(null);
+  const [cardProxyText, setCardProxyText] = useState('');
+  const [cardProxySaving, setCardProxySaving] = useState(false);
+  const [cardProxyMessage, setCardProxyMessage] = useState(null);
   const [proxyPurity, setProxyPurity] = useState(100);
   const [proxyUniqueUsed, setProxyUniqueUsed] = useState(0);
   const [proxyPeakLoad, setProxyPeakLoad] = useState(0);
@@ -345,6 +351,11 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
+
+  useEffect(() => {
+    setCardProxyText('');
+    setCardProxyMessage(null);
+  }, [drawerId]);
 
   useEffect(() => {
     if (!isIntercept || !accounts.some((item) => item.intercept_stage === 'reauthorizing')) {
@@ -850,6 +861,48 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
     }
   };
 
+  const selectedAccountIds = () => {
+    const visible = accounts.filter((item) => selectedIds.has(item.id)).map((item) => item.id);
+    const rest = [...selectedIds].filter((accountId) => !visible.includes(accountId));
+    return [...visible, ...rest];
+  };
+
+  const applyProxyReplace = async (accountIds, text, setMessage, setBusy, clearText) => {
+    const lines = (text || '').trim();
+    if (!accountIds.length || !lines) {
+      setMessage('Укажите адрес прокси');
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const data = await customService.replaceAccountProxies(id, {
+        accountIds,
+        proxyLines: lines,
+      });
+      const parts = [];
+      if (data.changed?.length) {
+        parts.push(`Прокси сменён у ${data.changed.length}`);
+      }
+      if (data.without_proxy?.length) {
+        parts.push(`без прокси: ${data.without_proxy.length}`);
+      }
+      if (data.kept?.length) {
+        parts.push('сессия занята, старый набор остался');
+      }
+      if (data.proxy_problem?.length) {
+        parts.push('новый адрес недоступен');
+      }
+      setMessage(parts.join('. ') || 'Готово');
+      clearText();
+      await loadAccounts();
+    } catch (err) {
+      setMessage(err.message || 'Не удалось сменить прокси');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const sortedAccounts = useMemo(() => {
     const rows = [...accounts];
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -1090,6 +1143,20 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
             )}
             <button
               type="button"
+              className="acc-btn acc-btn--ghost"
+              title="Сменить прокси у выбранных"
+              onClick={() => {
+                setDrawerId(null);
+                setProxyReplaceText('');
+                setProxyReplaceMessage(null);
+                setPanel('proxy-replace');
+              }}
+              disabled={!selectedIds.size || proxyReplaceSaving}
+            >
+              Сменить прокси
+            </button>
+            <button
+              type="button"
               className="acc-icon-btn"
               title="Удалить выбранные"
               onClick={handleBulkDelete}
@@ -1253,7 +1320,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                           {formatUploadAge(uploadAgeAt(account))}
                         </td>
                         <td>
-                          <div>{account.proxy_label || 'Авто'}</div>
+                          <div>{account.proxy_label || 'Нет прокси'}</div>
                           {account.proxy_problem ? (
                             <span className="acc-chip acc-chip--bad">Проблемы с прокси</span>
                           ) : null}
@@ -1309,6 +1376,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   {panel === 'import' && (isIntercept ? 'Импорт перехваченных сессий' : 'Импорт аккаунтов')}
                   {panel === 'add' && 'Добавить аккаунт'}
                   {panel === 'proxy' && 'Пул прокси'}
+                  {panel === 'proxy-replace' && 'Сменить прокси'}
                   {panel === 'profiles' && 'Массовое обновление профилей'}
                 </h2>
                 <p>
@@ -1317,6 +1385,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                     : 'ZIP с .session, одиночный .session или CSV.')}
                   {panel === 'add' && 'QR или код из SMS. 2FA — если включена.'}
                   {panel === 'proxy' && 'Список для автоназначения при заливе и подключении.'}
+                  {panel === 'proxy-replace' && 'Старые прокси выбранных аккаунтов снимаются. Новые адреса раздаются по одному на аккаунт.'}
                   {panel === 'profiles' && 'Имя, bio и аватар сразу на пачку аккаунтов.'}
                 </p>
               </div>
@@ -1405,6 +1474,41 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   <button type="button" className="acc-btn acc-btn--dark" onClick={handleSaveProxies} disabled={proxySaving}>
                     {proxySaving ? 'Сохранение...' : 'Сохранить пул'}
             </button>
+                </>
+              ) : null}
+              {panel === 'proxy-replace' ? (
+                <>
+                  <p className="form-hint">
+                    Выбрано аккаунтов: {selectedIds.size}. Один адрес — одному аккаунту.
+                    Если адресов больше, лишние становятся запасными, не больше четырёх на аккаунт.
+                    Если адресов меньше, остальные останутся без прокси.
+                  </p>
+                  {proxyReplaceMessage ? <p className="form-hint">{proxyReplaceMessage}</p> : null}
+                  <div className="form-group">
+                    <label htmlFor="acc-proxy-replace">Новые прокси</label>
+                    <textarea
+                      id="acc-proxy-replace"
+                      rows={8}
+                      value={proxyReplaceText}
+                      onChange={(event) => setProxyReplaceText(event.target.value)}
+                      placeholder={'host:port\nhost:port:user:pass'}
+                      autoComplete="off"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="acc-btn acc-btn--dark"
+                    onClick={() => applyProxyReplace(
+                      selectedAccountIds(),
+                      proxyReplaceText,
+                      setProxyReplaceMessage,
+                      setProxyReplaceSaving,
+                      () => setProxyReplaceText(''),
+                    )}
+                    disabled={proxyReplaceSaving || !selectedIds.size}
+                  >
+                    {proxyReplaceSaving ? 'Меняем...' : 'Сменить прокси'}
+                  </button>
                 </>
               ) : null}
               {panel === 'profiles' ? (
@@ -1597,7 +1701,7 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                 ) : null}
               </div>
               <p className="form-hint">
-                Прокси: {drawerAccount.proxy_label || 'авто из пула'}.
+                Прокси: {drawerAccount.proxy_label || 'Нет прокси'}.
                 {drawerAccount.proxy_problem ? (
                   <span className="acc-chip acc-chip--bad">Проблемы с прокси</span>
                 ) : null}
@@ -1606,6 +1710,35 @@ const CustomAutomationAccountsPage = ({ pool = 'farm' }) => {
                   ? ` ${WARMUP_STATUS_LABELS[drawerAccount.warmup_status] || drawerAccount.warmup_status}.`
                   : ''}
               </p>
+              <div className="form-group">
+                <label htmlFor="acc-card-proxy">Сменить прокси</label>
+                <textarea
+                  id="acc-card-proxy"
+                  rows={4}
+                  value={cardProxyText}
+                  onChange={(event) => setCardProxyText(event.target.value)}
+                  placeholder={'host:port\nhost:port:user:pass'}
+                  autoComplete="off"
+                />
+                <p className="form-hint">
+                  Старый набор этого аккаунта снимается. Первая строка — основной адрес, остальные — запасные, не больше четырёх.
+                </p>
+                {cardProxyMessage ? <p className="form-hint">{cardProxyMessage}</p> : null}
+                <button
+                  type="button"
+                  className="acc-btn acc-btn--dark"
+                  onClick={() => applyProxyReplace(
+                    [drawerAccount.id],
+                    cardProxyText,
+                    setCardProxyMessage,
+                    setCardProxySaving,
+                    () => setCardProxyText(''),
+                  )}
+                  disabled={cardProxySaving}
+                >
+                  {cardProxySaving ? 'Меняем...' : 'Сменить прокси'}
+                </button>
+              </div>
               {isIntercept && drawerAccount.intercept_reauthorized_at ? (
                 <div className="acc-2fa">
                   {!twoFaOpen ? (
