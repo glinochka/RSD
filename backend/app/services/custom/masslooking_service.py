@@ -12,13 +12,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import (
+    account_humanization_is_resting,
     account_humanization_should_idle,
     farm_overlap_active_hours,
     schedule_account_humanization_rest,
 )
 from .module_account_filters import no_accounts_picked, skip_account_for_module
 from .module_delays import DELAY_MAX_SECONDS
-from .humanization_session import inspect_peer_profile, load_feed_peer_stories, load_peer_stories, mark_peer_stories_read
+from .humanization_session import (
+    inspect_peer_profile,
+    load_feed_peer_stories,
+    load_peer_stories,
+    mark_peer_stories_read,
+    view_selected_stories,
+)
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
@@ -80,6 +87,35 @@ def story_peer_keys(targets: Any, folder_peers: list[str] | None = None) -> list
         seen.add(key)
         keys.append(key)
     return keys
+
+
+def first_visit_story_ids(story_ids: list[int], *, roll: int | None = None) -> list[int]:
+    """First look takes the latest two or three stories, never more."""
+    ordered = sorted({int(item) for item in story_ids if int(item) > 0})
+    if len(ordered) <= 1:
+        return ordered
+    cap = int(roll) if roll in (2, 3) else random.randint(2, 3)
+    return ordered[-min(cap, len(ordered)):]
+
+
+def new_story_ids(story_ids: list[int], seen_ids: set[int]) -> list[int]:
+    """Stories published after the newest one this account already opened."""
+    ordered = sorted({int(item) for item in story_ids if int(item) > 0})
+    ceiling = max((int(item) for item in seen_ids if int(item) > 0), default=0)
+    return [item for item in ordered if item > ceiling]
+
+
+def contact_keys_this_pass(
+    keys: list[str],
+    contacted: set[str],
+    *,
+    account: Any = None,
+) -> list[str]:
+    """One new contact per visit. A live humanization timer blocks the next add."""
+    if account is not None and account_humanization_is_resting(account):
+        return []
+    fresh = [key for key in keys if key not in contacted]
+    return fresh[:1]
 
 
 def normalize_story_targets(raw: Any) -> list[str]:
@@ -162,6 +198,74 @@ async def _seen_recently(
     filters.append(AutomationActionLog.created_at >= _utc_now() - timedelta(hours=hours))
     row = await session.scalar(select(AutomationActionLog.id).where(*filters))
     return row is not None
+
+
+async def _peer_look_state(
+    session: AsyncSession,
+    automation_id: int,
+    account_id: int,
+    keys: list[str],
+) -> dict[str, dict[str, Any]]:
+    state = {key: {"story_ids": set(), "contacted": False, "visited": False, "legacy_open": False} for key in keys}
+    if not keys:
+        return state
+    rows = (
+        await session.execute(
+            select(AutomationActionLog.target_id, AutomationActionLog.payload).where(
+                AutomationActionLog.custom_automation_id == automation_id,
+                AutomationActionLog.social_account_id == account_id,
+                AutomationActionLog.action_type == "masslooking",
+                AutomationActionLog.result == "success",
+                AutomationActionLog.target_id.in_(keys),
+            )
+        )
+    ).all()
+    for target_id, payload in rows:
+        slot = state.setdefault(str(target_id), {"story_ids": set(), "contacted": False})
+        data = payload if isinstance(payload, dict) else {}
+        slot["visited"] = True
+        slot["contacted"] = True
+        noted = False
+        for raw in data.get("story_ids") or []:
+            try:
+                slot["story_ids"].add(int(raw))
+                noted = True
+            except (TypeError, ValueError):
+                continue
+        try:
+            ceiling = int(data.get("max_story_id") or 0)
+        except (TypeError, ValueError):
+            ceiling = 0
+        if ceiling > 0:
+            slot["story_ids"].add(ceiling)
+            noted = True
+        if noted:
+            slot["legacy_open"] = False
+        elif not slot["story_ids"]:
+            slot["legacy_open"] = True
+    return state
+
+
+def _stories_for_visit(
+    stories: list[Any],
+    seen_ids: set[int],
+    *,
+    first_visit: bool,
+    roll: int | None = None,
+) -> list[Any]:
+    by_id: dict[int, Any] = {}
+    for item in stories or []:
+        try:
+            sid = int(getattr(item, "id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if sid > 0:
+            by_id[sid] = item
+    if first_visit:
+        chosen = first_visit_story_ids(list(by_id), roll=roll)
+    else:
+        chosen = new_story_ids(list(by_id), seen_ids)
+    return [by_id[sid] for sid in chosen]
 
 
 async def _log_view(
@@ -263,7 +367,9 @@ async def _process_account(
         return 0
     if skip_account_for_module(cfg, account, pool):
         return 0
-    if account_humanization_should_idle(account):
+    # Humanization rest blocks the next contact only. New stories of people
+    # already in contacts still get a look.
+    if account_humanization_should_idle(account) and not account_humanization_is_resting(account):
         return 0
     from .daily_quota import account_blocked_for_task, quota_bounds, rolled_daily_actions, task_actions_today
     from .masspriming_service import add_contact, is_primeable_user
@@ -284,10 +390,6 @@ async def _process_account(
     if max_per_hour > 0 and hourly >= max_per_hour:
         return 0
     try:
-        skip_hours = int(cfg.get("skip_hours") or 0) if cfg.get("skip_seen", True) else 0
-    except (TypeError, ValueError):
-        skip_hours = 24 if cfg.get("skip_seen", True) else 0
-    try:
         delay_min = max(0, min(DELAY_MAX_SECONDS, int(cfg.get("delay_min") if cfg.get("delay_min") is not None else 8)))
         delay_max = max(delay_min, min(DELAY_MAX_SECONDS, int(cfg.get("delay_max") if cfg.get("delay_max") is not None else 20)))
     except (TypeError, ValueError):
@@ -300,6 +402,10 @@ async def _process_account(
     except (TypeError, ValueError):
         like_probability = 30
     viewed = 0
+    keys = [token.lower() for token in targets]
+    memory = await _peer_look_state(session, automation.id, account.id, keys)
+    pending = [key for key in keys if not (memory.get(key) or {}).get("contacted")]
+    add_now = set(contact_keys_this_pass(pending, set(), account=account))
 
     async with TelegramAccountClient.for_account(account) as client:
         telethon = getattr(client, "client", client)
@@ -307,30 +413,76 @@ async def _process_account(
             if remaining is not None and viewed >= remaining:
                 break
             key = token.lower()
-            if await _seen_recently(session, automation.id, key, hours=skip_hours, account_id=account.id):
+            slot = memory.get(key) or {"story_ids": set(), "contacted": False, "visited": False, "legacy_open": False}
+            adding = key in add_now
+            if not slot["contacted"] and not adding:
                 continue
             try:
                 entity = await _resolve_peer(client, token)
             except Exception as exc:
                 logger.debug("Masslooking resolve %s failed: %s", token, exc)
+                if adding:
+                    pending = [item for item in pending if item != key]
+                    add_now = set(contact_keys_this_pass(pending, set(), account=account))
                 continue
             if not is_primeable_user(entity):
+                if adding:
+                    pending = [item for item in pending if item != key]
+                    add_now = set(contact_keys_this_pass(pending, set(), account=account))
                 continue
             from .task_dedup import entity_is_bot_or_userbot
 
             if bool(cfg.get("skip_bots", True)) and await entity_is_bot_or_userbot(client, entity):
+                if adding:
+                    pending = [item for item in pending if item != key]
+                    add_now = set(contact_keys_this_pass(pending, set(), account=account))
                 continue
             await inspect_peer_profile(client, entity)
-            contact = await add_contact(telethon, entity)
+            contact = "already"
+            if adding:
+                contact = await add_contact(telethon, entity)
+                add_now = set()
+                if contact == "added":
+                    schedule_account_humanization_rest(account)
+                    await session.commit()
+                if contact in {"added", "already"}:
+                    slot["contacted"] = True
             peer, stories = await load_peer_stories(client, entity)
+            if slot.get("legacy_open") and not slot["story_ids"]:
+                ceilings = [int(getattr(item, "id", 0) or 0) for item in stories or []]
+                ceiling = max(ceilings) if ceilings else 0
+                if ceiling:
+                    await _log_view(
+                        session,
+                        automation_id=automation.id,
+                        account=account,
+                        target_id=key,
+                        title=_peer_label(entity, token),
+                        stories=0,
+                        source="contact",
+                        extra={"contact": "already", "story_ids": [], "max_story_id": ceiling},
+                    )
+                    slot["story_ids"].add(ceiling)
+                slot["legacy_open"] = False
+                continue
+            chosen = _stories_for_visit(stories, set(slot["story_ids"]), first_visit=not slot["visited"])
+            if not chosen and not adding:
+                continue
             counted = 0
             liked = False
-            if stories:
-                counted = await mark_peer_stories_read(client, peer or entity, stories, lab_mode=False)
-                newest = max(stories, key=lambda item: int(getattr(item, "id", 0) or 0))
+            if chosen:
+                counted = await view_selected_stories(
+                    client,
+                    peer or entity,
+                    chosen,
+                    known=stories,
+                    lab_mode=False,
+                )
+                newest = max(chosen, key=lambda item: int(getattr(item, "id", 0) or 0))
                 story_id = int(getattr(newest, "id", 0) or 0)
                 if counted and story_id and like_roll_hits(like_probability, random.random()):
                     liked = await _react_to_story(client, peer or entity, story_id)
+            chosen_ids = [int(getattr(item, "id", 0) or 0) for item in chosen if int(getattr(item, "id", 0) or 0) > 0]
             title = _peer_label(entity, token)
             await _log_view(
                 session,
@@ -340,8 +492,15 @@ async def _process_account(
                 title=title,
                 stories=counted,
                 source="contact",
-                extra={"contact": contact, "liked": liked},
+                extra={
+                    "contact": contact,
+                    "liked": liked,
+                    "story_ids": chosen_ids,
+                    "max_story_id": max(slot["story_ids"] | set(chosen_ids), default=0),
+                },
             )
+            slot["visited"] = True
+            slot["story_ids"].update(chosen_ids)
             viewed += 1
             from .job_service import actor_label, log_active
 
@@ -355,8 +514,6 @@ async def _process_account(
             await asyncio.sleep(random.uniform(delay_min, delay_max))
     if viewed:
         record_successful_humanization(account)
-        if bool(cfg.get("limit_rate", True)):
-            schedule_account_humanization_rest(account)
         await session.commit()
     return viewed
 

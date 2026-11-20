@@ -23,7 +23,7 @@ VISIBLE_ACTIVE_STATUSES = ACTIVE_STATUSES | {PAUSED_STATUS}
 HISTORY_STATUSES = {"completed", "error", "cancelled", "skipped"}
 _SKIP_PARAM_KEYS = {"presets", "_job_id"}
 _READONLY_PARAM_KEYS = {"joins_complete"}
-PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling", "chat_monitoring", "neuroblog"}
+PERSISTENT_JOB_TYPES = {"neurocommenting", "discussion", "shilling", "chat_monitoring", "neuroblog", "masslooking"}
 STREAM_JOB_TYPES = {
     "neurocommenting": "neurocommenting",
     "neurochatting": "discussion",

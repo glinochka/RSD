@@ -368,6 +368,86 @@ async def scroll_subscribed_channels(client: Any, *, lab_mode: bool = False) -> 
     return True
 
 
+def _story_ids(stories: list[Any]) -> list[int]:
+    found: list[int] = []
+    seen: set[int] = set()
+    for item in stories or []:
+        raw = item if isinstance(item, int) else getattr(item, "id", 0)
+        try:
+            sid = int(raw or 0)
+        except (TypeError, ValueError):
+            continue
+        if sid > 0 and sid not in seen:
+            seen.add(sid)
+            found.append(sid)
+    return found
+
+
+def read_stories_max_id(chosen_ids: list[int], known_ids: list[int]) -> int | None:
+    """max_id for stories.readStories, or None when it would mark a story we did not choose.
+
+    The method has no id list. max_id marks every story on the peer up to that id,
+    including older ones that were not part of this look.
+    """
+    chosen = sorted({int(item) for item in chosen_ids if int(item) > 0})
+    if not chosen:
+        return None
+    known = {int(item) for item in known_ids if int(item) > 0}
+    ceiling = chosen[-1]
+    chosen_set = set(chosen)
+    if any(item <= ceiling and item not in chosen_set for item in known):
+        return None
+    # Ids below the first chosen story are not in this call. max_id would mark them.
+    if chosen[0] > 1:
+        return None
+    if any(item not in chosen_set for item in range(chosen[0], ceiling + 1)):
+        return None
+    return ceiling
+
+
+def selected_story_view_request(peer: Any, chosen: list[Any], known: list[Any]):
+    """Request that views only the chosen stories.
+
+    ReadStories is sent only when its max_id would mark nothing we did not choose.
+    Otherwise the view lists the chosen ids and leaves the older stories out.
+    """
+    chosen_ids = sorted(set(_story_ids(chosen)))
+    if not chosen_ids or peer is None:
+        return None
+    try:
+        from telethon.tl.functions.stories import IncrementStoryViewsRequest, ReadStoriesRequest
+    except Exception:
+        return None
+    max_id = read_stories_max_id(chosen_ids, _story_ids(known))
+    if max_id is None:
+        return IncrementStoryViewsRequest(peer=peer, id=chosen_ids)
+    return ReadStoriesRequest(peer=peer, max_id=max_id)
+
+
+async def view_selected_stories(
+    client: Any,
+    peer: Any,
+    chosen: list[Any],
+    *,
+    known: list[Any],
+    lab_mode: bool = False,
+) -> int:
+    """Mark only the chosen stories. A max_id that covers older ones is not sent."""
+    request = selected_story_view_request(peer, chosen, known)
+    chosen_count = len(set(_story_ids(chosen)))
+    if request is None or chosen_count <= 0:
+        return 0
+    if lab_mode:
+        return chosen_count
+    await _pause(False, 0.8, 2.5)
+    try:
+        await _telethon(client)(request)
+        return chosen_count
+    except Exception as exc:
+        logger.debug("Selected story view skipped: %s", exc)
+        return 0
+
+
 async def mark_peer_stories_read(client: Any, peer: Any, stories: list[Any], *, lab_mode: bool = False) -> int:
     """ReadStories up to the newest id — the same gesture as opening a tray."""
     items = [item for item in (stories or []) if int(getattr(item, "id", 0) or 0) > 0]

@@ -577,7 +577,7 @@ class TestJobLifecycle:
         assert is_persistent_job("parser") is False
         assert is_persistent_job("masspriming") is False
         assert is_persistent_job("dm_broadcast") is False
-        assert is_persistent_job("masslooking") is False
+        assert is_persistent_job("masslooking") is True
 
     def test_paused_jobs_stay_active_and_can_resume(self):
         from datetime import datetime, timezone
@@ -872,6 +872,116 @@ class TestJobLifecycle:
         assert user_passes_filters(userbot, skip_bots=True) is False
         assert user_passes_filters(person, skip_bots=True) is True
         assert user_passes_filters(userbot, skip_bots=False) is True
+
+    def test_parser_and_masslooking_splits_and_stories(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.masslooking_service import (
+            contact_keys_this_pass,
+            first_visit_story_ids,
+            new_story_ids,
+        )
+        from app.services.custom.parser_service import parser_work_chats
+        from app.services.custom.task_dedup import unique_assign
+
+        chats = [
+            SimpleNamespace(id=1, folder_id=7, chat_type="chat"),
+            SimpleNamespace(id=2, folder_id=7, chat_type="channel"),
+            SimpleNamespace(id=3, folder_id=7, chat_type="supergroup"),
+            SimpleNamespace(id=4, folder_id=7, chat_type="broadcast"),
+            SimpleNamespace(id=5, folder_id=8, chat_type="chat"),
+        ]
+        pool = parser_work_chats(chats, folder_ids={7}, chat_ids=set())
+        assert [chat.id for chat in pool] == [1, 3]
+        assert all(chat.chat_type != "channel" for chat in pool)
+
+        parser_assigned = unique_assign([11, 22, 33], [1, 3, 6, 8, 9])
+        parser_flat = [item for items in parser_assigned.values() for item in items]
+        assert sorted(parser_flat) == [1, 3, 6, 8, 9]
+        assert len(parser_flat) == len(set(parser_flat))
+        sizes = sorted(len(items) for items in parser_assigned.values())
+        assert sizes[-1] - sizes[0] <= 1
+
+        users = ["@a", "@b", "@c", "@d", "@e"]
+        look_assigned = unique_assign([11, 22], users)
+        look_flat = [item for items in look_assigned.values() for item in items]
+        assert sorted(look_flat) == users
+        assert len(look_flat) == len(set(look_flat))
+        assert set(look_assigned[11]).isdisjoint(look_assigned[22])
+
+        first = first_visit_story_ids([1, 2, 3, 4, 5], roll=3)
+        assert first == [3, 4, 5]
+        assert len(first) <= 3
+        assert first_visit_story_ids([1, 2, 3, 4, 5], roll=2) == [4, 5]
+        nxt = new_story_ids([1, 2, 3, 4, 5, 9], set(first))
+        assert nxt == [9]
+        assert new_story_ids([3, 4, 5], set(first)) == []
+        assert new_story_ids(first, set(first)) == []
+
+        assert contact_keys_this_pass(["@a", "@b", "@c"], set()) == ["@a"]
+        assert contact_keys_this_pass(["@a", "@b", "@c"], {"@a"}) == ["@b"]
+        assert len(contact_keys_this_pass(["@a", "@b", "@c"], set())) == 1
+
+    async def test_ten_stories_view_sends_only_latest_three(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from telethon.tl.functions.stories import IncrementStoryViewsRequest, ReadStoriesRequest
+
+        from app.services.custom.humanization_session import read_stories_max_id, view_selected_stories
+        from app.services.custom.masslooking_service import _stories_for_visit
+
+        async def no_pause(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr("app.services.custom.humanization_session._pause", no_pause)
+        stories = [SimpleNamespace(id=i) for i in range(1, 11)]
+        chosen = _stories_for_visit(stories, set(), first_visit=True, roll=3)
+        assert [item.id for item in chosen] == [8, 9, 10]
+        assert read_stories_max_id([item.id for item in chosen], [item.id for item in stories]) is None
+        sent: list = []
+
+        class Client:
+            def __init__(self):
+                self.client = self
+
+            async def __call__(self, request):
+                sent.append(request)
+                return True
+
+        counted = await view_selected_stories(Client(), SimpleNamespace(id=5), chosen, known=stories)
+        assert counted == 3
+        assert len(sent) == 1
+        request = sent[0]
+        assert isinstance(request, IncrementStoryViewsRequest)
+        assert isinstance(request, ReadStoriesRequest) is False
+        assert list(request.id) == [8, 9, 10]
+        assert [old for old in range(1, 8) if old in request.id] == []
+
+    def test_second_contact_waits_for_humanization_timer(self):
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        from app.services.custom.account_pacing import (
+            HUMANIZATION_REST_MAX_SECONDS,
+            HUMANIZATION_REST_MIN_SECONDS,
+            account_humanization_is_resting,
+            schedule_account_humanization_rest,
+        )
+        from app.services.custom.masslooking_service import contact_keys_this_pass
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        account = SimpleNamespace(id=4, next_humanization_at=None, updated_at=now)
+        this_pass = contact_keys_this_pass(["@a", "@b", "@c"], set(), account=account)
+        assert this_pass == ["@a"]
+        assert "@b" not in this_pass
+        assert "@c" not in this_pass
+
+        schedule_account_humanization_rest(account)
+        assert account.next_humanization_at is not None
+        wait = (account.next_humanization_at - now).total_seconds()
+        assert HUMANIZATION_REST_MIN_SECONDS - 2 <= wait <= HUMANIZATION_REST_MAX_SECONDS + 2
+        assert account_humanization_is_resting(account) is True
+        assert contact_keys_this_pass(["@b", "@c"], set(), account=account) == []
 
     def test_action_delay_is_capped_and_humanized(self):
         from types import SimpleNamespace as NS

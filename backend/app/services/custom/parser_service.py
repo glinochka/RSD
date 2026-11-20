@@ -471,6 +471,22 @@ async def _process_entity(
     return saved
 
 
+def parser_work_chats(
+    chats: list[ChatTarget],
+    *,
+    folder_ids: set[int],
+    chat_ids: set[int],
+) -> list[ChatTarget]:
+    """Chats selected for the parser. Channels from folders stay out."""
+    if folder_ids:
+        selected = [chat for chat in chats if chat.folder_id in folder_ids or chat.id in chat_ids]
+    elif chat_ids:
+        selected = [chat for chat in chats if chat.id in chat_ids]
+    else:
+        selected = list(chats)
+    return [chat for chat in selected if not is_broadcast_channel(chat)]
+
+
 def _membership_assignment(
     cfg: dict[str, Any],
     worker_ids: list[int],
@@ -522,14 +538,10 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
         chat_ids = set(_as_int_list(cfg.get("chat_ids")))
         chats_q = select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id, ChatTarget.is_active.is_(True))
         chats = list((await session.execute(chats_q)).scalars().all())
-        if folder_ids:
-            chats = [chat for chat in chats if chat.folder_id in folder_ids or chat.id in chat_ids]
-        elif chat_ids:
-            chats = [chat for chat in chats if chat.id in chat_ids]
+        chats = parser_work_chats(chats, folder_ids=folder_ids, chat_ids=chat_ids)
         join_chats = list(chats)
         joined_only = bool(cfg.get("joined_only"))
         if joined_only:
-            chats = [chat for chat in chats if not is_broadcast_channel(chat)]
             extra_targets = []
         else:
             from .task_targets import load_work_pool
@@ -542,7 +554,9 @@ async def run_parser_pass(automation_id: int, run_config: dict[str, Any] | None 
                         select(ChatTarget).where(ChatTarget.id.in_(list(work_pool.extra_owner)))
                     )
                 ).scalars().all()
-                chats.extend(chat for chat in extra_rows if chat.id not in known)
+                chats.extend(
+                    chat for chat in extra_rows if chat.id not in known and not is_broadcast_channel(chat)
+                )
             extra_targets = normalize_parser_targets(cfg.get("targets"))
         if not chats and not extra_targets:
             return {"status": "skipped", "reason": "no_targets", "users": 0}
