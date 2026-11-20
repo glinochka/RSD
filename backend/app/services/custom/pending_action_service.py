@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_should_idle, next_target_wake_at, retry_delay_seconds
+from .prompt_service import ProviderOutage
 from .chat_membership_service import account_is_joined, get_membership, queue_actor_for_chat
 from ...alembic.models import (
     AccountChatMembership,
@@ -392,8 +393,11 @@ async def process_pending_for_membership(
             continue
         if not ready:
             continue
-        if await _execute_pending(session, action):
-            done += 1
+        try:
+            if await _execute_pending(session, action):
+                done += 1
+        except ProviderOutage:
+            break
     return done
 
 
@@ -455,8 +459,11 @@ async def process_due_pending_actions(
             continue
         if not ready:
             continue
-        if await _execute_pending(session, action):
-            done += 1
+        try:
+            if await _execute_pending(session, action):
+                done += 1
+        except ProviderOutage:
+            break
     return done
 
 
@@ -484,6 +491,13 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
     try:
         timeout = COMMENT_SEND_SECONDS if action.action_type == "neurocommenting" else 90
         ok = await asyncio.wait_for(_run_action(session, action), timeout=timeout)
+    except ProviderOutage:
+        await session.rollback()
+        fresh = await session.get(PendingChatAction, action_id)
+        if fresh is not None and fresh.status == PENDING:
+            fresh.attempts = max(0, int(fresh.attempts or 1) - 1)
+            await session.commit()
+        raise
     except TimeoutError as exc:
         logger.warning("Pending action %s (%s) timed out", action_id, action.action_type)
         action.last_error = str(exc)[:500] or "send_timeout"

@@ -12,6 +12,33 @@ from ...alembic.models import CustomAutomation, CustomPrompt, PromptType
 from ...services.ai_authoring import ai_client
 
 
+class ProviderOutage(RuntimeError):
+    """The text model refused the call. The item stays unfinished."""
+
+
+_PROVIDER_STATUS = {401, 402, 403, 408, 409, 429, 500, 502, 503, 504}
+_PROVIDER_CODE_RE = re.compile(
+    r"error code:\s*(401|402|403|408|409|429|500|502|503|504)\b",
+    re.IGNORECASE,
+)
+
+
+def is_provider_outage(exc: BaseException) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    try:
+        if int(status) in _PROVIDER_STATUS:
+            return True
+    except (TypeError, ValueError):
+        pass
+    text = str(exc)
+    if "insufficient balance" in text.lower():
+        return True
+    return _PROVIDER_CODE_RE.search(text) is not None
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 

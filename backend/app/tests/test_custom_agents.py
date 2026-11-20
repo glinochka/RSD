@@ -1699,6 +1699,123 @@ class TestLeadKeywords:
         await test_session.refresh(message)
         assert message.is_processed is False
 
+    async def test_provider_error_does_not_mark_not_lead_or_scan_the_tail(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime
+
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        first = await self._add_message(
+            test_session, custom_automation, "Кто делает SEO?", external_id="p402-1"
+        )
+        second = await self._add_message(
+            test_session, custom_automation, "Нужен SEO сервис", external_id="p402-2"
+        )
+        first.sent_at = datetime(2026, 11, 20, 5, 8, 0)
+        second.sent_at = datetime(2026, 11, 20, 5, 9, 0)
+        await test_session.commit()
+        calls = {"n": 0}
+
+        async def boom(*args, **kwargs):
+            calls["n"] += 1
+            err = RuntimeError("Error code: 402 - Insufficient Balance")
+            err.status_code = 402
+            raise err
+
+        with patch(
+            "app.services.custom.chat_monitoring_service.ai_client.chat.completions.create",
+            new=boom,
+        ):
+            await process_unprocessed_messages(test_session, custom_automation.id)
+
+        assert calls["n"] == 1
+        await test_session.refresh(first)
+        await test_session.refresh(second)
+        assert first.is_processed is False
+        assert first.matched_intent is None
+        assert first.trigger_confidence is None
+        assert second.is_processed is False
+        assert second.matched_intent is None
+
+    async def test_model_words_timeout_quota_auth_do_not_stop_the_pass(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime
+
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        first = await self._add_message(
+            test_session, custom_automation, "Кто делает SEO?", external_id="words-1"
+        )
+        second = await self._add_message(
+            test_session, custom_automation, "Нужен SEO сервис", external_id="words-2"
+        )
+        first.sent_at = datetime(2026, 11, 20, 5, 8, 0)
+        second.sent_at = datetime(2026, 11, 20, 5, 9, 0)
+        await test_session.commit()
+        calls = {"n": 0}
+
+        async def bad(*args, **kwargs):
+            calls["n"] += 1
+            raise RuntimeError("timeout quota authentication connection error")
+
+        with patch(
+            "app.services.custom.chat_monitoring_service.ai_client.chat.completions.create",
+            new=bad,
+        ):
+            await process_unprocessed_messages(test_session, custom_automation.id)
+
+        assert calls["n"] == 2
+        await test_session.refresh(first)
+        await test_session.refresh(second)
+        assert first.is_processed is True
+        assert first.matched_intent == "not_lead"
+        assert second.is_processed is True
+        assert second.matched_intent == "not_lead"
+
+    async def test_plain_model_failure_still_marks_not_lead_and_continues(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime
+
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        first = await self._add_message(
+            test_session, custom_automation, "Кто делает SEO?", external_id="plain-1"
+        )
+        second = await self._add_message(
+            test_session, custom_automation, "Нужен SEO сервис", external_id="plain-2"
+        )
+        first.sent_at = datetime(2026, 11, 20, 5, 8, 0)
+        second.sent_at = datetime(2026, 11, 20, 5, 9, 0)
+        await test_session.commit()
+        calls = {"n": 0}
+
+        async def bad(*args, **kwargs):
+            calls["n"] += 1
+            raise RuntimeError("model returned prose")
+
+        with patch(
+            "app.services.custom.chat_monitoring_service.ai_client.chat.completions.create",
+            new=bad,
+        ):
+            await process_unprocessed_messages(test_session, custom_automation.id)
+
+        assert calls["n"] == 2
+        await test_session.refresh(first)
+        await test_session.refresh(second)
+        assert first.is_processed is True
+        assert first.matched_intent == "not_lead"
+        assert second.is_processed is True
+        assert second.matched_intent == "not_lead"
+
     async def test_monitor_sees_lab_group_even_if_status_pending(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
@@ -2968,6 +3085,81 @@ class TestShilling:
         assert ok is False
         assert action.last_error == "comments_closed"
         generate.assert_not_called()
+
+    async def test_comment_provider_error_leaves_queue_and_stops_the_pass(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from types import SimpleNamespace
+
+        from app.alembic.models import PendingChatAction, PendingChatActionStatus
+        from app.services.custom.pending_action_service import process_due_pending_actions
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="pending_402",
+            phone="+79990000046",
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
+        chat.comments_open = True
+        await test_session.commit()
+        first = PendingChatAction(
+            custom_automation_id=custom_automation.id,
+            chat_target_id=chat.id,
+            social_account_id=account.id,
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:11",
+            payload={"post_id": 11, "post_text": "первый пост"},
+            status=PendingChatActionStatus.PENDING.value,
+        )
+        second = PendingChatAction(
+            custom_automation_id=custom_automation.id,
+            chat_target_id=chat.id,
+            social_account_id=account.id,
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:12",
+            payload={"post_id": 12, "post_text": "второй пост"},
+            status=PendingChatActionStatus.PENDING.value,
+        )
+        test_session.add(first)
+        test_session.add(second)
+        await test_session.commit()
+        calls = {"n": 0}
+
+        async def boom(*args, **kwargs):
+            calls["n"] += 1
+            err = RuntimeError("Error code: 402 - Insufficient Balance")
+            err.status_code = 402
+            raise err
+
+        probe = SimpleNamespace(comments_open=True, account_blocked=False)
+        with patch(
+            "app.services.custom.pending_action_service._pending_action_runnable",
+            new=AsyncMock(return_value=(True, False, None)),
+        ), patch(
+            "app.services.custom.chat_inspect_service.ensure_comment_access",
+            new=AsyncMock(return_value=probe),
+        ), patch(
+            "app.services.custom.neurocommenting_service.ai_client.chat.completions.create",
+            new=boom,
+        ):
+            done = await process_due_pending_actions(
+                test_session,
+                custom_automation.id,
+                action_types=("neurocommenting",),
+            )
+
+        assert done == 0
+        assert calls["n"] == 1
+        await test_session.refresh(first)
+        await test_session.refresh(second)
+        assert first.status == PendingChatActionStatus.PENDING.value
+        assert first.attempts == 0
+        assert first.last_error is None
+        assert second.status == PendingChatActionStatus.PENDING.value
+        assert second.attempts == 0
+        assert second.last_error is None
 
     async def test_settings_require_two_shilling_accounts(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

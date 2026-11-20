@@ -55,7 +55,7 @@ from ...config import settings
 from ...services.ai_authoring import ai_client
 from .conversation_guard import sanitize_public_text
 from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
-from .prompt_service import render_prompt
+from .prompt_service import ProviderOutage, is_provider_outage, render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +238,9 @@ async def _generate_comment(
         comment = sanitize_public_text(str(data.get("comment") or "").strip())
         return comment[:500]
     except Exception as exc:
+        if is_provider_outage(exc):
+            logger.warning("Comment generation stopped: provider error: %s", exc)
+            raise ProviderOutage(str(exc)[:300]) from exc
         logger.warning("Comment generation failed: %s", exc)
         from .job_service import log_active
 
@@ -848,13 +851,23 @@ async def process_chat_target(
                     continue
         # ────────────────────────────────────────────────────────────────────
 
-        comment = await _generate_comment(
-            session,
-            automation_id,
-            post_text=post.text,
-            chat_title=chat_target.title or "",
-            prompt_id=prompt_id,
-        )
+        try:
+            comment = await _generate_comment(
+                session,
+                automation_id,
+                post_text=post.text,
+                chat_title=chat_target.title or "",
+                prompt_id=prompt_id,
+            )
+        except ProviderOutage:
+            await session.rollback()
+            return {
+                "status": "ok",
+                "sent": sent,
+                "shilled": shilled,
+                "deferred": deferred,
+                "reason": "provider_outage",
+            }
         if not comment:
             continue
 
@@ -940,9 +953,17 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
             cfg = ((automation.module_settings or {}).get("neurocommenting") or {})
         from .pending_action_service import process_due_pending_actions
 
-        flushed = await process_due_pending_actions(
-            session, automation_id, action_types=("neurocommenting",)
-        )
+        try:
+            flushed = await process_due_pending_actions(
+                session, automation_id, action_types=("neurocommenting",)
+            )
+        except ProviderOutage:
+            return {
+                "chats_processed": 0,
+                "comments_sent": 0,
+                "comments_deferred": 0,
+                "skips": {"provider_outage": 1},
+            }
         if not (
             automation.is_neurocommenting_enabled
             or automation.is_shilling_enabled
@@ -1016,6 +1037,8 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                     run_config=cfg,
                     work_pool=work_pool,
                 )
+                if res.get("reason") == "provider_outage":
+                    break
                 chat_count += 1
                 sent_now = int(res.get("sent") or 0)
                 deferred_now = int(res.get("deferred") or 0)
@@ -1024,6 +1047,8 @@ async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any
                 if sent_now == 0 and deferred_now == 0:
                     reason = str(res.get("reason") or "skipped")
                     skip_counts[reason] = skip_counts.get(reason, 0) + 1
+            except ProviderOutage:
+                break
             except Exception as exc:
                 logger.exception("Neurocommenting failed for chat %s: %s", chat_target.id, exc)
                 from .job_service import chat_label, log_active
@@ -1080,9 +1105,13 @@ async def run_lab_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
                     lab_mode=True,
                     max_comments_per_run=10,
                 )
+                if res.get("reason") == "provider_outage":
+                    break
                 chat_count += 1
                 if res.get("sent"):
                     total_sent += int(res["sent"])
+            except ProviderOutage:
+                break
             except Exception as exc:
                 logger.exception("Lab neurocommenting failed for chat %s: %s", chat_target.id, exc)
 

@@ -977,12 +977,17 @@ async def _react_to_post(
         return lab_result(ok=False, detail="Комментарии в канале закрыты.", post_id=post_id)
     if probe.account_blocked:
         return lab_result(ok=False, detail="Аккаунт заблокирован в канале.", post_id=post_id)
-    comment = await _generate_comment(
-        session,
-        automation.id,
-        post_text=post_text,
-        chat_title=channel.title or "",
-    )
+    from .prompt_service import ProviderOutage
+
+    try:
+        comment = await _generate_comment(
+            session,
+            automation.id,
+            post_text=post_text,
+            chat_title=channel.title or "",
+        )
+    except ProviderOutage:
+        return lab_result(ok=False, detail="Не удалось сгенерировать комментарий.", post_id=post_id)
     if not comment:
         return lab_result(ok=False, detail="Не удалось сгенерировать комментарий.", post_id=post_id)
     send_error = await _send_comment(

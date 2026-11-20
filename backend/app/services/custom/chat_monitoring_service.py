@@ -22,7 +22,7 @@ from .chat_scope import (
     message_is_own_activity,
 )
 from .lead_keywords import normalize_lead_keywords, should_classify_lead_text
-from .prompt_service import render_prompt
+from .prompt_service import ProviderOutage, is_provider_outage, render_prompt
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
@@ -162,6 +162,9 @@ async def _classify_message(
             "contact_value": str(data.get("contact_value") or ""),
         }
     except Exception as exc:
+        if is_provider_outage(exc):
+            logger.warning("Message classification stopped: provider error: %s", exc)
+            raise ProviderOutage(str(exc)[:300]) from exc
         logger.warning("Message classification failed: %s", exc)
         return {"is_lead": False, "confidence": 0.0, "reason": "llm_error", "contact_type": "telegram", "contact_value": ""}
 
@@ -634,6 +637,10 @@ async def process_unprocessed_messages(
                 leads_created += 1
             else:
                 errors += 1
+        except ProviderOutage:
+            await session.rollback()
+            errors += 1
+            break
         except Exception as exc:
             await session.rollback()
             logger.exception("Processing chat message %s failed: %s", message_id, exc)
